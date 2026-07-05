@@ -173,6 +173,26 @@ Dashboard for a while and placed the C3 $5 test trade successfully.
         `crypto-wallet/src/context/WalletContext.jsx`) — untouched, still running, still
         Phase D backlog (AD-1 flags it as the one thing that dies with its browser tab).
         Nothing conflates the two today; retiring the wallet's auto-trade loop is D1/D2.
+- [x] E3a2 🧠 **Trade-quote transparency (2026-07-05).** User: "I do not want to be
+      clicking buy or sell, only for it to do so at a price that is way off... critical
+      piece, must not hide anything." Buy/Sell on the token page now fetches a live
+      OpenOcean quote BEFORE the confirm button appears (new
+      `crypto-charting-ui/src/utils/quote.js`, mirroring the engine's exact sizing from
+      `pure.js sizeTrade` and its `priceImpactPct` formula). The confirm panel shows:
+      DEX route (e.g. "PancakeV3 100%"), you-pay in USD + BNB (+BNB price), quoted
+      receive amount, effective USD price per token vs the chart/collector market price,
+      price impact % against the engine's `max_price_impact_pct` limit (confirm is
+      DISABLED when the engine would reject it), minimum received at the engine's 0.5%
+      slippage, gas fee estimate (+20% buffer like the engine), and a quote-age counter
+      with manual refresh. If the quote API is down/rate-limited the user may still send
+      with an explicit "without preview" button — honest because the engine always
+      re-quotes at execution and enforces the impact guard regardless. Sell sizing is
+      capped at the wallet balance with a visible "capped at your balance" note. Trade
+      history gained a Fees (gas) column (BNB + ~USD). ⚠ Quote fetches are ON-DEMAND
+      only (never polled): OpenOcean allows ~1 req/1.6s per IP and the ENGINE quotes
+      from the same machine when trades fire. Verified live: real $5 buy quote (route
+      PancakeV3, impact −0.17% vs 3% limit) and a capped sell quote (+0.42%), fees
+      column showing real gas ($0.13), zero console errors; no trade was sent.
 - [ ] E3b 🧠 Remaining UX pass with the user: naming, empty states, confirmation dialogs
       for LIVE. Tag `v4-alpha-terminal`. ← NEEDS USER (it's your opinion that matters here).
 
