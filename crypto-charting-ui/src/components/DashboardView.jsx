@@ -50,6 +50,14 @@ export default function DashboardView({ signals, onOpenStrategy, onOpenMarkerCha
 
   const prices = overview?.token_prices || {};
   const pnlBySymbol = useMemo(() => computePnl(filledTrades), [filledTrades]);
+  const lastTradeBySymbol = useMemo(() => {
+    const map = {};
+    for (const t of filledTrades) {
+      if (!t.block_time) continue;
+      if (!map[t.symbol] || t.block_time > map[t.symbol]) map[t.symbol] = t.block_time;
+    }
+    return map;
+  }, [filledTrades]);
 
   return (
     <div className="dash-root">
@@ -63,13 +71,14 @@ export default function DashboardView({ signals, onOpenStrategy, onOpenMarkerCha
       />
       <div className="dash-grid">
         <div className="dash-col">
-          <WalletPanel wallet={wallet} prices={prices} tokenMap={tokenMap}
-            signals={signals} pnlBySymbol={pnlBySymbol} onSelectToken={onSelectToken} />
+          <WalletPanel wallet={wallet} prices={prices} tokenMap={tokenMap} signals={signals}
+            pnlBySymbol={pnlBySymbol} lastTradeBySymbol={lastTradeBySymbol} onSelectToken={onSelectToken} />
           <StrategyStatusBoard prices={prices} tokenMap={tokenMap} onOpenStrategy={onOpenStrategy} />
         </div>
         <div className="dash-col">
           <EngineControls />
-          <ActivityTables overview={overview} tokenMap={tokenMap} onOpenMarkerChart={onOpenMarkerChart} />
+          <ActivityTables overview={overview} tokenMap={tokenMap} bnbPrice={wallet.bnbPrice}
+            onOpenMarkerChart={onOpenMarkerChart} />
         </div>
       </div>
     </div>

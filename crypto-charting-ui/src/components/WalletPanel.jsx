@@ -2,10 +2,16 @@ import { useState, useMemo } from 'react';
 import { fmtUsd, fmtQty, fmtPrice, tokenColor } from '../utils/format';
 import { unrealizedFor } from '../utils/pnl';
 
+const DUST_USD = 1;
+const RECENT_TRADE_MS = 14 * 24 * 60 * 60 * 1000; // "a couple of weeks"
+
 // Token Assets panel — the old wallet's holdings list, key-free (C2 hook).
 // Rows are clickable and open the in-app token page. The wallet data hook
 // lives in DashboardView so the summary cards share the same numbers.
-export default function WalletPanel({ wallet, prices, tokenMap, signals, pnlBySymbol, onSelectToken }) {
+// Holdings scan the FULL Alpha token universe (see useWalletData.js), so
+// small leftover dust is common — hide it UNLESS the token was traded
+// recently, since the user is still actively watching that one.
+export default function WalletPanel({ wallet, prices, tokenMap, signals, pnlBySymbol, lastTradeBySymbol, onSelectToken }) {
   const { address, setAddress, bnb, bnbPrice, tokens, error } = wallet;
   const [editing, setEditing] = useState(false);
   const [draft, setDraft] = useState(address);
@@ -13,9 +19,11 @@ export default function WalletPanel({ wallet, prices, tokenMap, signals, pnlBySy
   const change24h = useMemo(() =>
     Object.fromEntries((signals || []).map(s => [s.symbol, s.price_change_24h])), [signals]);
 
-  const rows = useMemo(() => {
-    const list = tokens.map(t => {
+  const { rows, hiddenCount } = useMemo(() => {
+    const now = Date.now();
+    const all = tokens.map(t => {
       const price = prices?.[t.symbol] || 0;
+      const lastTradeAt = lastTradeBySymbol?.[t.symbol];
       return {
         ...t,
         price,
@@ -23,11 +31,13 @@ export default function WalletPanel({ wallet, prices, tokenMap, signals, pnlBySy
         chg: change24h[t.symbol],
         pnl: unrealizedFor(pnlBySymbol?.[t.symbol], price),
         color: tokenColor(tokenMap?.[t.symbol]?.contract_address || t.symbol),
+        recentlyTraded: lastTradeAt != null && now - lastTradeAt < RECENT_TRADE_MS,
       };
     });
-    list.sort((a, b) => b.usd - a.usd);
-    return list;
-  }, [tokens, prices, change24h, pnlBySymbol, tokenMap]);
+    all.sort((a, b) => b.usd - a.usd);
+    const visible = all.filter(t => t.usd >= DUST_USD || t.recentlyTraded);
+    return { rows: visible, hiddenCount: all.length - visible.length };
+  }, [tokens, prices, change24h, pnlBySymbol, tokenMap, lastTradeBySymbol]);
 
   const bnbUsd = bnb != null && bnbPrice != null ? bnb * bnbPrice : null;
 
@@ -113,9 +123,16 @@ export default function WalletPanel({ wallet, prices, tokenMap, signals, pnlBySy
             </div>
           ))}
 
-          {rows.length === 0 && (
+          {rows.length === 0 && hiddenCount === 0 && (
             <div className="dash-muted" style={{ fontSize: 12, padding: '10px 0' }}>
-              No traded tokens found for this wallet yet — tokens appear here after the engine fills a trade.
+              No token holdings found for this wallet yet.
+            </div>
+          )}
+
+          {hiddenCount > 0 && (
+            <div className="dash-muted" style={{ fontSize: 11, padding: '6px 0 0 4px' }}>
+              {hiddenCount} holding{hiddenCount > 1 ? 's' : ''} under $1 hidden (no trade in the last 2 weeks) —
+              still counted in Portfolio Net Worth above.
             </div>
           )}
         </div>

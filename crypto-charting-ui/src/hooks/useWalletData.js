@@ -1,4 +1,6 @@
 import { useState, useEffect, useRef, useCallback } from 'react';
+import { formatUnits } from 'ethers';
+import { multicallBalanceOf, multicallDecimals } from '../utils/multicall';
 
 // Key-free wallet data (see docs/C1-wallet-hook.md). Reads balances with raw
 // JSON-RPC calls to a public BSC node — the private key never enters this app.
@@ -7,7 +9,6 @@ const API_URL = 'http://localhost:8000';
 const BSC_RPC = 'https://bsc-dataseed.binance.org/';
 const WBNB = '0xbb4CdB9CBd36B01bD1cBaEBF2De08d9173bc095c';
 const ADDR_KEY = 'alpha_wallet_address';
-const MAX_TOKENS = 20;
 
 async function rpc(method, params) {
   const r = await fetch(BSC_RPC, {
@@ -20,12 +21,6 @@ async function rpc(method, params) {
   return j.result;
 }
 
-const pad64 = (addr) => addr.toLowerCase().replace(/^0x/, '').padStart(64, '0');
-
-async function erc20Call(contract, data) {
-  return rpc('eth_call', [{ to: contract, data }, 'latest']);
-}
-
 export function getSavedAddress() {
   return localStorage.getItem(ADDR_KEY) || import.meta.env.VITE_WALLET_ADDRESS || '';
 }
@@ -36,7 +31,7 @@ export default function useWalletData() {
   const [bnbPrice, setBnbPrice] = useState(null); // USD per BNB
   const [tokens, setTokens] = useState([]);       // [{symbol, name, qty}]
   const [error, setError] = useState(null);
-  const decimalsCache = useRef({});
+  const decimalsCache = useRef({}); // contract (lowercase) -> decimals, across polls
 
   const setAddress = useCallback((a) => {
     const trimmed = (a || '').trim();
@@ -49,39 +44,53 @@ export default function useWalletData() {
     if (!/^0x[0-9a-fA-F]{40}$/.test(address)) return undefined;
     let alive = true;
 
+    // Scans the WHOLE Alpha token universe the collector tracks (not just
+    // symbols this wallet has traded via the engine) via a single batched
+    // Multicall3 call — same technique the old wallet used (blockchain.js
+    // scanTokenBalances), so any token a strategy or manual trade newly holds
+    // shows up automatically on the next 30s poll, with no approval step:
+    // every Binance Alpha token the collector lists is in scope already.
     const loadBalances = async () => {
       try {
-        // BNB balance
         const balHex = await rpc('eth_getBalance', [address, 'latest']);
         if (!alive) return;
         setBnb(parseInt(balHex, 16) / 1e18);
 
-        // Token set = symbols this wallet actually traded (FILLED rows only)
-        const [tradesRes, tokensRes] = await Promise.all([
-          fetch(`${API_URL}/trades?status=FILLED&limit=200`),
-          fetch(`${API_URL}/tokens?limit=500`),
-        ]);
-        if (!tradesRes.ok || !tokensRes.ok) throw new Error('API unavailable');
-        const trades = await tradesRes.json();
+        const tokensRes = await fetch(`${API_URL}/tokens?limit=500`);
+        if (!tokensRes.ok) throw new Error('API unavailable');
         const tokenList = await tokensRes.json();
-        const bySymbol = Object.fromEntries(tokenList.map(t => [t.symbol, t]));
-        const symbols = [...new Set(trades.map(t => t.symbol))]
-          .filter(s => bySymbol[s]?.contract_address).slice(0, MAX_TOKENS);
+        // Binance Alpha lists tokens across multiple chains; non-EVM ones (e.g.
+        // Sui/Move-style "0x…::module::TYPE") have contract_address values that
+        // aren't 20-byte hex addresses and would throw during ABI encoding —
+        // skip them, this scan is BSC-only.
+        const withContract = tokenList.filter(t => /^0x[0-9a-fA-F]{40}$/.test(t.contract_address || ''));
+        const contracts = withContract.map(t => t.contract_address);
 
-        const rows = [];
-        for (const sym of symbols) {
-          const contract = bySymbol[sym].contract_address;
-          try {
-            if (decimalsCache.current[contract] == null) {
-              const d = await erc20Call(contract, '0x313ce567'); // decimals()
-              decimalsCache.current[contract] = parseInt(d, 16) || 18;
-            }
-            const raw = await erc20Call(contract, '0x70a08231' + pad64(address)); // balanceOf(address)
-            const qty = parseInt(raw, 16) / 10 ** decimalsCache.current[contract];
-            if (qty > 0) rows.push({ symbol: sym, name: bySymbol[sym].name, qty });
-          } catch { /* skip token on RPC hiccup; next poll retries */ }
+        const balances = await multicallBalanceOf(address, contracts);
+        if (!alive) return;
+
+        const held = withContract.filter(t => {
+          const bal = balances.get(t.contract_address.toLowerCase());
+          return bal != null && bal > 0n;
+        });
+
+        const needDecimals = held
+          .map(t => t.contract_address.toLowerCase())
+          .filter(addr => decimalsCache.current[addr] == null);
+        if (needDecimals.length > 0) {
+          const fetched = await multicallDecimals(needDecimals);
+          fetched.forEach((d, addr) => { decimalsCache.current[addr] = d; });
         }
         if (!alive) return;
+
+        const rows = held.map(t => {
+          const addr = t.contract_address.toLowerCase();
+          const raw = balances.get(addr);
+          const decimals = decimalsCache.current[addr] ?? 18;
+          // formatUnits does the division as a string (BigInt-safe) — a raw
+          // 256-bit balance can exceed Number.MAX_SAFE_INTEGER before scaling.
+          return { symbol: t.symbol, name: t.name, qty: parseFloat(formatUnits(raw, decimals)) };
+        });
         setTokens(rows);
         setError(null);
       } catch (e) {

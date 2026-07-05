@@ -296,9 +296,12 @@
   display: flex; justify-content: space-between; align-items: center; margin-bottom: 12px;
   font-size: 13px; color: var(--text-muted); font-weight: 600; letter-spacing: 0.03em;
 }
-.trade-line { display: flex; justify-content: space-between; margin-bottom: 8px; font-size: 13px; }
-.trade-line .l { color: var(--text-muted); }
-.trade-line .v { color: var(--text-bright); font-weight: 600; }
+.trade-line {
+  display: flex; justify-content: space-between; align-items: baseline; gap: 16px;
+  margin-bottom: 8px; font-size: 13px; max-width: 480px;
+}
+.trade-line .l { color: var(--text-muted); flex-shrink: 1; }
+.trade-line .v { color: var(--text-bright); font-weight: 600; text-align: right; white-space: nowrap; }
 .trade-send {
   width: 100%; padding: 11px; border: none; border-radius: 10px; font-weight: bold;
   cursor: pointer; font-size: 13px; font-family: var(--font-display);

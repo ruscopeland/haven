@@ -1,4 +1,5 @@
 import { useState, useEffect, useMemo } from 'react';
+import { formatUnits } from 'ethers';
 import Chart from './Chart';
 import { getSavedAddress } from '../hooks/useWalletData';
 import { fmtUsd, fmtQty, fmtPrice, fmtTime, tokenColor } from '../utils/format';
@@ -95,7 +96,9 @@ export default function TokenDetailView({ symbol, name, signals, onBack }) {
         };
         const dec = parseInt(await call('0x313ce567'), 16) || 18;
         const raw = await call('0x70a08231' + address.toLowerCase().replace(/^0x/, '').padStart(64, '0'));
-        if (alive) setHeldQty(parseInt(raw, 16) / 10 ** dec);
+        // formatUnits does the division as a string (BigInt-safe) — a raw
+        // 256-bit balance can exceed Number.MAX_SAFE_INTEGER before scaling.
+        if (alive) setHeldQty(parseFloat(formatUnits(BigInt(raw), dec)));
       } catch { /* leave unknown; next poll retries */ }
     };
     load();

@@ -198,6 +198,54 @@ the new Dashboard for a while and placed the C3 $5 test trade successfully.
       from the same machine when trades fire. Verified live: real $5 buy quote (route
       PancakeV3, impact −0.17% vs 3% limit) and a capped sell quote (+0.42%), fees
       column showing real gas ($0.13), zero console errors; no trade was sent.
+- [x] E3a3 🧠 **Balance accuracy + trade-history parity (2026-07-05).** User: dashboard
+      showed $14.80 vs old wallet's $18.69; quote panel labels/numbers were "hard to
+      read" because they sat at opposite edges of a wide panel; Dashboard's Recent
+      Trades was missing fee/tx/expected-vs-actual price that the token page already had.
+      - **Root cause of the balance gap**: `useWalletData.js` only discovered tokens
+        that appeared in `GET /trades?status=FILLED` — any token held but never traded
+        through the engine (leftover from before the reorg, airdrops, etc.) was invisible.
+        Fixed by scanning the **entire Alpha token universe from `GET /tokens`** in one
+        batched **Multicall3** call (`utils/multicall.js`, new `ethers` dependency in
+        `crypto-charting-ui` — read-only ABI encode/decode only, no signing/Provider/key,
+        consistent with AD-2) — the same technique
+        `crypto-wallet/src/utils/blockchain.js scanTokenBalances` already used. This is
+        also the "auto-approve new tokens" mechanism the user asked for: since the scan
+        set IS the collector's Alpha token directory, any token a strategy starts trading
+        appears automatically on the next 30s poll — no approval step, nothing to build.
+      - ⚠ Found and fixed a real bug during verification: Binance Alpha lists tokens on
+        non-EVM chains too (e.g. Sui/Move-style addresses like `0x9c7…::xmn::XMN`), and
+        one bad address threw during ABI encoding and silently zeroed the ENTIRE scan.
+        Filtered to `^0x[0-9a-fA-F]{40}$` before building the call list (BSC-only, matches
+        this stack's scope). Verified: net worth went from $14.80 → **$18.27**, within
+        $0.42 of the old wallet's $18.69 — remaining gap is expected (different price
+        source: collector vs DexScreener, documented C1 deviation; any non-Alpha "popular"
+        tokens like leftover USDT are out of scope per the user's own instruction).
+      - Also fixed a latent precision bug while touching this: raw ERC-20 balances are
+        256-bit; `Number(raw) / 10**decimals` can silently lose precision above
+        `Number.MAX_SAFE_INTEGER` for high-supply tokens. Switched to `ethers.formatUnits`
+        (string-based division) in both the new hook and `TokenDetailView`'s single-token
+        balance check.
+      - **Dust filter with a recency exception**: holdings under $1 are hidden from the
+        list UNLESS the symbol has a FILLED trade in the last 14 days ("still actively
+        trading it, want to click and see its stats") — Portfolio Net Worth still sums
+        everything, and a muted note discloses the hidden count so nothing is silently
+        dropped. Verified live: a near-zero VELVET remainder correctly stayed visible
+        because it was traded minutes earlier; 8 untouched dust holdings were hidden with
+        a visible "8 holdings under $1 hidden… still counted" note.
+      - **Dashboard Recent Trades now matches the old wallet's Trade History**: added
+        execution price with expected price shown alongside when they differ, a Fees
+        (gas) column (BNB + ~USD), and a BscScan tx link — same `side-pill`/`status-pill`
+        colors already used on the token page. (`ActivityTables.jsx`, new `bnbPrice` prop
+        threaded from `DashboardView`.)
+      - **Quote-panel readability**: `.trade-line` rows were `justify-content:
+        space-between` with no width cap, so in the full-width confirm panel the label
+        sat at the left edge and the number at the right edge of the whole screen.
+        Capped at `max-width: 480px` — label and value now sit close together.
+      - Verified live in browser: real holdings (SUP, KGEN, BBU, XPIN, VELVET) now show
+        with correct prices/qty/P&L, the donut includes them, Recent Trades shows the
+        user's actual SELL VELVET $3.79 fill with fee + tx + expected-vs-actual price,
+        quote panel is easy to read, zero console errors.
 - [ ] E3b 🧠 Remaining UX pass with the user: naming, empty states, confirmation dialogs
       for LIVE. Tag `v4-alpha-terminal`. ← NEEDS USER (it's your opinion that matters here).
 
