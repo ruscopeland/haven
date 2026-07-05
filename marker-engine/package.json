@@ -1,0 +1,16 @@
+{
+  "name": "marker-engine",
+  "private": true,
+  "version": "1.0.0",
+  "description": "Headless executor for chart markers - watches collector prices via the API and fires on-chain swaps. Replaces the in-browser wallet engine.",
+  "type": "module",
+  "main": "index.js",
+  "scripts": {
+    "start": "node index.js",
+    "test": "node --test"
+  },
+  "dependencies": {
+    "dotenv": "^16.4.5",
+    "ethers": "^6.16.0"
+  }
+}

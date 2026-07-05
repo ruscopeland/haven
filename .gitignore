@@ -1,0 +1,27 @@
+# ── SECRETS — never commit these ─────────────────────────────
+.env
+*.env
+!.env.example
+
+# ── Live database + backups + logs ───────────────────────────
+crypto-data-collector/crypto_data.db
+crypto-data-collector/crypto_data.db-shm
+crypto-data-collector/crypto_data.db-wal
+backups/
+*.log
+
+# ── Dependencies / build output ───────────────────────────────
+node_modules/
+dist/
+__pycache__/
+*.pyc
+.venv/
+venv/
+
+# ── Editor / OS noise ─────────────────────────────────────────
+.DS_Store
+Thumbs.db
+.claude/settings.local.json
+
+# ── Removed legacy code (safe to delete per CLAUDE.md) ────────
+_deprecated/
