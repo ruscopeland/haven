@@ -4,6 +4,7 @@ import Chart from './components/Chart'
 import StrategyWorkbench from './components/StrategyWorkbench'
 import FinderWorkbench from './components/FinderWorkbench'
 import DashboardView from './components/DashboardView'
+import SettingsView from './components/SettingsView'
 
 const API_URL = 'http://localhost:8000';
 
@@ -130,7 +131,8 @@ function App() {
 
       <div className="main-content" style={{ display: 'flex', flexDirection: 'column', flex: 1, overflow: 'hidden' }}>
         <div className="preset-toolbar" style={{ display: 'flex', gap: '10px', padding: '10px', background: '#131722', borderBottom: '1px solid #2a2f42', alignItems: 'center' }}>
-          {[['dashboard', '🏠 Dashboard'], ['charts', '📊 Charts'], ['strategies', '⚡ Strategies'], ['finder', '🔍 Token Finder']].map(([key, label]) => (
+          <span style={{ color: '#e5e9f0', fontWeight: 'bold', fontSize: 15, marginRight: 8, whiteSpace: 'nowrap' }}>⚡ Alpha Terminal</span>
+          {[['dashboard', '🏠 Dashboard'], ['charts', '📊 Charts'], ['strategies', '⚡ Strategies'], ['finder', '🔍 Token Finder'], ['settings', '⚙ Settings']].map(([key, label]) => (
             <button
               key={key}
               onClick={() => setView(key)}
@@ -204,6 +206,8 @@ function App() {
 
         {view === 'dashboard' ? (
           <DashboardView />
+        ) : view === 'settings' ? (
+          <SettingsView />
         ) : view === 'strategies' ? (
           <StrategyWorkbench signals={signals} />
         ) : view === 'finder' ? (
