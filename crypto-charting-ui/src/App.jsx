@@ -3,6 +3,7 @@ import Screener from './components/Screener'
 import Chart from './components/Chart'
 import StrategyWorkbench from './components/StrategyWorkbench'
 import FinderWorkbench from './components/FinderWorkbench'
+import DashboardView from './components/DashboardView'
 
 const API_URL = 'http://localhost:8000';
 
@@ -14,7 +15,7 @@ function HealthDot({ status }) {
 function App() {
   const [selectedTokens, setSelectedTokens] = useState([]);
   const [activePreset, setActivePreset] = useState(null);
-  const [view, setView] = useState('charts');   // 'charts' | 'strategies'
+  const [view, setView] = useState('dashboard');   // 'dashboard' | 'charts' | 'strategies' | 'finder'
   const [signals, setSignals] = useState([]);
   const [sortBy, setSortBy] = useState("flow_15m");
   const [health, setHealth] = useState({ collector: 'unknown', execution_engine: 'unknown' });
@@ -129,7 +130,7 @@ function App() {
 
       <div className="main-content" style={{ display: 'flex', flexDirection: 'column', flex: 1, overflow: 'hidden' }}>
         <div className="preset-toolbar" style={{ display: 'flex', gap: '10px', padding: '10px', background: '#131722', borderBottom: '1px solid #2a2f42', alignItems: 'center' }}>
-          {[['charts', '📊 Charts'], ['strategies', '⚡ Strategies'], ['finder', '🔍 Token Finder']].map(([key, label]) => (
+          {[['dashboard', '🏠 Dashboard'], ['charts', '📊 Charts'], ['strategies', '⚡ Strategies'], ['finder', '🔍 Token Finder']].map(([key, label]) => (
             <button
               key={key}
               onClick={() => setView(key)}
@@ -201,7 +202,9 @@ function App() {
           )}
         </div>
 
-        {view === 'strategies' ? (
+        {view === 'dashboard' ? (
+          <DashboardView />
+        ) : view === 'strategies' ? (
           <StrategyWorkbench signals={signals} />
         ) : view === 'finder' ? (
           <FinderWorkbench />
