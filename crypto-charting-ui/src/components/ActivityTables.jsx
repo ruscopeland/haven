@@ -2,7 +2,7 @@ import { fmtUsd, fmtPrice, fmtTime, tokenLabel, tradeUsd } from '../utils/format
 
 // B3: read-only recent trades + active markers, fed entirely by the
 // DashboardView's shared /dashboard/overview poll (no fetching here).
-export default function ActivityTables({ overview, tokenMap }) {
+export default function ActivityTables({ overview, tokenMap, onOpenMarkerChart }) {
   const trades = (overview?.trades || []).slice(0, 50);
   const markers = overview?.open_markers || [];
 
@@ -21,7 +21,12 @@ export default function ActivityTables({ overview, tokenMap }) {
                   let usd = null;
                   try { usd = JSON.parse(m.metadata_json || '{}').usd; } catch { /* legacy metadata */ }
                   return (
-                    <tr key={m.id}>
+                    <tr
+                      key={m.id}
+                      onClick={() => onOpenMarkerChart?.(m.symbol, tokenLabel(m.symbol, tokenMap))}
+                      style={{ cursor: onOpenMarkerChart ? 'pointer' : undefined }}
+                      title="Open this marker's chart"
+                    >
                       <td>{tokenLabel(m.symbol, tokenMap)}</td>
                       <td>{m.marker_type}</td>
                       <td>{m.direction || 'cross'}</td>

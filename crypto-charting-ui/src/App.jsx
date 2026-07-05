@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useRef } from 'react'
 import Screener from './components/Screener'
 import Chart from './components/Chart'
 import StrategyWorkbench from './components/StrategyWorkbench'
@@ -18,6 +18,11 @@ function App() {
   const [activePreset, setActivePreset] = useState(null);
   const [view, setView] = useState('dashboard');   // 'dashboard' | 'charts' | 'strategies' | 'finder'
   const [selectedStrategyId, setSelectedStrategyId] = useState(null);
+  // Marker-deep-link: a one-off chart view that isn't part of any saved
+  // preset. `savedChartsRef` holds whatever was on the Charts page before we
+  // jumped there, so leaving the temp view restores it exactly.
+  const [tempChartActive, setTempChartActive] = useState(false);
+  const savedChartsRef = useRef(null);
   const [signals, setSignals] = useState([]);
   const [sortBy, setSortBy] = useState("flow_15m");
   const [health, setHealth] = useState({ collector: 'unknown', execution_engine: 'unknown' });
@@ -109,6 +114,31 @@ function App() {
     }
   };
 
+  // All navigation goes through here so leaving Charts while a marker's
+  // one-off chart is showing restores whatever was there before it opened.
+  const navigate = (key) => {
+    if (tempChartActive && key !== 'charts') {
+      const saved = savedChartsRef.current;
+      savedChartsRef.current = null;
+      setTempChartActive(false);
+      setSelectedTokens(saved?.selectedTokens || []);
+      setActivePreset(saved?.activePreset ?? null);
+    }
+    setView(key);
+  };
+
+  // Marker deep-link: show only that marker's token on the Charts page,
+  // without disturbing the preset/tokens the user had open there.
+  const openMarkerChart = (symbol, name) => {
+    if (!tempChartActive) {
+      savedChartsRef.current = { selectedTokens, activePreset };
+      setTempChartActive(true);
+    }
+    setSelectedTokens([{ symbol, name: name || symbol, priceChange24h: 0, interval: '5m' }]);
+    setActivePreset(null);
+    setView('charts');
+  };
+
   const count = selectedTokens.length;
   let cols = 1;
   let rows = 1;
@@ -136,7 +166,7 @@ function App() {
           {[['dashboard', '🏠 Dashboard'], ['charts', '📊 Charts'], ['strategies', '⚡ Strategies'], ['finder', '🔍 Token Finder'], ['settings', '⚙ Settings']].map(([key, label]) => (
             <button
               key={key}
-              onClick={() => setView(key)}
+              onClick={() => navigate(key)}
               style={{
                 background: view === key ? '#3388ff' : '#2a2f42',
                 color: '#fff',
@@ -206,7 +236,10 @@ function App() {
         </div>
 
         {view === 'dashboard' ? (
-          <DashboardView onOpenStrategy={(id) => { setSelectedStrategyId(id); setView('strategies'); }} />
+          <DashboardView
+            onOpenStrategy={(id) => { setSelectedStrategyId(id); navigate('strategies'); }}
+            onOpenMarkerChart={openMarkerChart}
+          />
         ) : view === 'settings' ? (
           <SettingsView />
         ) : view === 'strategies' ? (

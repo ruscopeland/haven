@@ -10,7 +10,7 @@ const API_URL = 'http://localhost:8000';
 
 // Home tab. Owns the two polls shared by every panel (overview 5s, token
 // metadata 5min) so child panels don't duplicate traffic.
-export default function DashboardView({ onOpenStrategy }) {
+export default function DashboardView({ onOpenStrategy, onOpenMarkerChart }) {
   const [overview, setOverview] = useState(null);
   const [tokenMap, setTokenMap] = useState({});
 
@@ -42,7 +42,7 @@ export default function DashboardView({ onOpenStrategy }) {
     <div className="dash-root">
       <div className="dash-col">
         <StrategyStatusBoard prices={prices} tokenMap={tokenMap} onOpenStrategy={onOpenStrategy} />
-        <ActivityTables overview={overview} tokenMap={tokenMap} />
+        <ActivityTables overview={overview} tokenMap={tokenMap} onOpenMarkerChart={onOpenMarkerChart} />
       </div>
       <div className="dash-col">
         <EngineControls />
