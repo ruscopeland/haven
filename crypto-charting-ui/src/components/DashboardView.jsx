@@ -1,18 +1,23 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useMemo } from 'react';
 import StrategyStatusBoard from './StrategyStatusBoard';
 import EngineControls from './EngineControls';
 import ActivityTables from './ActivityTables';
 import WalletPanel from './WalletPanel';
-import QuickTrade from './QuickTrade';
+import PortfolioSummary from './PortfolioSummary';
+import useWalletData from '../hooks/useWalletData';
+import { computePnl } from '../utils/pnl';
 import '../dashboard.css';
 
 const API_URL = 'http://localhost:8000';
 
-// Home tab. Owns the two polls shared by every panel (overview 5s, token
-// metadata 5min) so child panels don't duplicate traffic.
-export default function DashboardView({ onOpenStrategy, onOpenMarkerChart }) {
+// Home tab. Owns the polls shared by every panel (overview 5s, token
+// metadata 5min, filled trades 30s for PnL) so child panels don't
+// duplicate traffic. Wallet balances come from the key-free C2 hook.
+export default function DashboardView({ signals, onOpenStrategy, onOpenMarkerChart, onSelectToken }) {
   const [overview, setOverview] = useState(null);
   const [tokenMap, setTokenMap] = useState({});
+  const [filledTrades, setFilledTrades] = useState([]);
+  const wallet = useWalletData();
 
   useEffect(() => {
     let alive = true;
@@ -30,24 +35,42 @@ export default function DashboardView({ onOpenStrategy, onOpenMarkerChart }) {
         setTokenMap(Object.fromEntries(list.map(t => [t.symbol, t])));
       } catch { /* names fall back to raw symbols */ }
     };
-    loadOverview(); loadTokens();
+    const loadFilled = async () => {
+      try {
+        const r = await fetch(`${API_URL}/trades?status=FILLED&limit=1000`);
+        if (r.ok && alive) setFilledTrades(await r.json());
+      } catch { /* PnL cards show zeros until the next poll */ }
+    };
+    loadOverview(); loadTokens(); loadFilled();
     const a = setInterval(loadOverview, 5_000);
     const b = setInterval(loadTokens, 300_000);
-    return () => { alive = false; clearInterval(a); clearInterval(b); };
+    const c = setInterval(loadFilled, 30_000);
+    return () => { alive = false; clearInterval(a); clearInterval(b); clearInterval(c); };
   }, []);
 
   const prices = overview?.token_prices || {};
+  const pnlBySymbol = useMemo(() => computePnl(filledTrades), [filledTrades]);
 
   return (
     <div className="dash-root">
-      <div className="dash-col">
-        <StrategyStatusBoard prices={prices} tokenMap={tokenMap} onOpenStrategy={onOpenStrategy} />
-        <ActivityTables overview={overview} tokenMap={tokenMap} onOpenMarkerChart={onOpenMarkerChart} />
-      </div>
-      <div className="dash-col">
-        <EngineControls />
-        <WalletPanel prices={prices} tokenMap={tokenMap} />
-        <QuickTrade tokenMap={tokenMap} prices={prices} />
+      <PortfolioSummary
+        wallet={wallet}
+        prices={prices}
+        tokenMap={tokenMap}
+        pnlBySymbol={pnlBySymbol}
+        openOrdersCount={(overview?.open_markers || []).length}
+        filledCount={filledTrades.length}
+      />
+      <div className="dash-grid">
+        <div className="dash-col">
+          <WalletPanel wallet={wallet} prices={prices} tokenMap={tokenMap}
+            signals={signals} pnlBySymbol={pnlBySymbol} onSelectToken={onSelectToken} />
+          <StrategyStatusBoard prices={prices} tokenMap={tokenMap} onOpenStrategy={onOpenStrategy} />
+        </div>
+        <div className="dash-col">
+          <EngineControls />
+          <ActivityTables overview={overview} tokenMap={tokenMap} onOpenMarkerChart={onOpenMarkerChart} />
+        </div>
       </div>
     </div>
   );

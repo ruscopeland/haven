@@ -5,6 +5,7 @@ import StrategyWorkbench from './components/StrategyWorkbench'
 import FinderWorkbench from './components/FinderWorkbench'
 import DashboardView from './components/DashboardView'
 import SettingsView from './components/SettingsView'
+import TokenDetailView from './components/TokenDetailView'
 
 const API_URL = 'http://localhost:8000';
 
@@ -16,8 +17,9 @@ function HealthDot({ status }) {
 function App() {
   const [selectedTokens, setSelectedTokens] = useState([]);
   const [activePreset, setActivePreset] = useState(null);
-  const [view, setView] = useState('dashboard');   // 'dashboard' | 'charts' | 'strategies' | 'finder'
+  const [view, setView] = useState('dashboard');   // 'dashboard' | 'token' | 'charts' | 'strategies' | 'finder' | 'settings'
   const [selectedStrategyId, setSelectedStrategyId] = useState(null);
+  const [pageToken, setPageToken] = useState(null); // {symbol, name} for the token detail page
   // Marker-deep-link: a one-off chart view that isn't part of any saved
   // preset. `savedChartsRef` holds whatever was on the Charts page before we
   // jumped there, so leaving the temp view restores it exactly.
@@ -127,6 +129,13 @@ function App() {
     setView(key);
   };
 
+  // Token detail page (from a Dashboard holdings row) — an in-app page, not
+  // a separate browser tab like the old wallet app used to open.
+  const openTokenPage = (t) => {
+    setPageToken(t);
+    navigate('token');
+  };
+
   // Marker deep-link: show only that marker's token on the Charts page,
   // without disturbing the preset/tokens the user had open there.
   const openMarkerChart = (symbol, name) => {
@@ -161,44 +170,26 @@ function App() {
       )}
 
       <div className="main-content" style={{ display: 'flex', flexDirection: 'column', flex: 1, overflow: 'hidden' }}>
-        <div className="preset-toolbar" style={{ display: 'flex', gap: '10px', padding: '10px', background: '#131722', borderBottom: '1px solid #2a2f42', alignItems: 'center' }}>
-          <span style={{ color: '#e5e9f0', fontWeight: 'bold', fontSize: 15, marginRight: 8, whiteSpace: 'nowrap' }}>⚡ Alpha Terminal</span>
-          {[['dashboard', '🏠 Dashboard'], ['charts', '📊 Charts'], ['strategies', '⚡ Strategies'], ['finder', '🔍 Token Finder'], ['settings', '⚙ Settings']].map(([key, label]) => (
-            <button
-              key={key}
-              onClick={() => navigate(key)}
-              style={{
-                background: view === key ? '#3388ff' : '#2a2f42',
-                color: '#fff',
-                border: 'none',
-                padding: '6px 16px',
-                borderRadius: '4px',
-                cursor: 'pointer',
-                fontWeight: view === key ? 'bold' : 'normal',
-                transition: 'background 0.2s'
-              }}
-            >
-              {label}
-            </button>
-          ))}
+        <div className="preset-toolbar" style={{ display: 'flex', gap: '10px', padding: '10px 16px', background: 'rgba(13, 20, 38, 0.75)', backdropFilter: 'blur(12px)', borderBottom: '1px solid var(--border-glass)', alignItems: 'center' }}>
+          <span className="logo-title" style={{ marginRight: 8 }}>⚡ Alpha Terminal</span>
+          {[['dashboard', '🏠 Dashboard'], ['charts', '📊 Charts'], ['strategies', '⚡ Strategies'], ['finder', '🔍 Token Finder'], ['settings', '⚙ Settings']].map(([key, label]) => {
+            const active = view === key || (view === 'token' && key === 'dashboard');
+            return (
+              <button key={key} onClick={() => navigate(key)} className={`nav-tab${active ? ' active' : ''}`}>
+                {label}
+              </button>
+            );
+          })}
 
           {view === 'charts' && (
             <>
-              <span style={{ color: '#a0a5b8', fontWeight: 'bold', marginLeft: '16px' }}>Layouts:</span>
+              <span style={{ color: 'var(--text-muted)', fontWeight: 'bold', marginLeft: '16px', fontSize: 12 }}>Layouts:</span>
               {[1, 2, 3, 4, 5].map(num => (
                 <button
                   key={num}
                   onClick={() => loadPreset(num)}
-                  style={{
-                    background: activePreset === num ? '#3388ff' : '#2a2f42',
-                    color: '#fff',
-                    border: 'none',
-                    padding: '6px 12px',
-                    borderRadius: '4px',
-                    cursor: 'pointer',
-                    fontWeight: activePreset === num ? 'bold' : 'normal',
-                    transition: 'background 0.2s'
-                  }}
+                  className={`nav-tab${activePreset === num ? ' active' : ''}`}
+                  style={{ padding: '7px 12px' }}
                 >
                   {num}
                 </button>
@@ -208,7 +199,7 @@ function App() {
           <div style={{ flex: 1 }}></div>
 
           {/* Health indicators */}
-          <div style={{ display: 'flex', alignItems: 'center', gap: '4px', marginRight: '12px', fontSize: '10px', color: '#a0a5b8' }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: '4px', marginRight: '12px', fontSize: '10px', color: 'var(--text-muted)' }}>
             <span>API</span><HealthDot status={signalError ? 'down' : 'ok'} />
             <span style={{ marginLeft: 8 }}>Collector</span><HealthDot status={health.collector || 'unknown'} />
             <span style={{ marginLeft: 8 }}>Engine</span><HealthDot status={health.execution_engine || 'unknown'} />
@@ -218,14 +209,16 @@ function App() {
             <button
               onClick={() => activePreset && savePreset(activePreset)}
               style={{
-                background: '#00ff88',
-                color: '#000',
+                background: 'var(--success-gradient)',
+                color: '#04120c',
                 border: 'none',
-                padding: '6px 16px',
-                borderRadius: '4px',
+                padding: '7px 16px',
+                borderRadius: '9999px',
                 cursor: activePreset ? 'pointer' : 'not-allowed',
                 opacity: activePreset ? 1 : 0.3,
                 fontWeight: 'bold',
+                fontSize: 13,
+                fontFamily: 'var(--font-display)',
                 transition: 'opacity 0.2s'
               }}
               disabled={!activePreset}
@@ -237,8 +230,17 @@ function App() {
 
         {view === 'dashboard' ? (
           <DashboardView
+            signals={signals}
             onOpenStrategy={(id) => { setSelectedStrategyId(id); navigate('strategies'); }}
             onOpenMarkerChart={openMarkerChart}
+            onSelectToken={openTokenPage}
+          />
+        ) : view === 'token' && pageToken ? (
+          <TokenDetailView
+            symbol={pageToken.symbol}
+            name={pageToken.name}
+            signals={signals}
+            onBack={() => navigate('dashboard')}
           />
         ) : view === 'settings' ? (
           <SettingsView />

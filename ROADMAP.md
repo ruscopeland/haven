@@ -139,8 +139,42 @@ Dashboard for a while and placed the C3 $5 test trade successfully.
 - [x] E2 🔧 Settings tab: engine risk limits editor (port of wallet ConfigPanel, PATCH
       `/engine/settings`) + collector/API health detail. ✔ Save verified round-trip
       against the API and restored to original values.
-- [ ] E3 🧠 UX pass with the user: naming, empty states, confirmation dialogs for LIVE.
-      Tag `v4-alpha-terminal`. ← NEEDS USER (it's your opinion that matters here).
+- [x] E3a 🧠 **Visual parity + token page pass (2026-07-05).** User feedback: new
+      Dashboard was "plain and boring" vs. the old wallet, tokens weren't clickable, and
+      clicking one opened a second browser tab instead of an in-app page. Fixed:
+      - Ported the wallet app's whole glassmorphism theme into
+        `crypto-charting-ui/src/index.css` (CSS vars, glass panels, gradients, nav pills) —
+        applies app-wide (Dashboard/Charts/Strategies/Finder/Settings all inherit it, no
+        per-tab edits needed beyond the shared vars).
+      - `PortfolioSummary.jsx` (new): metric cards (net worth, unrealized P/L, realized
+        trading P/L) + asset-allocation donut, same shape as the old wallet's Dashboard.
+      - `WalletPanel.jsx` rewritten: styled holdings rows (icon, price, 24h%, P/L),
+        clickable → opens the token page. PnL math in new `utils/pnl.js` (avg-cost walk
+        over FILLED trades).
+      - `TokenDetailView.jsx` (new): in-app token page (no second browser tab) — header
+        (price/24h/contract+BscScan), the **same `Chart.jsx` component embedded** at
+        page-appropriate size (was previously dead code in the wallet's `TokenDetails.jsx`
+        that just did `window.open` to the chart UI — now actually renders inline), a
+        BUY/SELL box, and this token's trade history + active markers.
+      - **Buy/Sell is key-free**, same path as C3 Quick Trade: POSTs an immediate-fire
+        `STRAT_BUY`/`STRAT_SELL` marker, engine executes with full guard stack + 120s TTL.
+        Deliberately no auto-trade section (user asked to drop that from the token page).
+      - Removed `QuickTrade.jsx` from the Dashboard per user request — same order flow
+        now lives on the token page instead. Nothing else referenced it.
+      - Verified in browser (chart-preview :5199, live API): dashboard shows real
+        balances/PnL/donut, token page shows embedded chart + correct held balance +
+        trade history, Strategies/Finder/Settings/Charts tabs all re-themed with zero
+        console errors.
+      - **Answered user's "two engines?" question (see chat, not a code change):** there is
+        one execution engine — the headless `marker-engine` daemon. Manual buy/sell from
+        the token page, live strategies, and markers placed on a chart all funnel through
+        the same immediate-fire marker path into that one engine. The *separate* system is
+        the **old wallet app's own in-browser auto-trade loop** (60s localStorage jobs,
+        `crypto-wallet/src/context/WalletContext.jsx`) — untouched, still running, still
+        Phase D backlog (AD-1 flags it as the one thing that dies with its browser tab).
+        Nothing conflates the two today; retiring the wallet's auto-trade loop is D1/D2.
+- [ ] E3b 🧠 Remaining UX pass with the user: naming, empty states, confirmation dialogs
+      for LIVE. Tag `v4-alpha-terminal`. ← NEEDS USER (it's your opinion that matters here).
 
 ## Phase F — Multi-user platform (DO NOT START without a dedicated planning session)
 

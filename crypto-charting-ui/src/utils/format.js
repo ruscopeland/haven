@@ -43,6 +43,17 @@ export function intervalToMs(interval) {
   return INTERVAL_MS[interval] || 300e3;
 }
 
+// Stable display color for a token (same scheme as the old wallet app):
+// hash of the contract address (fallback: symbol) → hue. BNB gets gold.
+export function tokenColor(seed, isBnb = false) {
+  if (isBnb) return '#f3ba2f';
+  let num = 0;
+  const s = String(seed || '');
+  if (/^0x[0-9a-fA-F]{8,}/.test(s)) num = parseInt(s.slice(2, 10), 16);
+  else for (let i = 0; i < s.length; i++) num = (num * 31 + s.charCodeAt(i)) >>> 0;
+  return `hsl(${num % 360}, 75%, 60%)`;
+}
+
 // Human name for an ALPHA_* symbol, falling back to the raw symbol.
 export function tokenLabel(symbol, tokenMap) {
   const t = tokenMap?.[symbol];
