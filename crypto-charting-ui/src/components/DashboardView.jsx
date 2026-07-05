@@ -69,7 +69,6 @@ export default function DashboardView({ signals, onOpenStrategy, onOpenMarkerCha
         </div>
         <div className="dash-col">
           <PortfolioSummary
-            compact
             wallet={wallet}
             prices={prices}
             tokenMap={tokenMap}

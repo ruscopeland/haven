@@ -283,6 +283,18 @@ the new Dashboard for a while and placed the C3 $5 test trade successfully.
       at ≥1100px viewport width — below that `dash-grid`'s existing mobile breakpoint
       stacks both columns full-width in DOM order (Strategies/Token Assets, then
       metrics/Asset Allocation/Activity), which was already true before this change.
+- [x] E3a6 🔧 **Portfolio stats: one row, one panel (2026-07-05).** User: E3a5's stacked
+      three-card layout still wasted a lot of space; wanted Net Worth/Holdings P&L/
+      Trading P&L side by side in a single row inside ONE panel, matching Asset
+      Allocation's width exactly. Rebuilt `PortfolioSummary.jsx` from three separate
+      `glass-panel metric-card` boxes into one `dash-panel` with a `.mini-stats` flex
+      row (new CSS, replacing the now-fully-unused `.metrics-grid`/`.metric-card`/
+      `.compact` variant from E3a5 — confirmed nothing else referenced those classes
+      before removing them). Dropped the now-meaningless `compact` prop. Verified at
+      desktop width: the `.mini-stats` row measures 546px inside a panel that is
+      exactly 592px — the same width as the Asset Allocation panel below it (both are
+      siblings in the same right `dash-col`) — loss color renders correctly
+      (`rgb(251,113,133)`), zero console errors.
 - [ ] E3b 🧠 Remaining UX pass with the user: naming, empty states, confirmation dialogs
       for LIVE. Tag `v4-alpha-terminal`. ← NEEDS USER (it's your opinion that matters here).
 
