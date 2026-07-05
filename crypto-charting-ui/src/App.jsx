@@ -6,6 +6,7 @@ import FinderWorkbench from './components/FinderWorkbench'
 import DashboardView from './components/DashboardView'
 import SettingsView from './components/SettingsView'
 import TokenDetailView from './components/TokenDetailView'
+import EngineToggle from './components/EngineToggle'
 
 const API_URL = 'http://localhost:8000';
 
@@ -204,6 +205,8 @@ function App() {
             <span style={{ marginLeft: 8 }}>Collector</span><HealthDot status={health.collector || 'unknown'} />
             <span style={{ marginLeft: 8 }}>Engine</span><HealthDot status={health.execution_engine || 'unknown'} />
           </div>
+
+          <EngineToggle />
 
           {view === 'charts' && (
             <button

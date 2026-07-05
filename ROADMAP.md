@@ -246,6 +246,27 @@ the new Dashboard for a while and placed the C3 $5 test trade successfully.
         with correct prices/qty/P&L, the donut includes them, Recent Trades shows the
         user's actual SELL VELVET $3.79 fill with fee + tx + expected-vs-actual price,
         quote panel is easy to read, zero console errors.
+- [x] E3a4 🔧 **Dashboard layout: reclaim wasted space (2026-07-05).** User: the top
+      metric row (Net Worth/Holdings P/L/Trading P/L + Asset Allocation as a 4th wide
+      card) was too tall, the Engine panel's risk-limit caps were redundant with
+      Settings, and the whole page needed less scrolling to reach Token Assets/Strategies.
+      - Extracted the shared net-worth/P&L/allocation math into
+        `hooks/usePortfolioStats.js` (was duplicated-in-waiting between the metric cards
+        and the donut).
+      - `PortfolioSummary.jsx` now renders ONLY the 3 metric cards — row height dropped
+        from needing to fit a 120px donut to 125px total (was ~230px).
+      - New `AssetAllocation.jsx`: the donut, moved into its own `dash-panel` in the right
+        column where the Engine panel used to sit.
+      - New compact `EngineToggle.jsx` in the App.jsx top toolbar, right next to the
+        existing API/Collector/Engine health dots (visible on every tab, not just
+        Dashboard) — same `/engine/settings` PATCH the old big toggle used.
+      - Deleted `EngineControls.jsx` entirely (risk-limit caps + "edited in Settings"
+        note were redundant with ⚙ Settings; the process-health dots were already at the
+        top) and its now-dead `.engine-toggle`/`.engine-caps` CSS.
+      - Verified in browser: metric row is 125px tall (3 equal columns), Asset Allocation
+        renders full legend in its new slot, toggle round-tripped LIVE→PAUSED→LIVE from
+        the toolbar (restored to LIVE, matches the real engine's state), zero console
+        errors.
 - [ ] E3b 🧠 Remaining UX pass with the user: naming, empty states, confirmation dialogs
       for LIVE. Tag `v4-alpha-terminal`. ← NEEDS USER (it's your opinion that matters here).
 

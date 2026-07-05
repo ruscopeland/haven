@@ -1,9 +1,9 @@
 import { useState, useEffect, useMemo } from 'react';
 import StrategyStatusBoard from './StrategyStatusBoard';
-import EngineControls from './EngineControls';
 import ActivityTables from './ActivityTables';
 import WalletPanel from './WalletPanel';
 import PortfolioSummary from './PortfolioSummary';
+import AssetAllocation from './AssetAllocation';
 import useWalletData from '../hooks/useWalletData';
 import { computePnl } from '../utils/pnl';
 import '../dashboard.css';
@@ -76,7 +76,7 @@ export default function DashboardView({ signals, onOpenStrategy, onOpenMarkerCha
           <StrategyStatusBoard prices={prices} tokenMap={tokenMap} onOpenStrategy={onOpenStrategy} />
         </div>
         <div className="dash-col">
-          <EngineControls />
+          <AssetAllocation wallet={wallet} prices={prices} tokenMap={tokenMap} pnlBySymbol={pnlBySymbol} />
           <ActivityTables overview={overview} tokenMap={tokenMap} bnbPrice={wallet.bnbPrice}
             onOpenMarkerChart={onOpenMarkerChart} />
         </div>
