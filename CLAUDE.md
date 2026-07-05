@@ -6,6 +6,12 @@ a FastAPI server exposes it, a charting UI places order "markers" on price level
 them. The wallet app is the dashboard/control panel — it does NOT execute markers.
 `start.bat` launches all five windows. This doc traces the real runtime flow from source.
 
+> **⚠ Working agreement (2026-07-05):** This repo is under git (`v0-baseline` = pre-reorg
+> state). A reorganization into one app is in progress — **before making ANY change, read
+> `ROADMAP.md` (task list + binding execution rules) and `WORKFLOW.md` (session protocol)**.
+> Do exactly one roadmap task per session. The user is not a programmer; never assume he
+> can debug — verify your own work against the task's checklist. DB backups: `backup-db.bat`.
+
 ---
 
 ## The pieces and how data moves
