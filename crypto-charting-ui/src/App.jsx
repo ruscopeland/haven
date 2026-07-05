@@ -129,56 +129,48 @@ function App() {
 
       <div className="main-content" style={{ display: 'flex', flexDirection: 'column', flex: 1, overflow: 'hidden' }}>
         <div className="preset-toolbar" style={{ display: 'flex', gap: '10px', padding: '10px', background: '#131722', borderBottom: '1px solid #2a2f42', alignItems: 'center' }}>
-          <span style={{ color: '#a0a5b8', fontWeight: 'bold', marginRight: '10px' }}>Layouts:</span>
-          {[1, 2, 3, 4, 5].map(num => (
+          {[['charts', '📊 Charts'], ['strategies', '⚡ Strategies'], ['finder', '🔍 Token Finder']].map(([key, label]) => (
             <button
-              key={num}
-              onClick={() => { setView('charts'); loadPreset(num); }}
+              key={key}
+              onClick={() => setView(key)}
               style={{
-                background: view === 'charts' && activePreset === num ? '#3388ff' : '#2a2f42',
+                background: view === key ? '#3388ff' : '#2a2f42',
                 color: '#fff',
                 border: 'none',
                 padding: '6px 16px',
                 borderRadius: '4px',
                 cursor: 'pointer',
-                fontWeight: view === 'charts' && activePreset === num ? 'bold' : 'normal',
+                fontWeight: view === key ? 'bold' : 'normal',
                 transition: 'background 0.2s'
               }}
             >
-              Preset {num}
+              {label}
             </button>
           ))}
-          <button
-            onClick={() => setView(view === 'strategies' ? 'charts' : 'strategies')}
-            style={{
-              background: view === 'strategies' ? '#3388ff' : '#2a2f42',
-              color: '#fff',
-              border: 'none',
-              padding: '6px 16px',
-              borderRadius: '4px',
-              cursor: 'pointer',
-              fontWeight: view === 'strategies' ? 'bold' : 'normal',
-              transition: 'background 0.2s',
-              marginLeft: '10px'
-            }}
-          >
-            ⚡ Strategies
-          </button>
-          <button
-            onClick={() => setView(view === 'finder' ? 'charts' : 'finder')}
-            style={{
-              background: view === 'finder' ? '#3388ff' : '#2a2f42',
-              color: '#fff',
-              border: 'none',
-              padding: '6px 16px',
-              borderRadius: '4px',
-              cursor: 'pointer',
-              fontWeight: view === 'finder' ? 'bold' : 'normal',
-              transition: 'background 0.2s'
-            }}
-          >
-            🔍 Token Finder
-          </button>
+
+          {view === 'charts' && (
+            <>
+              <span style={{ color: '#a0a5b8', fontWeight: 'bold', marginLeft: '16px' }}>Layouts:</span>
+              {[1, 2, 3, 4, 5].map(num => (
+                <button
+                  key={num}
+                  onClick={() => loadPreset(num)}
+                  style={{
+                    background: activePreset === num ? '#3388ff' : '#2a2f42',
+                    color: '#fff',
+                    border: 'none',
+                    padding: '6px 12px',
+                    borderRadius: '4px',
+                    cursor: 'pointer',
+                    fontWeight: activePreset === num ? 'bold' : 'normal',
+                    transition: 'background 0.2s'
+                  }}
+                >
+                  {num}
+                </button>
+              ))}
+            </>
+          )}
           <div style={{ flex: 1 }}></div>
 
           {/* Health indicators */}
@@ -188,23 +180,25 @@ function App() {
             <span style={{ marginLeft: 8 }}>Engine</span><HealthDot status={health.execution_engine || 'unknown'} />
           </div>
 
-          <button 
-            onClick={() => activePreset && savePreset(activePreset)}
-            style={{
-              background: '#00ff88',
-              color: '#000',
-              border: 'none',
-              padding: '6px 16px',
-              borderRadius: '4px',
-              cursor: activePreset ? 'pointer' : 'not-allowed',
-              opacity: activePreset ? 1 : 0.3,
-              fontWeight: 'bold',
-              transition: 'opacity 0.2s'
-            }}
-            disabled={!activePreset}
-          >
-            Save to Preset {activePreset ? activePreset : ''}
-          </button>
+          {view === 'charts' && (
+            <button
+              onClick={() => activePreset && savePreset(activePreset)}
+              style={{
+                background: '#00ff88',
+                color: '#000',
+                border: 'none',
+                padding: '6px 16px',
+                borderRadius: '4px',
+                cursor: activePreset ? 'pointer' : 'not-allowed',
+                opacity: activePreset ? 1 : 0.3,
+                fontWeight: 'bold',
+                transition: 'opacity 0.2s'
+              }}
+              disabled={!activePreset}
+            >
+              Save to Preset {activePreset ? activePreset : ''}
+            </button>
+          )}
         </div>
 
         {view === 'strategies' ? (
