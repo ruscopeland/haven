@@ -17,6 +17,7 @@ function App() {
   const [selectedTokens, setSelectedTokens] = useState([]);
   const [activePreset, setActivePreset] = useState(null);
   const [view, setView] = useState('dashboard');   // 'dashboard' | 'charts' | 'strategies' | 'finder'
+  const [selectedStrategyId, setSelectedStrategyId] = useState(null);
   const [signals, setSignals] = useState([]);
   const [sortBy, setSortBy] = useState("flow_15m");
   const [health, setHealth] = useState({ collector: 'unknown', execution_engine: 'unknown' });
@@ -205,11 +206,11 @@ function App() {
         </div>
 
         {view === 'dashboard' ? (
-          <DashboardView />
+          <DashboardView onOpenStrategy={(id) => { setSelectedStrategyId(id); setView('strategies'); }} />
         ) : view === 'settings' ? (
           <SettingsView />
         ) : view === 'strategies' ? (
-          <StrategyWorkbench signals={signals} />
+          <StrategyWorkbench signals={signals} initialSelectId={selectedStrategyId} />
         ) : view === 'finder' ? (
           <FinderWorkbench />
         ) : (

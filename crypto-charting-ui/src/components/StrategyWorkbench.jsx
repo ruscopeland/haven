@@ -38,7 +38,7 @@ const newDraftFromTemplate = (tpl, symbol) => ({
   switchMarginPct: 10,
 });
 
-export default function StrategyWorkbench({ signals = [] }) {
+export default function StrategyWorkbench({ signals = [], initialSelectId = null }) {
   const [list, setList] = useState([]);
   const [draft, setDraft] = useState(() => {
     try {
@@ -125,6 +125,17 @@ export default function StrategyWorkbench({ signals = [] }) {
       setDirty(false);
     } catch (err) { console.error('Failed to load strategy', err); }
   };
+
+  // Deep-link from the Dashboard's strategy cards: open a specific strategy
+  // once its row is available in the polled list. Applied once per id so the
+  // 10s list poll doesn't keep re-selecting over the user's own navigation.
+  const appliedSelectId = useRef(null);
+  useEffect(() => {
+    if (initialSelectId == null || initialSelectId === appliedSelectId.current) return;
+    if (!list.some(s => s.id === initialSelectId)) return;
+    appliedSelectId.current = initialSelectId;
+    selectStrategy(initialSelectId);
+  }, [initialSelectId, list]);
 
   const saveDraft = async () => {
     const body = {

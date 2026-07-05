@@ -39,7 +39,7 @@ function computeStats(trades, prices) {
   return { pnl: proceeds - cost + unrealized, positions, trades24h, count: trades.length };
 }
 
-function StrategyCard({ strat, trades, prices, finderName, tokenMap }) {
+function StrategyCard({ strat, trades, prices, finderName, tokenMap, onOpenStrategy }) {
   const off = strat.mode === 'off';
   const stats = off ? null : computeStats(trades || [], prices);
   const source = strat.finder_id
@@ -47,7 +47,12 @@ function StrategyCard({ strat, trades, prices, finderName, tokenMap }) {
     : tokenLabel(strat.symbol, tokenMap);
 
   return (
-    <div className={`strat-card${off ? ' off' : ''}`}>
+    <div
+      className={`strat-card${off ? ' off' : ''}`}
+      onClick={() => onOpenStrategy?.(strat.id)}
+      style={{ cursor: onOpenStrategy ? 'pointer' : undefined }}
+      title="Open in Strategies tab"
+    >
       <div className="strat-head">
         <span className="fresh-dot" style={{ background: off ? '#2a2f42' : freshColor(strat) }}
           title={off ? 'off' : `last run ${timeAgo(strat.last_run_at)}`} />
@@ -90,7 +95,7 @@ function StrategyCard({ strat, trades, prices, finderName, tokenMap }) {
 // trade rows (PAPER for dry, FILLED for live). Prices/tokenMap come from the
 // DashboardView's shared overview poll so this component adds no extra
 // overview traffic.
-export default function StrategyStatusBoard({ prices, tokenMap }) {
+export default function StrategyStatusBoard({ prices, tokenMap, onOpenStrategy }) {
   const [strats, setStrats] = useState([]);
   const [finders, setFinders] = useState([]);
   const [tradeMap, setTradeMap] = useState({});
@@ -138,7 +143,7 @@ export default function StrategyStatusBoard({ prices, tokenMap }) {
       )}
       {[...running, ...idle].map(s => (
         <StrategyCard key={s.id} strat={s} trades={tradeMap[s.id]} prices={prices}
-          finderName={finderNames[s.finder_id]} tokenMap={tokenMap} />
+          finderName={finderNames[s.finder_id]} tokenMap={tokenMap} onOpenStrategy={onOpenStrategy} />
       ))}
     </div>
   );
