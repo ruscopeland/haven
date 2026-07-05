@@ -2,6 +2,8 @@ import { useState, useEffect } from 'react';
 import StrategyStatusBoard from './StrategyStatusBoard';
 import EngineControls from './EngineControls';
 import ActivityTables from './ActivityTables';
+import WalletPanel from './WalletPanel';
+import QuickTrade from './QuickTrade';
 import '../dashboard.css';
 
 const API_URL = 'http://localhost:8000';
@@ -44,6 +46,8 @@ export default function DashboardView() {
       </div>
       <div className="dash-col">
         <EngineControls />
+        <WalletPanel prices={prices} tokenMap={tokenMap} />
+        <QuickTrade tokenMap={tokenMap} prices={prices} />
       </div>
     </div>
   );
