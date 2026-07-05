@@ -16,8 +16,11 @@ export default function QuickTrade({ tokenMap, prices }) {
   const [msg, setMsg] = useState(null); // {kind:'ok'|'err', text}
   const [busy, setBusy] = useState(false);
 
+  // Only tokens the engine can actually swap (needs a contract address).
   const options = useMemo(() =>
-    Object.values(tokenMap || {}).map(t => ({ symbol: t.symbol, name: t.name || t.symbol })), [tokenMap]);
+    Object.values(tokenMap || {})
+      .filter(t => t.contract_address)
+      .map(t => ({ symbol: t.symbol, name: t.name || t.symbol })), [tokenMap]);
 
   const selected = useMemo(() => {
     const q = query.trim().toLowerCase();
@@ -27,7 +30,9 @@ export default function QuickTrade({ tokenMap, prices }) {
 
   const price = selected ? prices?.[selected.symbol] : null;
   const usdNum = parseFloat(usd);
-  const valid = selected && usdNum > 0;
+  // No collector price ⇒ the engine's impact guard couldn't evaluate the
+  // trade anyway — block it here instead of letting it fail engine-side.
+  const valid = selected && usdNum > 0 && price > 0;
 
   const send = async () => {
     setBusy(true); setMsg(null);
