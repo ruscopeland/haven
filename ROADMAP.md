@@ -119,15 +119,20 @@ The user's top ask: when a strategy runs DRY or LIVE, its status/results must be
       and check it appears in Recent trades as FILLED with reason "Manual BUY $5".
 - [x] C4 🧠 **Review checkpoint.** Tag `v2-wallet-panels`. ✔ See B4 (shared review commit).
 
-## Phase D — Retire the old wallet app + in-browser auto-trade ← NEEDS USER
+## Phase D — Retire the old wallet app + in-browser auto-trade (D2 ← NEEDS USER)
 
-Deliberately NOT done autonomously (2026-07-05): D1 is the user's call, and D2 deletes
-the user's working fallback dashboard — that happens only after he has used the new
-Dashboard for a while and placed the C3 $5 test trade successfully.
+D2 deletes the user's working fallback dashboard — that happens only after he has used
+the new Dashboard for a while and placed the C3 $5 test trade successfully.
 
-- [ ] D1 🧠 **Auto-trade migration decision.** The wallet's localStorage auto-trade jobs
-      (60s browser loop) either map to strategies/markers (preferred) or are dropped.
-      User decides live; document outcome here.
+- [x] D1 🧠 **Auto-trade migration decision.** ✔ DECIDED by the user 2026-07-05: the old
+      wallet's auto-trade will **not be used at all anymore** — dropped entirely, no
+      migration to strategies/markers. Nothing to port. Do not build on, fix, or extend
+      the wallet's auto-trade code; it is dead pending D2.
+      ⚠ Practical note until D2 lands: the 60s loop only runs while the old wallet tab
+      is open in a browser. Any leftover auto-trade jobs saved in that browser's
+      localStorage could still fire real trades if the old wallet tab is opened with the
+      key loaded — so don't leave the old wallet open unattended, and cancel any jobs
+      still listed there. D2 removes this risk permanently.
 - [ ] D2 🔧 **Retire.** Remove wallet window from `start.bat`; `git rm -r crypto-wallet`
       (history keeps it forever; `git checkout v2-wallet-panels -- crypto-wallet` brings
       it back). Update CLAUDE.md sections that mention the wallet app. Tag `v3-one-app`.

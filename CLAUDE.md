@@ -260,7 +260,10 @@ toggle** (Dashboard, Open Orders header) which PATCHes `/engine/settings`.
 Still in the wallet: balances/prices/PnL (DexScreener + BscScan trace), manual swaps
 (SwapPanel/TokenDetails), and a separate **auto-trade engine** (60s loop, localStorage jobs,
 DexScreener prices) — ⚠️ it shares no nonce queue with the daemon, so a concurrent auto-trade
-and marker fire can still collide; merging it into markers is planned (Phase 3).
+and marker fire can still collide. **User decision 2026-07-05 (ROADMAP D1): the auto-trade
+will NOT be used anymore — dropped, not migrated. Never build on or fix it; it disappears
+with the wallet app in Phase D2. Until then, leftover localStorage jobs can still fire if
+the old wallet tab is left open with the key loaded.**
 
 ---
 
@@ -336,6 +339,6 @@ Deliberately deferred (need browser verification / larger behavioral change):
 - One shared `executeSwap()` across the three in-browser swap paths (auto-trade, TokenDetails,
   SwapPanel) and splitting the WalletContext god component — the daemon is the money path and is
   isolated+tested; the browser paths work and were left untouched to avoid a blind regression.
-- Merging the wallet auto-trade engine into markers (still its own localStorage loop, no shared
-  nonce queue with the daemon).
+- ~~Merging the wallet auto-trade engine into markers~~ — superseded 2026-07-05: the user
+  decided (ROADMAP D1) the auto-trade is dropped entirely; nothing to merge.
 - WS/SSE push instead of polling; positions table with realized PnL.
