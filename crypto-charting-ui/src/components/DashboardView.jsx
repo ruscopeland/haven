@@ -61,21 +61,22 @@ export default function DashboardView({ signals, onOpenStrategy, onOpenMarkerCha
 
   return (
     <div className="dash-root">
-      <PortfolioSummary
-        wallet={wallet}
-        prices={prices}
-        tokenMap={tokenMap}
-        pnlBySymbol={pnlBySymbol}
-        openOrdersCount={(overview?.open_markers || []).length}
-        filledCount={filledTrades.length}
-      />
       <div className="dash-grid">
         <div className="dash-col">
+          <StrategyStatusBoard prices={prices} tokenMap={tokenMap} onOpenStrategy={onOpenStrategy} />
           <WalletPanel wallet={wallet} prices={prices} tokenMap={tokenMap} signals={signals}
             pnlBySymbol={pnlBySymbol} lastTradeBySymbol={lastTradeBySymbol} onSelectToken={onSelectToken} />
-          <StrategyStatusBoard prices={prices} tokenMap={tokenMap} onOpenStrategy={onOpenStrategy} />
         </div>
         <div className="dash-col">
+          <PortfolioSummary
+            compact
+            wallet={wallet}
+            prices={prices}
+            tokenMap={tokenMap}
+            pnlBySymbol={pnlBySymbol}
+            openOrdersCount={(overview?.open_markers || []).length}
+            filledCount={filledTrades.length}
+          />
           <AssetAllocation wallet={wallet} prices={prices} tokenMap={tokenMap} pnlBySymbol={pnlBySymbol} />
           <ActivityTables overview={overview} tokenMap={tokenMap} bnbPrice={wallet.bnbPrice}
             onOpenMarkerChart={onOpenMarkerChart} />

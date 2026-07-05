@@ -267,6 +267,22 @@ the new Dashboard for a while and placed the C3 $5 test trade successfully.
         renders full legend in its new slot, toggle round-tripped LIVE→PAUSED→LIVE from
         the toolbar (restored to LIVE, matches the real engine's state), zero console
         errors.
+- [x] E3a5 🔧 **Move Strategies above Token Assets; shrink metric cards to right
+      column (2026-07-05).** User: the metric row still spanned the full page width
+      above BOTH columns, pushing Strategies down far enough that it was cut off at the
+      bottom of the screen. Fix: `PortfolioSummary` now takes a `compact` prop
+      (single-column stacked layout, smaller padding/font — new `.metrics-grid.compact`
+      CSS) and moved from a full-width row above `dash-grid` to the FIRST item inside
+      the right `dash-col`, stacked directly above `AssetAllocation`. The left `dash-col`
+      now starts immediately with `StrategyStatusBoard` (moved above `WalletPanel`),
+      no longer waiting behind a full-width row. Verified at desktop width (1400px,
+      side-by-side columns: 740px left / 592px right): Strategies renders at the very
+      top of the page (y=74, same top edge as the right column's metrics), Token Assets
+      right below it, metrics card measured 592px wide (matches the right column exactly,
+      no longer full width), zero console errors. ⚠ Verified the two-column layout only
+      at ≥1100px viewport width — below that `dash-grid`'s existing mobile breakpoint
+      stacks both columns full-width in DOM order (Strategies/Token Assets, then
+      metrics/Asset Allocation/Activity), which was already true before this change.
 - [ ] E3b 🧠 Remaining UX pass with the user: naming, empty states, confirmation dialogs
       for LIVE. Tag `v4-alpha-terminal`. ← NEEDS USER (it's your opinion that matters here).
 

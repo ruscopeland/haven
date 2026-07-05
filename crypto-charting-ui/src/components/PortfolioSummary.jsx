@@ -1,15 +1,15 @@
 import { fmtUsd } from '../utils/format';
 import usePortfolioStats from '../hooks/usePortfolioStats';
 
-// Top metric-card row of the Dashboard — net worth, unrealized P/L, realized
-// P/L. Asset allocation lives in its own AssetAllocation panel (right column)
-// so this row stays compact. Fed by the key-free data sources: RPC balances,
-// collector prices, engine trades.
-export default function PortfolioSummary({ wallet, prices, tokenMap, pnlBySymbol, openOrdersCount, filledCount }) {
+// Portfolio metric cards — net worth, unrealized P/L, realized P/L. Stacked
+// above AssetAllocation in the right dash-col (compact = single narrow
+// column instead of spanning the page) so the left column can start at the
+// top with Strategies/Token Assets, no scrolling needed to reach them.
+export default function PortfolioSummary({ wallet, prices, tokenMap, pnlBySymbol, openOrdersCount, filledCount, compact }) {
   const stats = usePortfolioStats({ wallet, prices, tokenMap, pnlBySymbol });
 
   return (
-    <div className="metrics-grid">
+    <div className={`metrics-grid${compact ? ' compact' : ''}`}>
       <div className="glass-panel metric-card">
         <div className="metric-title">Portfolio Net Worth</div>
         <div className="metric-value">{fmtUsd(stats.netWorth)}</div>
