@@ -23,13 +23,17 @@ Four things run in the cloud (all one instance, shared by every customer):
 | **Collector** | market-data feed | `crypto-data-collector` | `Dockerfile.collector` |
 | **Paper-runner** | runs everyone's DRY strategies | `marker-engine` | `Dockerfile.paper-runner` |
 
-One thing runs in the browser: the **web app** (`crypto-charting-ui`) on Vercel.
+One thing runs in the browser: the **web app** (`crypto-charting-ui`) on
+**Cloudflare Pages** (chosen over Vercel 2026-07-06: static files serve with
+unlimited free bandwidth, so scraper/bot traffic can never run up a bill, and
+Cloudflare's bot/DDoS protection sits in front by default; free plan allows
+commercial use).
 
 One thing customers download: the **desktop engine** (built from `marker-engine`
 by `tools/build_engine_zip.py`, served by the API's `/engine/download`).
 
-Accounts you need (all from `SAAS-ROADMAP.md` S1.2): GitHub, Railway, Vercel,
-Clerk, Stripe.
+Accounts you need (all from `SAAS-ROADMAP.md` S1.2): GitHub, Railway,
+**Cloudflare** (Pages + ideally your domain's DNS), Clerk, Stripe.
 
 ---
 
@@ -118,18 +122,27 @@ Railway hosts four services in one project. Do them in this order.
 
 ---
 
-## 4. Vercel — the web app (yours, ~20 min)
+## 4. Cloudflare Pages — the web app (yours, ~20 min)
 
-1. Vercel → **Add New → Project** → import the same GitHub repo.
-2. **Root Directory**: `crypto-charting-ui`
-3. Framework preset: **Vite** (the included `vercel.json` sets build + SPA
-   rewrites; accept defaults).
-4. Environment Variables:
+1. Cloudflare dashboard → **Workers & Pages → Create → Pages →
+   Connect to Git** → pick your Haven GitHub repo.
+2. Build settings:
+   - **Framework preset**: Vite (or None — the values below are what matters)
+   - **Build command**: `npm run build`
+   - **Build output directory**: `dist`
+   - **Root directory** (under "Path"): `crypto-charting-ui`
+3. **Environment variables** (Production):
    - `VITE_API_URL` = the Railway API URL from 3b
    - `VITE_CLERK_PUBLISHABLE_KEY` = the `pk_…` from step 2
-5. Deploy. You get a URL like `haven.vercel.app`. (Custom domain in step 6.)
-6. Go back to the **API** service on Railway and set `HAVEN_CORS_ORIGINS` and
+4. Save and Deploy. You get a URL like `haven.pages.dev`. (Custom domain in
+   step 6.) Page-not-found on refresh is already handled — the repo ships a
+   `public/_redirects` file that routes every path to the app.
+5. Go back to the **API** service on Railway and set `HAVEN_CORS_ORIGINS` and
    `HAVEN_WEB_URL` to this web URL, then redeploy the API.
+
+Note: changing an environment variable on Pages requires a **re-deploy** to
+take effect (Deployments → Retry/Trigger) — the values are baked in at build
+time.
 
 At this point: visit the web URL → you should see the **Haven landing page**,
 be able to sign up with Clerk, and land on the **Subscribe** screen (no plan
@@ -174,13 +187,20 @@ swap the four price ids + secret + webhook secret for their live versions.
 
 ## 6. Domain (yours, ~15 min + DNS wait)
 
-1. Buy your domain (Cloudflare/Namecheap).
-2. In **Vercel** → project → Domains → add `app.<yourdomain>`; Vercel shows one
-   CNAME record — add it at your registrar.
+1. Buy your domain — **at Cloudflare** if possible (Registrar → Register
+   Domain): at-cost pricing, and DNS + Pages + the site all live in one
+   dashboard. (Bought elsewhere? Add the site to Cloudflare DNS first, or just
+   add the CNAMEs at your registrar.)
+2. In **Cloudflare Pages** → your project → **Custom domains** → add
+   `app.<yourdomain>`. With the domain on Cloudflare this is one click (it
+   creates the DNS record for you).
 3. In **Railway** → API service → Networking → Custom Domain → add
-   `api.<yourdomain>`; Railway shows a CNAME — add it too.
+   `api.<yourdomain>`; Railway shows a CNAME — add it in Cloudflare DNS.
+   ⚠ Set that one record to **"DNS only" (grey cloud, not orange)** —
+   Railway does its own certificate and proxying it through Cloudflare can
+   break the engine's connection.
 4. Update env to the real domains and redeploy:
-   - Vercel `VITE_API_URL` = `https://api.<yourdomain>`
+   - Pages `VITE_API_URL` = `https://api.<yourdomain>` (then re-deploy — build-time!)
    - API `HAVEN_CORS_ORIGINS` = `https://app.<yourdomain>`
    - API `HAVEN_WEB_URL` = `https://app.<yourdomain>`
 5. In **Clerk** → Domains, add your production domain so login works there.
@@ -252,11 +272,12 @@ HAVEN_PRICE_ANNUAL_STANDARD=price_...
 HAVEN_API_URL=https://api.<yourdomain>
 SERVICE_API_KEY=svc_<random>   # SAME as the API's
 ```
-**Web app (Vercel):**
+**Web app (Cloudflare Pages):**
 ```
 VITE_API_URL=https://api.<yourdomain>
 VITE_CLERK_PUBLISHABLE_KEY=pk_...
 ```
+(Baked in at build time — re-deploy after changing either one.)
 
 ---
 

@@ -109,7 +109,10 @@ Stripe account activation is the slowest external wait — start it first.
       1. **GitHub** — the cloud home for the code. Every hosting service deploys from
          it. (The repo goes up PRIVATE; the code is your product.)
       2. **Railway** — where the API, collector, paper-runner, and database will live.
-      3. **Vercel** — where the website itself will be served from.
+      3. **Cloudflare** — where the website is served from (Pages) and ideally where
+         the domain's DNS lives. (Switched from Vercel 2026-07-06 at the user's
+         request: unlimited free static bandwidth means scrapers/bots can never run
+         up a bill, built-in bot/DDoS protection, free plan allows commercial use.)
       4. **Clerk** — the login/accounts service.
       5. **Stripe** — the payments service. ⚠ START THIS FIRST-ish: activating a
          Stripe account means giving business details and a bank account, and their
@@ -199,7 +202,7 @@ forever), but the code underneath can tell users apart.
 
 ### Phase 4 — The website: login, payments, front door (ME + ~1 hr of you clicking)
 
-- [ ] **S4.1 (me) Deploy Alpha Terminal to Vercel** at app.«yourdomain», pointed at
+- [ ] **S4.1 (me) Deploy Haven to Cloudflare Pages** at app.«yourdomain», pointed at
       the cloud API, behind the Clerk sign-in wall. (Vercel's free tier forbids
       commercial use — we go straight to their $20/mo Pro plan at launch time.)
 - [ ] **S4.2 (me + you in dashboards) Payments — two routes, we try A first:**
@@ -223,7 +226,7 @@ forever), but the code underneath can tell users apart.
       approve the wording — it's your voice.
 - [ ] **S4.5 (me) Legal pages wired in** (ToS/Privacy/Risk from S1.4) + sign-up
       requires accepting them.
-- [ ] **S4.6 (you) DNS records** pointing app. and api. at Vercel/Railway (I give you
+- [ ] **S4.6 (you) DNS records** pointing app. and api. at Cloudflare Pages/Railway (I give you
       the exact two records to paste), Clerk + Stripe dashboard setup (guided).
 - **Done when:** a stranger can sign up, pay with Stripe's test card, and run a paper
   strategy end-to-end in their browser — no help from you.
@@ -307,7 +310,7 @@ forever), but the code underneath can tell users apart.
 |---|---|---|
 | Domain | ~$1/mo ($10–15/yr) | Cloudflare/Namecheap |
 | Railway (API + collector + runner + Postgres) | $10–30 | grows slowly with users |
-| Vercel (website) | $0 beta → $20 at launch | commercial use needs Pro |
+| Cloudflare Pages (website) | $0 | unlimited static bandwidth, commercial use OK |
 | Clerk (logins) | $0 | free to 10,000 monthly users |
 | Stripe | $0 monthly | ~2.9% + 30¢ per charge (+0.7% if Clerk Billing) |
 | Sentry + uptime monitor | $0 | free tiers are plenty |
@@ -356,7 +359,7 @@ forever), but the code underneath can tell users apart.
 1. Pick the product name; buy the domain (S1.1).
 2. Open the GitHub account (S1.2 #1) — needed before anything deploys.
 3. **Start the Stripe application today** (S1.2 #5) — it has the longest wait.
-4. Open Clerk, Railway, Vercel accounts (S1.2) — 5 minutes each.
+4. Open Clerk, Railway, Cloudflare accounts (S1.2) — 5 minutes each.
 5. Sleep on pricing (S1.3) and tell me a number.
 6. Say the word, and my next session starts **S2.1** (the database port).
 
