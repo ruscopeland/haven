@@ -6,6 +6,7 @@ import FinderWorkbench from './components/FinderWorkbench'
 import DashboardView from './components/DashboardView'
 import SettingsView from './components/SettingsView'
 import TokenDetailView from './components/TokenDetailView'
+import StrategyDetailView from './components/StrategyDetailView'
 import EngineToggle from './components/EngineToggle'
 
 const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:8000';
@@ -18,9 +19,10 @@ function HealthDot({ status }) {
 function App() {
   const [selectedTokens, setSelectedTokens] = useState([]);
   const [activePreset, setActivePreset] = useState(null);
-  const [view, setView] = useState('dashboard');   // 'dashboard' | 'token' | 'charts' | 'strategies' | 'finder' | 'settings'
+  const [view, setView] = useState('dashboard');   // 'dashboard' | 'token' | 'strategy' | 'charts' | 'strategies' | 'finder' | 'settings'
   const [selectedStrategyId, setSelectedStrategyId] = useState(null);
   const [pageToken, setPageToken] = useState(null); // {symbol, name} for the token detail page
+  const [pageStrategyId, setPageStrategyId] = useState(null); // for the strategy performance page
   // Marker-deep-link: a one-off chart view that isn't part of any saved
   // preset. `savedChartsRef` holds whatever was on the Charts page before we
   // jumped there, so leaving the temp view restores it exactly.
@@ -137,6 +139,18 @@ function App() {
     navigate('token');
   };
 
+  // Strategy performance page (from a Dashboard bot card or the workbench).
+  const openStrategyPage = (id) => {
+    setPageStrategyId(id);
+    navigate('strategy');
+  };
+
+  // Jump from the performance page into the workbench with the bot loaded.
+  const openStrategyEditor = (id) => {
+    setSelectedStrategyId(id);
+    navigate('strategies');
+  };
+
   // Marker deep-link: show only that marker's token on the Charts page,
   // without disturbing the preset/tokens the user had open there.
   const openMarkerChart = (symbol, name) => {
@@ -174,7 +188,7 @@ function App() {
         <div className="preset-toolbar" style={{ display: 'flex', gap: '10px', padding: '10px 16px', background: 'rgba(13, 20, 38, 0.75)', backdropFilter: 'blur(12px)', borderBottom: '1px solid var(--border-glass)', alignItems: 'center' }}>
           <span className="logo-title" style={{ marginRight: 8 }}>⚓ Haven</span>
           {[['dashboard', '🏠 Dashboard'], ['charts', '📊 Charts'], ['strategies', '⚡ Strategies'], ['finder', '🔍 Token Finder'], ['settings', '⚙ Settings']].map(([key, label]) => {
-            const active = view === key || (view === 'token' && key === 'dashboard');
+            const active = view === key || ((view === 'token' || view === 'strategy') && key === 'dashboard');
             return (
               <button key={key} onClick={() => navigate(key)} className={`nav-tab${active ? ' active' : ''}`}>
                 {label}
@@ -234,7 +248,8 @@ function App() {
         {view === 'dashboard' ? (
           <DashboardView
             signals={signals}
-            onOpenStrategy={(id) => { setSelectedStrategyId(id); navigate('strategies'); }}
+            onOpenStrategy={openStrategyPage}
+            onOpenStrategyEditor={openStrategyEditor}
             onOpenMarkerChart={openMarkerChart}
             onSelectToken={openTokenPage}
           />
@@ -245,10 +260,17 @@ function App() {
             signals={signals}
             onBack={() => navigate('dashboard')}
           />
+        ) : view === 'strategy' && pageStrategyId ? (
+          <StrategyDetailView
+            strategyId={pageStrategyId}
+            onBack={() => navigate('dashboard')}
+            onEdit={openStrategyEditor}
+          />
         ) : view === 'settings' ? (
           <SettingsView />
         ) : view === 'strategies' ? (
-          <StrategyWorkbench signals={signals} initialSelectId={selectedStrategyId} />
+          <StrategyWorkbench signals={signals} initialSelectId={selectedStrategyId}
+            onOpenStrategyPage={openStrategyPage} />
         ) : view === 'finder' ? (
           <FinderWorkbench />
         ) : (

@@ -26,8 +26,8 @@ from pydantic import BaseModel
 from sqlalchemy.orm import Session
 
 from database.db import get_db
-from database.models import Subscription
-from api.auth import get_identity, Identity, ACTIVE_STATUSES, SOLO_MODE
+from database.models import Subscription, Strategy
+from api.auth import get_identity, Identity, ACTIVE_STATUSES, SOLO_MODE, entitlements
 
 router = APIRouter(prefix="/billing", tags=["billing"])
 
@@ -36,6 +36,9 @@ STRIPE_WEBHOOK_SECRET = os.environ.get("STRIPE_WEBHOOK_SECRET", "")
 WEB_APP_URL = os.environ.get("HAVEN_WEB_URL", "http://localhost:5173")
 
 EARLY_LIMIT = int(os.environ.get("HAVEN_EARLY_LIMIT", "500"))
+# Optional Stripe free-trial window (days). 0 = no trial (default). While a
+# subscription is `trialing`, entitlements limit it to 1 paper-only bot.
+TRIAL_DAYS = int(os.environ.get("HAVEN_TRIAL_DAYS", "0"))
 
 PRICES = {
     ("monthly", True): os.environ.get("HAVEN_PRICE_MONTHLY_EARLY", ""),
@@ -88,18 +91,31 @@ def get_pricing(db: Session = Depends(get_db)):
 @router.get("/status")
 def billing_status(db: Session = Depends(get_db),
                    identity: Identity = Depends(get_identity)):
-    """This user's subscription state — drives the app's gate + badges."""
+    """This user's subscription state — drives the app's gate + badges.
+
+    Also reports bot entitlements (a bot = a strategy armed DRY or LIVE):
+    max_bots (null = unlimited, i.e. solo mode), how many are running now,
+    and whether LIVE mode is allowed (trials are paper-only).
+    """
+    ent = entitlements(db, identity)
+    bots_running = (db.query(Strategy)
+                    .filter(Strategy.user_id == identity.user_id,
+                            Strategy.mode != "off").count())
+    bots = {"max_bots": ent["max_bots"], "bots_running": bots_running,
+            "live_allowed": ent["live_allowed"]}
     if SOLO_MODE:
-        return {"status": "active", "plan": "solo", "early": True, "paid": True}
+        return {"status": "active", "plan": "solo", "early": True, "paid": True, **bots}
     sub = db.query(Subscription).filter(Subscription.user_id == identity.user_id).first()
     if not sub:
-        return {"status": "none", "plan": None, "early": False, "paid": False}
+        return {"status": "none", "plan": None, "early": False, "paid": False, **bots}
     return {
         "status": sub.status,
         "plan": sub.plan,
         "early": bool(sub.early),
         "paid": identity.paid,
         "current_period_end": sub.current_period_end,
+        "extra_bots": sub.extra_bots or 0,
+        **bots,
     }
 
 
@@ -124,14 +140,17 @@ def create_checkout(req: CheckoutRequest, db: Session = Depends(get_db),
     sub = db.query(Subscription).filter(Subscription.user_id == identity.user_id).first()
     customer_id = sub.stripe_customer_id if sub else None
 
+    subscription_data = {"metadata": {"user_id": identity.user_id,
+                                      "early": "1" if early else "0"}}
+    if TRIAL_DAYS > 0:
+        subscription_data["trial_period_days"] = TRIAL_DAYS
     session = stripe.checkout.Session.create(
         mode="subscription",
         line_items=[{"price": price_id, "quantity": 1}],
         client_reference_id=identity.user_id,
         customer=customer_id or None,
         metadata={"user_id": identity.user_id, "plan": plan, "early": "1" if early else "0"},
-        subscription_data={"metadata": {"user_id": identity.user_id,
-                                        "early": "1" if early else "0"}},
+        subscription_data=subscription_data,
         success_url=f"{WEB_APP_URL}/?billing=success",
         cancel_url=f"{WEB_APP_URL}/?billing=cancelled",
         allow_promotion_codes=True,

@@ -13,7 +13,7 @@ const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:8000';
 // Home tab. Owns the polls shared by every panel (overview 5s, token
 // metadata 5min, filled trades 30s for PnL) so child panels don't
 // duplicate traffic. Wallet balances come from the key-free C2 hook.
-export default function DashboardView({ signals, onOpenStrategy, onOpenMarkerChart, onSelectToken }) {
+export default function DashboardView({ signals, onOpenStrategy, onOpenStrategyEditor, onOpenMarkerChart, onSelectToken }) {
   const [overview, setOverview] = useState(null);
   const [tokenMap, setTokenMap] = useState({});
   const [filledTrades, setFilledTrades] = useState([]);
@@ -63,7 +63,8 @@ export default function DashboardView({ signals, onOpenStrategy, onOpenMarkerCha
     <div className="dash-root">
       <div className="dash-grid">
         <div className="dash-col">
-          <StrategyStatusBoard prices={prices} tokenMap={tokenMap} onOpenStrategy={onOpenStrategy} />
+          <StrategyStatusBoard prices={prices} tokenMap={tokenMap} onOpenStrategy={onOpenStrategy}
+            onOpenEditor={onOpenStrategyEditor} />
           <WalletPanel wallet={wallet} prices={prices} tokenMap={tokenMap} signals={signals}
             pnlBySymbol={pnlBySymbol} lastTradeBySymbol={lastTradeBySymbol} onSelectToken={onSelectToken} />
         </div>

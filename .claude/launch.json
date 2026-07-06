@@ -14,6 +14,13 @@
       "runtimeArgs": ["vite", "--port", "5199"],
       "cwd": "crypto-charting-ui",
       "port": 5199
+    },
+    {
+      "name": "chart-preview-apitest",
+      "runtimeExecutable": "npx",
+      "runtimeArgs": ["vite", "--port", "5198", "--mode", "apitest"],
+      "cwd": "crypto-charting-ui",
+      "port": 5198
     }
   ]
 }

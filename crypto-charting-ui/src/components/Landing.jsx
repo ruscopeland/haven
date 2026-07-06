@@ -10,6 +10,7 @@ const FEATURES = [
   ['Your keys never leave your computer', 'Live trading runs from a small app on your machine. We never see or hold your private key — the strongest guarantee in the business.'],
   ['Backtest, then paper-trade free in the cloud', 'Prove a strategy on historical data, then run it live-simulated in our cloud — no risk, no install — before you ever commit real funds.'],
   ['Token Finder + strategy engine', 'Rank every Alpha token every bar with your own scoring code, and let strategies trade the top picks automatically.'],
+  ['Run 3 bots side by side', 'Arm up to three strategies at once — paper or live — each with its own performance page: stats, equity curve, and every fill on the chart. Need more bots? Extra slots are coming as an add-on.'],
 ];
 
 export default function Landing() {
@@ -76,8 +77,10 @@ export default function Landing() {
           </div>
         </div>
         <p className="landing-fineprint">
-          Live trading requires a free desktop engine you download after signing up.
-          Automated trading carries risk; you can lose funds you commit. Not financial advice.
+          Every plan includes 3 bots running at once (extra slots coming as an add-on) and
+          unlimited saved strategies. Live trading requires a free desktop engine you
+          download after signing up. Automated trading carries risk; you can lose funds
+          you commit. Not financial advice.
         </p>
       </section>
     </div>

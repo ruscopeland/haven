@@ -134,6 +134,20 @@
 .h-sub { font-size: 11px; color: var(--text-muted); }
 
 /* ── Strategy cards ───────────────────────────────────────────────────── */
+.strat-board-head { display: flex; align-items: center; gap: 10px; }
+.strat-board-head h3 { margin-right: auto; }
+.bots-chip {
+  font-size: 11px; color: var(--text-muted);
+  background: rgba(255, 255, 255, 0.04);
+  border: 1px solid var(--border-glass);
+  border-radius: 9999px; padding: 3px 12px;
+  margin-bottom: 12px; white-space: nowrap;
+}
+.strat-edit-btn {
+  background: none; border: 1px solid var(--border-glass); color: var(--text-muted);
+  border-radius: 8px; padding: 2px 8px; font-size: 12px; cursor: pointer; line-height: 1.4;
+}
+.strat-edit-btn:hover { color: var(--text-bright); border-color: var(--border-glass-hover); }
 .strat-card {
   border: 1px solid var(--border-glass);
   border-radius: 12px;

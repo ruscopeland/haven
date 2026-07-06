@@ -21,6 +21,13 @@ older note disagree, this file wins. Written 2026-07-05.
 > postgres migration; engine setup wizard + zip builder. Solo mode still runs the old
 > local stack login-free.
 >
+> **2026-07-06 (later session): bot performance pages + bot-slot entitlements (S4.7)**
+> are also code-complete and verified — every plan includes **3 bots** running at once
+> (a bot = a strategy armed DRY or LIVE; saved strategies stay unlimited), extra slots
+> sellable via `subscriptions.extra_bots` (Stripe add-on product = post-launch task),
+> optional Stripe trial via `HAVEN_TRIAL_DAYS` env = **1 paper-only bot**. Solo mode is
+> never limited.
+>
 > Honestly NOT done (post-launch, none block a paying beta): signed Windows installer
 > (ships as a zip needing Node today), lawyer-reviewed legal pages, Sentry/uptime/backup
 > tests, engine auto-update. Tracked in Phases 5–6 below and DEPLOY.md §10.
@@ -228,6 +235,32 @@ forever), but the code underneath can tell users apart.
       requires accepting them.
 - [ ] **S4.6 (you) DNS records** pointing app. and api. at Cloudflare Pages/Railway (I give you
       the exact two records to paste), Clerk + Stripe dashboard setup (guided).
+- [x] **S4.7 (me) Bot performance pages + bot-slot entitlements (2026-07-06).** The user's
+      ask: each running strategy ("bot") must be analyzable in its own dedicated section,
+      and running several at once must be a first-class, sellable feature.
+      - **Per-bot performance page** in the charting UI: Dashboard strategy cards now open
+        it (workbench editing moved to the card's ✎ / an "Edit strategy" button; the
+        workbench gained "📊 Performance"). Paper and live records in separate sections;
+        KPI cards, realized-PnL equity curve, the runner's exact kline series with every
+        fill as an arrow, **click a trade in the history → the chart jumps to and
+        highlights that fill** (klines gained `end_ms` for windows older than 1000 bars —
+        verified Binance honors `endTime`), avg-cost line, open orders, per-token breakdown
+        for finder-bound bots, failed executions. New `GET /strategies/{id}/performance`
+        serves it in one call.
+      - **Entitlements**: multiple bots always worked engine-side (one runner per armed
+        strategy — verified); now the API enforces the business rule at arm time
+        (PATCH mode): paid = 3 + `extra_bots`, trial = 1 paper-only (LIVE → 403), over
+        cap → 409, solo/service unlimited. `/billing/status` reports
+        max_bots/bots_running/live_allowed; Dashboard shows "N of M bots running";
+        Landing/Subscribe/Settings copy updated. 10/10 gate tests pass (scratch-DB
+        TestClient run: 409 at cap, dry→live flip not double-counted, slot freed on stop,
+        trial live-block, extra_bots honored).
+      - Verified in browser against a second API instance (:8001, `chart-preview-apitest`
+        launch config + `crypto-charting-ui/.env.apitest`) with the real "drop buyer" DRY
+        portfolio bot: 23 paper fills, PnL matches the status board, trade-click chart
+        focus works, zero console errors. ⚠ Remaining for launch: Stripe add-on product
+        for extra bot slots (until then `extra_bots` is set manually), and choosing
+        whether to enable `HAVEN_TRIAL_DAYS`.
 - **Done when:** a stranger can sign up, pay with Stripe's test card, and run a paper
   strategy end-to-end in their browser — no help from you.
 

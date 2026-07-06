@@ -39,7 +39,7 @@ function computeStats(trades, prices) {
   return { pnl: proceeds - cost + unrealized, positions, trades24h, count: trades.length };
 }
 
-function StrategyCard({ strat, trades, prices, finderName, tokenMap, onOpenStrategy }) {
+function StrategyCard({ strat, trades, prices, finderName, tokenMap, onOpenStrategy, onOpenEditor }) {
   const off = strat.mode === 'off';
   const stats = off ? null : computeStats(trades || [], prices);
   const source = strat.finder_id
@@ -51,7 +51,7 @@ function StrategyCard({ strat, trades, prices, finderName, tokenMap, onOpenStrat
       className={`strat-card${off ? ' off' : ''}`}
       onClick={() => onOpenStrategy?.(strat.id)}
       style={{ cursor: onOpenStrategy ? 'pointer' : undefined }}
-      title="Open in Strategies tab"
+      title="Open this bot's performance page"
     >
       <div className="strat-head">
         <span className="fresh-dot" style={{ background: off ? '#2a2f42' : freshColor(strat) }}
@@ -62,6 +62,12 @@ function StrategyCard({ strat, trades, prices, finderName, tokenMap, onOpenStrat
         <span className="strat-sub" style={{ marginLeft: 'auto' }}>
           {off ? '' : `last run ${timeAgo(strat.last_run_at)}`}
         </span>
+        {onOpenEditor && (
+          <button className="strat-edit-btn" title="Edit code in the Strategies tab"
+            onClick={(e) => { e.stopPropagation(); onOpenEditor(strat.id); }}>
+            ✎
+          </button>
+        )}
       </div>
 
       {!off && stats && (
@@ -95,11 +101,22 @@ function StrategyCard({ strat, trades, prices, finderName, tokenMap, onOpenStrat
 // trade rows (PAPER for dry, FILLED for live). Prices/tokenMap come from the
 // DashboardView's shared overview poll so this component adds no extra
 // overview traffic.
-export default function StrategyStatusBoard({ prices, tokenMap, onOpenStrategy }) {
+export default function StrategyStatusBoard({ prices, tokenMap, onOpenStrategy, onOpenEditor }) {
   const [strats, setStrats] = useState([]);
   const [finders, setFinders] = useState([]);
   const [tradeMap, setTradeMap] = useState({});
   const [error, setError] = useState(null);
+  const [maxBots, setMaxBots] = useState(null);   // null = unlimited (solo mode)
+
+  // Bot allowance — one fetch; it only changes when the plan changes.
+  useEffect(() => {
+    let alive = true;
+    fetch(`${API_URL}/billing/status`)
+      .then(r => r.ok ? r.json() : null)
+      .then(d => { if (alive && d && d.max_bots != null) setMaxBots(d.max_bots); })
+      .catch(() => {});
+    return () => { alive = false; };
+  }, []);
 
   useEffect(() => {
     let alive = true;
@@ -134,7 +151,13 @@ export default function StrategyStatusBoard({ prices, tokenMap, onOpenStrategy }
 
   return (
     <div className="dash-panel">
-      <h3>Strategies</h3>
+      <div className="strat-board-head">
+        <h3>Strategies</h3>
+        <span className="bots-chip"
+          title="Every strategy armed DRY or LIVE is a bot — they all run in parallel.">
+          🤖 {running.length}{maxBots != null ? ` of ${maxBots}` : ''} bot{running.length === 1 ? '' : 's'} running
+        </span>
+      </div>
       {error && <div className="dash-error">Failed to load strategies: {error}</div>}
       {!error && strats.length === 0 && (
         <div className="dash-muted" style={{ fontSize: 12 }}>
@@ -143,7 +166,8 @@ export default function StrategyStatusBoard({ prices, tokenMap, onOpenStrategy }
       )}
       {[...running, ...idle].map(s => (
         <StrategyCard key={s.id} strat={s} trades={tradeMap[s.id]} prices={prices}
-          finderName={finderNames[s.finder_id]} tokenMap={tokenMap} onOpenStrategy={onOpenStrategy} />
+          finderName={finderNames[s.finder_id]} tokenMap={tokenMap}
+          onOpenStrategy={onOpenStrategy} onOpenEditor={onOpenEditor} />
       ))}
     </div>
   );

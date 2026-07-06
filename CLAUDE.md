@@ -104,6 +104,8 @@ FastAPI over the same DB. Schema in `database/models.py`. Key endpoints:
   the `engine_settings` key-value table, defaults in `ENGINE_SETTING_DEFAULTS` (server.py).
 - **`GET /signals`** — buy/sell/net flow over 1m/5m/15m/1h from `one_min_buckets`. Powers the screener.
 - **`GET /klines/{symbol}`** — proxies Binance Alpha klines (force-prefixes `ALPHA_`).
+  Optional `end_ms` (added 2026-07-06) passes Binance's `endTime` — verified honored — so the
+  bot performance page can jump the chart back to trades older than the newest window.
 - **`GET /flow/{symbol}?start_ms&end_ms&limit`** — raw ascending 1-minute buy/sell USD flow
   buckets (`[[bucket_ms, buy, sell, trade_count], …]`) for strategy backtests. Max honest
   lookback = the collector's ~7-day bucket retention.
@@ -115,6 +117,19 @@ FastAPI over the same DB. Schema in `database/models.py`. Key endpoints:
   Token selection: a fixed `symbol`, OR `finder_id` + `max_positions` (1–10) +
   `switch_margin_pct` with **`symbol=''`** (SQLite can't relax the NOT NULL; empty string +
   finder_id = dynamic). PATCH detaches a finder via the explicit `clear_finder` flag.
+  **Any number of strategies may run in parallel** (the runner keeps one instance per
+  `mode != off` row) — but arming one (PATCH `mode` off→dry/live) is gated by **bot
+  entitlements** (`entitlements()` in `api/auth.py`, added 2026-07-06): solo mode/service =
+  unlimited; paid = `HAVEN_BASE_BOTS` (3) + `subscriptions.extra_bots`; Stripe `trialing` =
+  `HAVEN_TRIAL_BOTS` (1) and **paper-only** (LIVE → 403). Over the cap → **409**; both carry
+  human-readable `detail` that the UIs alert as-is. `GET /billing/status` reports
+  `max_bots` (null = unlimited) / `bots_running` / `live_allowed` for the UI counters.
+- **`GET /strategies/{id}/performance`** (added 2026-07-06) — one call powering the per-bot
+  performance page: strategy row + trade history split into `paper` / `live` / `failed`
+  (each ascending, newest `limit` (1000, max 5000) rows, enriched with the triggering
+  marker's type/label as `reason` so TP/SL legs identify themselves), this strategy's active
+  markers, `token_prices` for involved symbols, and `finder_name`. Stats/equity math happens
+  client-side in `utils/strategyPerf.js` (same avg-cost walk as the runner's `applyFill`).
 - **Finders** (`finders`): `GET /finders` (list, no code), `GET/POST/PATCH/DELETE /finders/{id}`.
   Same `updated_at` contract (bumps only on code/params/interval — it is the FinderHub's
   hot-reload key). DELETE returns **409 while any strategy references the finder**.
@@ -171,6 +186,22 @@ FastAPI over the same DB. Schema in `database/models.py`. Key endpoints:
 - **📖 Guide panel** (`GuidePanel.jsx`): slide-over docs from both tabs; renders
   `strategy-sdk/docs/*.md` (Vite alias `@sdk-docs`, `?raw` imports, tiny built-in markdown
   renderer). Code blocks defining a strategy/finder get an "Insert into editor" button.
+- **🤖 Bot performance page** (added 2026-07-06: `StrategyDetailView.jsx` +
+  `StrategyTradeChart.jsx` + `EquityChart.jsx`, math in `utils/strategyPerf.js`, styles in
+  `strategy-detail.css`): clicking a strategy card on the Dashboard now opens THIS page (the
+  old jump-to-workbench behavior moved to the card's ✎ button / the page's "Edit strategy";
+  the workbench gained a "📊 Performance" button back). Data: `/strategies/{id}/performance`
+  polled 10s. **Paper and live records are separate sections** (pill toggle, defaults to the
+  bot's current mode). Shows: KPI cards (net/realized/unrealized PnL, win rate, profit
+  factor, max drawdown on realized curve, exposure, volume, gas fees), realized-PnL equity
+  chart, the runner's exact kline series with **every fill drawn as an arrow — clicking a
+  trade row focuses + highlights it on the chart** (fetches an older window via klines
+  `end_ms` when the trade predates the loaded candles), avg-cost price line while holding,
+  open orders (queued signals/bracket legs), per-token breakdown + symbol chips for
+  finder-bound strategies, failed-execution list (live). OFF/DRY/LIVE toggle lives here too
+  (same LIVE confirm; surfaces the 409/403 entitlement errors). The Dashboard strategy board
+  header shows "N of M bots running" (M from `/billing/status`; hidden cap in solo =
+  unlimited).
 
 ## 4. Marker Engine — `marker-engine/` (Node daemon, the ONLY marker executor)
 

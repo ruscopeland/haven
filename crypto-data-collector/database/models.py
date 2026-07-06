@@ -254,6 +254,10 @@ class Subscription(Base):
     price_id = Column(String, nullable=True)
     current_period_end = Column(BigInteger, nullable=True)  # unix ms
     early = Column(Integer, default=0)                     # 1 = founding price lock
+    # Bot slots purchased beyond the plan's included allowance (see
+    # api/auth.py entitlements). Set by the owner / a future Stripe add-on;
+    # a "bot" is a strategy armed DRY or LIVE.
+    extra_bots = Column(Integer, default=0)
     created_at = Column(BigInteger)
     updated_at = Column(BigInteger)
 

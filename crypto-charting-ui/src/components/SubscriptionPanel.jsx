@@ -42,6 +42,14 @@ export default function SubscriptionPanel() {
         {status.plan && <span className="dash-muted" style={{ fontSize: 12 }}>· {status.plan}</span>}
         {status.early ? <span className="pill" title="Founding member — price locked">🔥 Founding price</span> : null}
       </div>
+      {status.max_bots != null && (
+        <div className="dash-muted" style={{ fontSize: 12, marginBottom: 12 }}>
+          🤖 Bots: <b style={{ color: '#e5e9f0' }}>{status.bots_running ?? 0} of {status.max_bots}</b> running
+          (a bot is a strategy armed DRY or LIVE{status.extra_bots ? `; includes ${status.extra_bots} extra slot${status.extra_bots > 1 ? 's' : ''}` : ''}).
+          {status.live_allowed === false && ' Trial accounts are paper-only — subscribe to unlock LIVE trading.'}
+          {' '}Need more slots? Extra bots are coming as an add-on — contact support.
+        </div>
+      )}
       <button className="settings-save" disabled={busy} onClick={openPortal}>
         {busy ? 'Opening…' : 'Manage billing / cancel'}
       </button>

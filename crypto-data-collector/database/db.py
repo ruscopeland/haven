@@ -94,6 +94,9 @@ def ensure_db_settings():
                       "engine_settings"):
             _ensure_column(conn, table, "user_id", "TEXT DEFAULT 'local'")
         _ensure_column(conn, "debug_logs", "user_id", "TEXT DEFAULT 'system'")
+        # Bot-slot entitlements (2026-07-06): purchased slots beyond the plan's
+        # included bots.
+        _ensure_column(conn, "subscriptions", "extra_bots", "INTEGER DEFAULT 0")
         for table in ("strategies", "chart_markers", "trade_history"):
             conn.execute(text(
                 f"CREATE INDEX IF NOT EXISTS ix_{table}_user_id ON {table} (user_id);"

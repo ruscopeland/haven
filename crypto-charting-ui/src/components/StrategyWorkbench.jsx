@@ -39,7 +39,7 @@ const newDraftFromTemplate = (tpl, symbol) => ({
   switchMarginPct: 10,
 });
 
-export default function StrategyWorkbench({ signals = [], initialSelectId = null }) {
+export default function StrategyWorkbench({ signals = [], initialSelectId = null, onOpenStrategyPage = null }) {
   const [list, setList] = useState([]);
   const [draft, setDraft] = useState(() => {
     try {
@@ -203,7 +203,14 @@ export default function StrategyWorkbench({ signals = [], initialSelectId = null
         method: 'PATCH', headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ mode }),
       });
-      if (res.ok) fetchList();
+      if (res.ok) {
+        fetchList();
+      } else {
+        // e.g. the bot limit (409) or a trial trying to go LIVE (403) — the
+        // server's detail is written for humans, show it as-is.
+        const d = await res.json().catch(() => ({}));
+        window.alert(d.detail || `Could not change mode (HTTP ${res.status}).`);
+      }
     } catch (err) { console.error('Failed to set mode', err); }
   };
 
@@ -496,6 +503,12 @@ export default function StrategyWorkbench({ signals = [], initialSelectId = null
           </button>
           {draft.id && <button className="wb-btn wb-delete" onClick={deleteStrategy}>Delete</button>}
           <button className="wb-btn wb-guide" onClick={() => setShowGuide(true)}>📖 Guide</button>
+          {draft.id && onOpenStrategyPage && (
+            <button className="wb-btn wb-guide" title="How is this bot doing? Stats, equity, every fill on a chart."
+              onClick={() => onOpenStrategyPage(draft.id)}>
+              📊 Performance
+            </button>
+          )}
           <span className="wb-save-msg">{saveMsg}</span>
           <div style={{ flex: 1 }} />
           {draft.id && selectedRow && (

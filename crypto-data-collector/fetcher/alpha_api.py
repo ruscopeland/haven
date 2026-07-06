@@ -42,10 +42,13 @@ class BinanceAlphaAPI:
             response.raise_for_status()
             return await response.json()
 
-    async def get_klines(self, symbol: str, interval: str = "1m", limit: int = 1000):
+    async def get_klines(self, symbol: str, interval: str = "1m", limit: int = 1000,
+                         end_time: int | None = None):
         session = await self._get_session()
         url = f"{self.BASE_URL}/public/alpha-trade/klines"
         params = {"symbol": symbol, "interval": interval, "limit": limit}
+        if end_time:
+            params["endTime"] = int(end_time)   # candles at/before this unix-ms time
         async with session.get(url, params=params) as response:
             response.raise_for_status()
             return await response.json()

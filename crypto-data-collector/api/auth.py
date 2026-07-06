@@ -163,3 +163,25 @@ def require_paid(identity: Identity = Depends(get_identity)) -> Identity:
     if not identity.paid:
         raise HTTPException(status_code=402, detail="Active subscription required")
     return identity
+
+
+# ── Bot entitlements ─────────────────────────────────────────────────────────
+# A "bot" is a strategy armed DRY or LIVE (mode != off). Saved strategies are
+# unlimited — only running ones count. Plan allowances (owner decision
+# 2026-07-06): paid subscription includes BASE_BOTS, extra slots can be sold on
+# top (subscriptions.extra_bots); a Stripe trial gets TRIAL_BOTS and may only
+# paper-trade. Solo mode and the service runner are never limited.
+BASE_BOTS = int(os.environ.get("HAVEN_BASE_BOTS", "3"))
+TRIAL_BOTS = int(os.environ.get("HAVEN_TRIAL_BOTS", "1"))
+
+
+def entitlements(db: Session, identity: Identity) -> dict:
+    """What this identity may run: {max_bots (None = unlimited), live_allowed,
+    trial}. Enforced where a strategy's mode is armed (PATCH /strategies)."""
+    if SOLO_MODE or identity.is_service:
+        return {"max_bots": None, "live_allowed": True, "trial": False}
+    sub = db.query(Subscription).filter(Subscription.user_id == identity.user_id).first()
+    if sub and sub.status == "trialing":
+        return {"max_bots": TRIAL_BOTS, "live_allowed": False, "trial": True}
+    extra = (sub.extra_bots or 0) if sub else 0
+    return {"max_bots": BASE_BOTS + extra, "live_allowed": True, "trial": False}

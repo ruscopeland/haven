@@ -7,7 +7,9 @@ from database.models import (
     DebugLog, EngineSetting, Strategy, Finder, FifteenMinBucket,
     MARKER_TYPES, STRATEGY_MODES, FINDER_INTERVALS,
 )
-from api.auth import get_identity, require_paid, Identity, SOLO_MODE, hash_key
+from api.auth import (
+    get_identity, require_paid, Identity, SOLO_MODE, hash_key, entitlements,
+)
 from fetcher.alpha_api import BinanceAlphaAPI
 from pydantic import BaseModel
 from typing import List, Any
@@ -495,6 +497,28 @@ def update_strategy(strategy_id: str, s: StrategyUpdate, db: Session = Depends(g
     _validate_token_selection(db, strat.user_id, next_symbol, next_finder,
                               s.max_positions, s.switch_margin_pct)
 
+    # Bot entitlements: arming a strategy (mode off → dry/live) consumes a bot
+    # slot; LIVE additionally requires a full (non-trial) subscription. The
+    # service runner only PATCHes status fields, never mode, so this path is
+    # user/engine-only. 409 = slots full, 403 = trial trying to go live; both
+    # carry a human-readable detail the UI shows as-is.
+    if s.mode in ("dry", "live") and not identity.is_service:
+        ent = entitlements(db, identity)
+        if s.mode == "live" and not ent["live_allowed"]:
+            raise HTTPException(
+                status_code=403,
+                detail="Trial accounts run paper (DRY) bots only. Subscribe to unlock live trading.")
+        if ent["max_bots"] is not None and strat.mode == "off":
+            running = (db.query(Strategy)
+                       .filter(Strategy.user_id == strat.user_id,
+                               Strategy.mode != "off",
+                               Strategy.id != strategy_id).count())
+            if running >= ent["max_bots"]:
+                raise HTTPException(
+                    status_code=409,
+                    detail=(f"Bot limit reached: {running} of {ent['max_bots']} bots already running. "
+                            "Stop one first (set it to OFF), or add bot slots to your plan."))
+
     definition_changed = False
     for field in ("code", "symbol", "interval", "params_json", "finder_id",
                   "max_positions", "switch_margin_pct"):
@@ -540,6 +564,99 @@ def delete_strategy(strategy_id: str, db: Session = Depends(get_db),
     db.delete(strat)
     db.commit()
     return {"ok": True, "deleted_active_markers": orphaned}
+
+
+@app.get("/strategies/{strategy_id}/performance")
+def strategy_performance(strategy_id: str, limit: int = 1000,
+                         db: Session = Depends(get_db),
+                         identity: Identity = Depends(require_paid)):
+    """Everything the per-strategy performance page needs, in one call.
+
+    Returns the strategy row plus its trade history split by kind — `paper`
+    (PAPER dry-run fills), `live` (FILLED on-chain fills), `failed` (aborted
+    executions, last 100) — each ASCENDING by block_time (the newest `limit`
+    rows), enriched with the triggering marker's type/label as reason (TP/SL
+    legs identify themselves this way). Also: this strategy's still-active
+    markers (queued signals + open bracket legs), current prices for every
+    symbol involved, and the attached finder's name. Stats/equity are computed
+    client-side from these rows so the math lives in one place (the UI's
+    strategyPerf util).
+    """
+    q = db.query(Strategy).filter(Strategy.id == strategy_id)
+    if not identity.is_service:
+        q = q.filter(Strategy.user_id == identity.user_id)
+    strat = q.first()
+    if not strat:
+        raise HTTPException(status_code=404, detail="Strategy not found")
+    limit = max(1, min(limit, 5000))
+    owner = strat.user_id
+
+    def fetch_trades(status: str, n: int):
+        rows = (db.query(TradeHistory)
+                .filter(TradeHistory.user_id == owner,
+                        TradeHistory.strategy_id == strategy_id,
+                        TradeHistory.status == status)
+                .order_by(TradeHistory.block_time.desc()).limit(n).all())
+        rows.reverse()          # ascending — stats walk oldest → newest
+        return rows
+
+    paper = fetch_trades("PAPER", limit)
+    live = fetch_trades("FILLED", limit)
+    failed = fetch_trades("FAILED", 100)
+
+    marker_ids = {t.marker_id for t in [*live, *failed] if t.marker_id}
+    markers_map = {}
+    if marker_ids:
+        for m in (db.query(ChartMarker)
+                  .filter(ChartMarker.user_id == owner,
+                          ChartMarker.id.in_(marker_ids)).all()):
+            markers_map[m.id] = m
+
+    def trade_dict(t):
+        m = markers_map.get(t.marker_id)
+        return {
+            "id": t.id, "symbol": t.symbol, "direction": t.direction,
+            "marker_id": t.marker_id, "expected_price": t.expected_price,
+            "execution_price": t.execution_price, "amount_in": t.amount_in,
+            "amount_out": t.amount_out, "fee_token": t.fee_token,
+            "fee_amount": t.fee_amount, "gas_used": t.gas_used,
+            "gas_price_gwei": t.gas_price_gwei, "gas_cost_native": t.gas_cost_native,
+            "tx_hash": t.tx_hash, "block_time": t.block_time, "status": t.status,
+            "strategy_id": t.strategy_id,
+            "reason": m.marker_type if m else None,
+            "reason_label": (m.label or None) if m else None,
+        }
+
+    open_markers = (db.query(ChartMarker)
+                    .filter(ChartMarker.user_id == owner,
+                            ChartMarker.strategy_id == strategy_id,
+                            ChartMarker.active == 1)
+                    .order_by(ChartMarker.created_at.desc()).limit(100).all())
+
+    symbols = {t.symbol for t in [*paper, *live, *failed]}
+    symbols.update(m.symbol for m in open_markers)
+    if strat.symbol:
+        symbols.add(strat.symbol)
+    token_prices = {}
+    if symbols:
+        for tk in db.query(LatestTicker).filter(LatestTicker.symbol.in_(symbols)).all():
+            if tk.last_price and tk.last_price > 0:
+                token_prices[tk.symbol] = tk.last_price
+
+    finder_name = None
+    if strat.finder_id:
+        f = db.query(Finder).filter(Finder.id == strat.finder_id).first()
+        finder_name = f.name if f else None
+
+    return {
+        "strategy": StrategyListItem.model_validate(strat).model_dump(),
+        "paper": [trade_dict(t) for t in paper],
+        "live": [trade_dict(t) for t in live],
+        "failed": [trade_dict(t) for t in failed],
+        "open_markers": [MarkerResponse.model_validate(m).model_dump() for m in open_markers],
+        "token_prices": token_prices,
+        "finder_name": finder_name,
+    }
 
 
 # ── Finder schemas + endpoints (Token Finder module) ───────────────────────
@@ -1541,19 +1658,26 @@ _KLINES_TTL_SEC = float(os.environ.get("KLINES_CACHE_TTL", "5"))
 
 @app.get("/klines/{symbol}")
 async def get_klines(symbol: str, interval: str = "5m", limit: int = 500,
+                     end_ms: int | None = None,
                      identity: Identity = Depends(require_paid)):
-    """Retrieve historical klines for charting directly from Binance API."""
+    """Retrieve historical klines for charting directly from Binance API.
+
+    end_ms (optional) asks Binance for candles ending at that timestamp — the
+    strategy performance chart uses it to jump back to trades older than the
+    most recent window.
+    """
     # Binance Alpha klines API strictly requires the "ALPHA_" prefix
     alpha_symbol = f"ALPHA_{symbol}" if not symbol.startswith("ALPHA_") else symbol
 
-    cache_key = (alpha_symbol, interval, limit)
+    cache_key = (alpha_symbol, interval, limit, end_ms)
     hit = _KLINES_CACHE.get(cache_key)
     if hit and (time.time() - hit[0]) < _KLINES_TTL_SEC:
         return hit[1]
 
     api = BinanceAlphaAPI()
     try:
-        data = await api.get_klines(symbol=alpha_symbol, interval=interval, limit=limit)
+        data = await api.get_klines(symbol=alpha_symbol, interval=interval,
+                                    limit=limit, end_time=end_ms)
     finally:
         await api.close()
     _KLINES_CACHE[cache_key] = (time.time(), data)
