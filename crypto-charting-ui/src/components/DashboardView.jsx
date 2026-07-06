@@ -8,7 +8,7 @@ import useWalletData from '../hooks/useWalletData';
 import { computePnl } from '../utils/pnl';
 import '../dashboard.css';
 
-const API_URL = 'http://localhost:8000';
+const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:8000';
 
 // Home tab. Owns the polls shared by every panel (overview 5s, token
 // metadata 5min, filled trades 30s for PnL) so child panels don't

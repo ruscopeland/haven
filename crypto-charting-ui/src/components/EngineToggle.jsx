@@ -1,6 +1,6 @@
 import { useState, useEffect } from 'react';
 
-const API_URL = 'http://localhost:8000';
+const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:8000';
 
 // Compact engine pause/live toggle for the top toolbar, next to the health
 // dots (visible on every tab, not just the Dashboard). Same /engine/settings

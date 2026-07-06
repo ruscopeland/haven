@@ -5,7 +5,7 @@ import { multicallBalanceOf, multicallDecimals } from '../utils/multicall';
 // Key-free wallet data (see docs/C1-wallet-hook.md). Reads balances with raw
 // JSON-RPC calls to a public BSC node — the private key never enters this app.
 
-const API_URL = 'http://localhost:8000';
+const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:8000';
 const BSC_RPC = 'https://bsc-dataseed.binance.org/';
 const WBNB = '0xbb4CdB9CBd36B01bD1cBaEBF2De08d9173bc095c';
 const ADDR_KEY = 'alpha_wallet_address';

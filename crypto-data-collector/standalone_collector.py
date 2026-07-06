@@ -21,9 +21,8 @@ from datetime import datetime, timezone
 sys.path.append(os.path.dirname(os.path.abspath(__file__)))
 
 from sqlalchemy import func
-from sqlalchemy.dialects.sqlite import insert as sqlite_insert
 
-from database.db import SessionLocal, engine, Base, ensure_db_settings
+from database.db import SessionLocal, engine, Base, ensure_db_settings, dialect_insert
 from database.models import (Token, OneMinBucket, FifteenMinBucket, LatestTicker,
                              Heartbeat, DebugLog)
 from fetcher.alpha_api import BinanceAlphaAPI
@@ -197,7 +196,7 @@ class AlphaCollector:
             "sell_volume": b["sell_vol"],
             "trade_count": b["trade_count"],
         } for symbol, b in items]
-        stmt = sqlite_insert(OneMinBucket).values(rows)
+        stmt = dialect_insert(OneMinBucket).values(rows)
         stmt = stmt.on_conflict_do_update(
             index_elements=["symbol", "bucket_start"],
             set_={
@@ -271,7 +270,8 @@ class AlphaCollector:
         Recomputes the last ARCHIVE_WINDOW_MS from scratch each pass (an
         INSERT..ON CONFLICT full-row replace), so late-arriving 1m buckets are
         picked up on the next pass with zero merge logic. Open/close per group
-        use SQLite's documented bare-column-with-MIN/MAX aggregate behavior.
+        use first_value() window functions — portable across SQLite and
+        Postgres (the old bare-column-with-MIN/MAX trick was SQLite-only).
         """
         interval = 15 * 60_000
         end_ms = (self._now_ms() // interval) * interval   # exclude in-progress group
@@ -302,22 +302,29 @@ class AlphaCollector:
                     "close_price": None, "buy_volume": buy, "sell_volume": sell,
                     "trade_count": trades,
                 }
-            for sym, g, _, o in base(db.query(OneMinBucket.symbol, grp.label("g"),
-                                              func.min(OneMinBucket.bucket_start),
-                                              OneMinBucket.open_price)).all():
+            # first_value over ascending/descending bucket_start = the group's
+            # true open/close; DISTINCT collapses the window rows to one per group.
+            oc = (db.query(
+                      OneMinBucket.symbol.label("s"), grp.label("g"),
+                      func.first_value(OneMinBucket.open_price).over(
+                          partition_by=[OneMinBucket.symbol, grp],
+                          order_by=OneMinBucket.bucket_start.asc()).label("o"),
+                      func.first_value(OneMinBucket.close_price).over(
+                          partition_by=[OneMinBucket.symbol, grp],
+                          order_by=OneMinBucket.bucket_start.desc()).label("c"))
+                  .filter(OneMinBucket.bucket_start >= start_ms)
+                  .filter(OneMinBucket.bucket_start < end_ms)
+                  .distinct().all())
+            for sym, g, o, c in oc:
                 if (sym, int(g)) in rows:
                     rows[(sym, int(g))]["open_price"] = o
-            for sym, g, _, c in base(db.query(OneMinBucket.symbol, grp.label("g"),
-                                              func.max(OneMinBucket.bucket_start),
-                                              OneMinBucket.close_price)).all():
-                if (sym, int(g)) in rows:
                     rows[(sym, int(g))]["close_price"] = c
 
             if rows:
                 # Chunked: 9 bind params per row against SQLite's variable cap.
                 values = list(rows.values())
                 for i in range(0, len(values), 500):
-                    stmt = sqlite_insert(FifteenMinBucket).values(values[i:i + 500])
+                    stmt = dialect_insert(FifteenMinBucket).values(values[i:i + 500])
                     stmt = stmt.on_conflict_do_update(
                         index_elements=["symbol", "bucket_start"],
                         set_={c: getattr(stmt.excluded, c)

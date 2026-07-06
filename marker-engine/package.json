@@ -1,12 +1,14 @@
 {
-  "name": "marker-engine",
+  "name": "haven-engine",
   "private": true,
   "version": "1.0.0",
-  "description": "Headless executor for chart markers - watches collector prices via the API and fires on-chain swaps. Replaces the in-browser wallet engine.",
+  "description": "Haven trading engine — headless executor for chart markers and live strategies. Runs on the user's machine; keys never leave it.",
   "type": "module",
   "main": "index.js",
   "scripts": {
     "start": "node index.js",
+    "setup": "node setup.js",
+    "paper-runner": "node paper-runner-service.js",
     "test": "node --test"
   },
   "dependencies": {

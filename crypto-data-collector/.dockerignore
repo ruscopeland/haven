@@ -1,0 +1,9 @@
+__pycache__/
+*.pyc
+crypto_data.db
+crypto_data.db-shm
+crypto_data.db-wal
+.venv/
+venv/
+.env
+*.log

@@ -1,0 +1,19 @@
+# Haven API server (FastAPI). One instance serves every user.
+# Railway build: set root directory to crypto-data-collector, Dockerfile path
+# Dockerfile.api. It injects $PORT and (once you add a Postgres plugin)
+# $DATABASE_URL — see DEPLOY.md.
+FROM python:3.12-slim
+
+WORKDIR /app
+
+# System deps for psycopg2-binary are already bundled in the wheel; no apt needed.
+COPY requirements.txt .
+RUN pip install --no-cache-dir -r requirements.txt
+
+COPY . .
+
+# The engine zip is a build artifact; if present it is served by /engine/download.
+# (Build it in CI with tools/build_engine_zip.py, or the endpoint 404s gracefully.)
+
+EXPOSE 8000
+CMD ["python", "main.py"]

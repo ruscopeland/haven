@@ -13,6 +13,7 @@ import { makeProvider, makeWallet } from './chain.js';
 import { MarkerEngine } from './engine.js';
 import { StrategyRunner } from './strategy-runner.js';
 import { FinderHub } from './finder-runner.js';
+import { ApiClient } from './api-client.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
@@ -28,9 +29,14 @@ function loadPrivateKey() {
   return '';
 }
 
-const API_URL = process.env.API_URL || 'http://localhost:8000';
+// HAVEN_API_URL is the cloud name; API_URL kept as the legacy/solo alias.
+const API_URL = process.env.HAVEN_API_URL || process.env.API_URL || 'http://localhost:8000';
 const RPC_URL = process.env.RPC_URL || 'https://bsc-dataseed.binance.org';
 const POLL_MS = parseInt(process.env.POLL_MS || '3000', 10);
+// The connection key from the web app's "Connect your engine" screen. Sent as
+// X-Api-Key so the cloud API knows which user this engine trades for. Empty in
+// solo mode (the local API runs with HAVEN_SOLO=1 and needs no key).
+const API_KEY = (process.env.HAVEN_API_KEY || '').trim();
 const config = {
   gasPriceGwei: process.env.GAS_PRICE_GWEI || '1',
   slippagePct: process.env.SLIPPAGE_PCT || '0.5',
@@ -38,90 +44,8 @@ const config = {
   quickSellPercent: parseFloat(process.env.QUICK_SELL_PERCENT || '100'),
 };
 
-// ── Tiny API client ─────────────────────────────────────────────────────────
-class ApiClient {
-  constructor(baseUrl) { this.base = baseUrl; }
-
-  async #json(pathname, options) {
-    const res = await fetch(this.base + pathname, options);
-    if (!res.ok) throw new Error(`API ${pathname} → HTTP ${res.status}`);
-    return res.json();
-  }
-  #post(pathname, body) {
-    return this.#json(pathname, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: body === undefined ? undefined : JSON.stringify(body),
-    });
-  }
-
-  getOverview() { return this.#json('/dashboard/overview'); }
-  getTokens() { return this.#json('/tokens?limit=2000'); }
-  getEngineSettings() { return this.#json('/engine/settings'); }
-  claimMarker(id) { return this.#post(`/markers/${id}/claim`); }
-  recordTrade(trade) { return this.#post('/trades', trade); }
-  createMarker(marker) { return this.#post('/markers', marker); }
-  deleteMarker(id) {
-    return fetch(`${this.base}/markers/${id}`, { method: 'DELETE' })
-      .then(r => { if (!r.ok) throw new Error(`DELETE /markers/${id} → HTTP ${r.status}`); });
-  }
-  heartbeat(process = 'execution_engine') { return this.#post('/heartbeat', { process }); }
-
-  // Strategy runner endpoints
-  listStrategies() { return this.#json('/strategies'); }
-  getStrategy(id) { return this.#json(`/strategies/${id}`); }
-  patchStrategy(id, body) {
-    return this.#json(`/strategies/${id}`, {
-      method: 'PATCH',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(body),
-    });
-  }
-
-  // Token Finder endpoints (finder hub + portfolio strategies)
-  listFinders() { return this.#json('/finders'); }
-  getFinder(id) { return this.#json(`/finders/${id}`); }
-  patchFinder(id, body) {
-    return this.#json(`/finders/${id}`, {
-      method: 'PATCH',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(body),
-    });
-  }
-  getUniverse(interval, startMs, minVol24h = 50_000) {
-    return this.#json(`/universe?interval=${interval}&start_ms=${startMs}&min_vol_24h=${minVol24h}`);
-  }
-  getKlines(symbol, interval, limit) {
-    return this.#json(`/klines/${symbol}?interval=${interval}&limit=${limit}`);
-  }
-  getFlow(symbol, startMs) {
-    return this.#json(`/flow/${symbol}?limit=10080${startMs ? `&start_ms=${startMs}` : ''}`);
-  }
-  getTrades({ symbol, status, strategy_id, limit = 50 } = {}) {
-    const q = new URLSearchParams();
-    if (symbol) q.set('symbol', symbol);
-    if (status) q.set('status', status);
-    if (strategy_id) q.set('strategy_id', strategy_id);
-    q.set('limit', String(limit));
-    return this.#json(`/trades?${q}`);
-  }
-  postLog(level, message, metadata) {
-    return this.#post('/debug/logs', {
-      source: 'engine', level, message,
-      metadata_json: metadata ? JSON.stringify(metadata) : null,
-    });
-  }
-  rearmMarker(id) {
-    return this.#json(`/markers/${id}`, {
-      method: 'PATCH',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ active: 1 }),
-    });
-  }
-}
-
 // ── Wiring ──────────────────────────────────────────────────────────────────
-const api = new ApiClient(API_URL);
+const api = new ApiClient(API_URL, API_KEY);
 
 function consoleLog(level, message) {
   const ts = new Date().toISOString().slice(0, 19).replace('T', ' ');
@@ -134,11 +58,17 @@ function log(level, message, metadata) {
 }
 
 async function main() {
+  const remote = !/localhost|127\.0\.0\.1/.test(API_URL);
   consoleLog('INFO', '======================================');
-  consoleLog('INFO', '  Marker Engine daemon starting');
-  consoleLog('INFO', `  API: ${API_URL}`);
+  consoleLog('INFO', '  Haven Engine daemon starting');
+  consoleLog('INFO', `  API: ${API_URL}${remote ? ' (cloud)' : ' (local)'}`);
   consoleLog('INFO', `  RPC: ${RPC_URL}`);
+  consoleLog('INFO', `  Connection key: ${API_KEY ? 'set' : 'NOT set'}`);
   consoleLog('INFO', '======================================');
+  if (remote && !API_KEY) {
+    consoleLog('ERROR', 'Connecting to a cloud API with no HAVEN_API_KEY — every request will be 401.');
+    consoleLog('ERROR', 'Run the setup wizard (setup.bat) or paste your key into .env, then restart.');
+  }
 
   const provider = makeProvider(RPC_URL);
   const key = loadPrivateKey();

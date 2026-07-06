@@ -8,7 +8,7 @@ import SettingsView from './components/SettingsView'
 import TokenDetailView from './components/TokenDetailView'
 import EngineToggle from './components/EngineToggle'
 
-const API_URL = 'http://localhost:8000';
+const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:8000';
 
 function HealthDot({ status }) {
   const colors = { ok: '#00ff88', warning: '#fbbf24', down: '#ff3366', unknown: '#2a2f42' };
@@ -172,7 +172,7 @@ function App() {
 
       <div className="main-content" style={{ display: 'flex', flexDirection: 'column', flex: 1, overflow: 'hidden' }}>
         <div className="preset-toolbar" style={{ display: 'flex', gap: '10px', padding: '10px 16px', background: 'rgba(13, 20, 38, 0.75)', backdropFilter: 'blur(12px)', borderBottom: '1px solid var(--border-glass)', alignItems: 'center' }}>
-          <span className="logo-title" style={{ marginRight: 8 }}>⚡ Alpha Terminal</span>
+          <span className="logo-title" style={{ marginRight: 8 }}>⚓ Haven</span>
           {[['dashboard', '🏠 Dashboard'], ['charts', '📊 Charts'], ['strategies', '⚡ Strategies'], ['finder', '🔍 Token Finder'], ['settings', '⚙ Settings']].map(([key, label]) => {
             const active = view === key || (view === 'token' && key === 'dashboard');
             return (

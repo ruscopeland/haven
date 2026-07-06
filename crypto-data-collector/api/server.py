@@ -7,6 +7,7 @@ from database.models import (
     DebugLog, EngineSetting, Strategy, Finder, FifteenMinBucket,
     MARKER_TYPES, STRATEGY_MODES, FINDER_INTERVALS,
 )
+from api.auth import get_identity, require_paid, Identity, SOLO_MODE, hash_key
 from fetcher.alpha_api import BinanceAlphaAPI
 from pydantic import BaseModel
 from typing import List, Any
@@ -24,20 +25,28 @@ import json
 async def lifespan(app: FastAPI):
     # Ensure tables exist before serving (replaces deprecated @app.on_event).
     Base.metadata.create_all(bind=engine)
-    ensure_db_settings()  # WAL + bucket_start index
-    print("Database tables ensured on startup.")
+    ensure_db_settings()  # pragmas/indexes + idempotent column upgrades
+    print(f"Database tables ensured on startup. SOLO_MODE={SOLO_MODE}")
     yield
 
 
-app = FastAPI(title="Crypto Data Collector API", lifespan=lifespan)
+app = FastAPI(title="Haven API", lifespan=lifespan)
 
+# CORS: locked to the web app's origin(s) in production (comma-separated
+# HAVEN_CORS_ORIGINS env), wide-open in solo/local dev.
+_cors_env = os.environ.get("HAVEN_CORS_ORIGINS", "").strip()
+_cors_origins = [o.strip() for o in _cors_env.split(",") if o.strip()] or ["*"]
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
+    allow_origins=_cors_origins,
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+# Stripe billing endpoints (dormant in solo mode; router still mounts).
+from api.billing import router as billing_router  # noqa: E402
+app.include_router(billing_router)
 
 class TokenResponse(BaseModel):
     id: str
@@ -127,6 +136,7 @@ class TradeCreate(BaseModel):
     block_time: int = 0
     status: str = "FILLED"
     strategy_id: str | None = None
+    user_id: str | None = None   # honored ONLY from the service identity (paper-runner)
 
 
 class TradeResponse(BaseModel):
@@ -156,9 +166,12 @@ class TradeResponse(BaseModel):
 
 
 @app.get("/markers/{symbol}", response_model=List[MarkerResponse])
-def get_markers(symbol: str, active_only: bool = True, db: Session = Depends(get_db)):
-    """Get all markers for a symbol."""
-    q = db.query(ChartMarker).filter(ChartMarker.symbol == symbol)
+def get_markers(symbol: str, active_only: bool = True, db: Session = Depends(get_db),
+                identity: Identity = Depends(require_paid)):
+    """Get all markers for a symbol (this user's markers only)."""
+    q = (db.query(ChartMarker)
+         .filter(ChartMarker.user_id == identity.user_id)
+         .filter(ChartMarker.symbol == symbol))
     if active_only:
         q = q.filter(ChartMarker.active == 1)
     return q.order_by(ChartMarker.price).all()
@@ -168,8 +181,9 @@ VALID_MARKER_DIRECTIONS = ("above", "below", "cross")
 
 
 @app.post("/markers", response_model=MarkerResponse)
-def create_marker(m: MarkerCreate, db: Session = Depends(get_db)):
-    """Create a new marker."""
+def create_marker(m: MarkerCreate, db: Session = Depends(get_db),
+                  identity: Identity = Depends(require_paid)):
+    """Create a new marker owned by the caller."""
     import uuid
     from datetime import datetime, timezone
     # Reject unknown types/directions — the engine treats every non-ALERT type as
@@ -184,6 +198,7 @@ def create_marker(m: MarkerCreate, db: Session = Depends(get_db)):
         raise HTTPException(status_code=422, detail="Marker price must be positive")
     marker = ChartMarker(
         id=str(uuid.uuid4()),
+        user_id=identity.user_id,
         symbol=m.symbol,
         price=m.price,
         marker_type=m.marker_type,
@@ -201,9 +216,12 @@ def create_marker(m: MarkerCreate, db: Session = Depends(get_db)):
 
 
 @app.patch("/markers/{marker_id}", response_model=MarkerResponse)
-def update_marker(marker_id: str, m: MarkerUpdate, db: Session = Depends(get_db)):
-    """Update a marker's price, label, or active status."""
-    marker = db.query(ChartMarker).filter(ChartMarker.id == marker_id).first()
+def update_marker(marker_id: str, m: MarkerUpdate, db: Session = Depends(get_db),
+                  identity: Identity = Depends(require_paid)):
+    """Update a marker's price, label, or active status (owner only)."""
+    marker = (db.query(ChartMarker)
+              .filter(ChartMarker.id == marker_id, ChartMarker.user_id == identity.user_id)
+              .first())
     if not marker:
         from fastapi import HTTPException
         raise HTTPException(status_code=404, detail="Marker not found")
@@ -221,19 +239,26 @@ def update_marker(marker_id: str, m: MarkerUpdate, db: Session = Depends(get_db)
 
 
 @app.post("/markers/{marker_id}/claim")
-def claim_marker(marker_id: str, db: Session = Depends(get_db)):
+def claim_marker(marker_id: str, db: Session = Depends(get_db),
+                 identity: Identity = Depends(require_paid)):
     """Atomically claim a marker for execution.
 
     Sets active 1 -> 0 in a single conditional UPDATE and reports whether THIS caller
-    won the claim. Because SQLite serializes writes, only one racing caller (across
+    won the claim. The database serializes the write, so only one racing caller (across
     duplicate poll loops, browser tabs, or processes) can get claimed=True, so a marker
     executes exactly once. Callers that lose the race must not execute.
+
+    The user_id filter is defense-in-depth: an engine's key scopes it to one user,
+    so it can only ever claim that user's markers — it does not change the
+    exactly-once semantics (the atomic active==1 predicate still does that).
     """
     from datetime import datetime, timezone
     now_ms = int(datetime.now(timezone.utc).timestamp() * 1000)
     updated = (
         db.query(ChartMarker)
-        .filter(ChartMarker.id == marker_id, ChartMarker.active == 1)
+        .filter(ChartMarker.id == marker_id,
+                ChartMarker.user_id == identity.user_id,
+                ChartMarker.active == 1)
         .update({ChartMarker.active: 0, ChartMarker.triggered_at: now_ms})
     )
     db.commit()
@@ -241,9 +266,12 @@ def claim_marker(marker_id: str, db: Session = Depends(get_db)):
 
 
 @app.delete("/markers/{marker_id}")
-def delete_marker(marker_id: str, db: Session = Depends(get_db)):
-    """Delete a marker."""
-    marker = db.query(ChartMarker).filter(ChartMarker.id == marker_id).first()
+def delete_marker(marker_id: str, db: Session = Depends(get_db),
+                  identity: Identity = Depends(require_paid)):
+    """Delete a marker (owner only)."""
+    marker = (db.query(ChartMarker)
+              .filter(ChartMarker.id == marker_id, ChartMarker.user_id == identity.user_id)
+              .first())
     if not marker:
         from fastapi import HTTPException
         raise HTTPException(status_code=404, detail="Marker not found")
@@ -257,9 +285,10 @@ def delete_marker(marker_id: str, db: Session = Depends(get_db)):
 
 @app.get("/trades", response_model=List[TradeResponse])
 def get_trades(symbol: str | None = None, limit: int = 50, status: str | None = None,
-               strategy_id: str | None = None, db: Session = Depends(get_db)):
-    """Get trade history, optionally filtered by symbol/status/strategy."""
-    q = db.query(TradeHistory)
+               strategy_id: str | None = None, db: Session = Depends(get_db),
+               identity: Identity = Depends(require_paid)):
+    """Get this user's trade history, optionally filtered by symbol/status/strategy."""
+    q = db.query(TradeHistory).filter(TradeHistory.user_id == identity.user_id)
     if symbol:
         q = q.filter(TradeHistory.symbol == symbol)
     if status:
@@ -270,11 +299,21 @@ def get_trades(symbol: str | None = None, limit: int = 50, status: str | None = 
 
 
 @app.post("/trades", response_model=TradeResponse)
-def create_trade(t: TradeCreate, db: Session = Depends(get_db)):
-    """Record a filled trade from the execution engine."""
+def create_trade(t: TradeCreate, db: Session = Depends(get_db),
+                 identity: Identity = Depends(require_paid)):
+    """Record a filled trade from the execution engine (owned by the caller).
+
+    The cloud paper-runner (service identity) may write PAPER trades on behalf
+    of the strategy's owner — it passes the target user via t.user_id; every
+    other caller is pinned to its own identity.
+    """
     import uuid
+    owner = identity.user_id
+    if identity.is_service and t.user_id:
+        owner = t.user_id
     trade = TradeHistory(
         id=str(uuid.uuid4()),
+        user_id=owner,
         symbol=t.symbol,
         direction=t.direction,
         marker_id=t.marker_id,
@@ -332,6 +371,7 @@ class StrategyUpdate(BaseModel):
 
 class StrategyListItem(BaseModel):
     id: str
+    user_id: str
     name: str
     symbol: str
     interval: str
@@ -362,11 +402,16 @@ def _validate_strategy_fields(interval: str | None, mode: str | None):
                             detail=f"Invalid mode '{mode}'. Allowed: {STRATEGY_MODES}")
 
 
-def _validate_token_selection(db: Session, symbol: str, finder_id: str | None,
+def _validate_token_selection(db: Session, user_id: str, symbol: str, finder_id: str | None,
                               max_positions: int | None, switch_margin_pct: float | None):
-    """A strategy needs exactly one token source: a symbol, or a finder."""
+    """A strategy needs exactly one token source: a symbol, or a finder.
+
+    A finder can only be attached if it belongs to the same user (no
+    referencing another account's finder).
+    """
     if finder_id:
-        if not db.query(Finder).filter(Finder.id == finder_id).first():
+        if not (db.query(Finder)
+                .filter(Finder.id == finder_id, Finder.user_id == user_id).first()):
             raise HTTPException(status_code=422, detail=f"Finder '{finder_id}' does not exist")
     elif not symbol:
         raise HTTPException(status_code=422,
@@ -378,27 +423,41 @@ def _validate_token_selection(db: Session, symbol: str, finder_id: str | None,
 
 
 @app.get("/strategies", response_model=List[StrategyListItem])
-def list_strategies(db: Session = Depends(get_db)):
-    """List strategies without their code bodies (the runner + UI list poll this)."""
-    return db.query(Strategy).order_by(Strategy.created_at).all()
+def list_strategies(db: Session = Depends(get_db),
+                    identity: Identity = Depends(require_paid)):
+    """List this user's strategies without code bodies (runner + UI poll this).
+
+    The cloud paper-runner (service identity) gets EVERY user's strategies so
+    it can execute all DRY strategies centrally — it filters to mode=dry itself.
+    """
+    q = db.query(Strategy)
+    if not identity.is_service:
+        q = q.filter(Strategy.user_id == identity.user_id)
+    return q.order_by(Strategy.created_at).all()
 
 
 @app.get("/strategies/{strategy_id}", response_model=StrategyResponse)
-def get_strategy(strategy_id: str, db: Session = Depends(get_db)):
-    strat = db.query(Strategy).filter(Strategy.id == strategy_id).first()
+def get_strategy(strategy_id: str, db: Session = Depends(get_db),
+                 identity: Identity = Depends(require_paid)):
+    q = db.query(Strategy).filter(Strategy.id == strategy_id)
+    if not identity.is_service:
+        q = q.filter(Strategy.user_id == identity.user_id)
+    strat = q.first()
     if not strat:
         raise HTTPException(status_code=404, detail="Strategy not found")
     return strat
 
 
 @app.post("/strategies", response_model=StrategyResponse)
-def create_strategy(s: StrategyCreate, db: Session = Depends(get_db)):
+def create_strategy(s: StrategyCreate, db: Session = Depends(get_db),
+                    identity: Identity = Depends(require_paid)):
     import uuid
     _validate_strategy_fields(s.interval, None)
-    _validate_token_selection(db, s.symbol, s.finder_id, s.max_positions, s.switch_margin_pct)
+    _validate_token_selection(db, identity.user_id, s.symbol, s.finder_id,
+                              s.max_positions, s.switch_margin_pct)
     now_ms = int(time.time() * 1000)
     strat = Strategy(
-        id=str(uuid.uuid4()), name=s.name, code=s.code,
+        id=str(uuid.uuid4()), user_id=identity.user_id, name=s.name, code=s.code,
         symbol=s.symbol if not s.finder_id else (s.symbol or ""),
         interval=s.interval, params_json=s.params_json, mode="off",
         finder_id=s.finder_id, max_positions=s.max_positions,
@@ -412,21 +471,29 @@ def create_strategy(s: StrategyCreate, db: Session = Depends(get_db)):
 
 
 @app.patch("/strategies/{strategy_id}", response_model=StrategyResponse)
-def update_strategy(strategy_id: str, s: StrategyUpdate, db: Session = Depends(get_db)):
-    """Update a strategy.
+def update_strategy(strategy_id: str, s: StrategyUpdate, db: Session = Depends(get_db),
+                    identity: Identity = Depends(require_paid)):
+    """Update a strategy (owner only).
 
     updated_at bumps ONLY when the strategy definition changes (code / params /
     symbol / interval) — the runner uses it as its hot-reload signal, and a
     mode flip or status write must not reset a running strategy's state.
+
+    The cloud paper-runner (service identity) may PATCH last_run_at/last_error
+    on any user's DRY strategy, but never its definition or mode.
     """
-    strat = db.query(Strategy).filter(Strategy.id == strategy_id).first()
+    q = db.query(Strategy).filter(Strategy.id == strategy_id)
+    if not identity.is_service:
+        q = q.filter(Strategy.user_id == identity.user_id)
+    strat = q.first()
     if not strat:
         raise HTTPException(status_code=404, detail="Strategy not found")
     _validate_strategy_fields(s.interval, s.mode)
     # Validate the token selection the row will END UP with after this patch.
     next_symbol = s.symbol if s.symbol is not None else strat.symbol
     next_finder = None if s.clear_finder else (s.finder_id if s.finder_id is not None else strat.finder_id)
-    _validate_token_selection(db, next_symbol, next_finder, s.max_positions, s.switch_margin_pct)
+    _validate_token_selection(db, strat.user_id, next_symbol, next_finder,
+                              s.max_positions, s.switch_margin_pct)
 
     definition_changed = False
     for field in ("code", "symbol", "interval", "params_json", "finder_id",
@@ -456,14 +523,19 @@ def update_strategy(strategy_id: str, s: StrategyUpdate, db: Session = Depends(g
 
 
 @app.delete("/strategies/{strategy_id}")
-def delete_strategy(strategy_id: str, db: Session = Depends(get_db)):
+def delete_strategy(strategy_id: str, db: Session = Depends(get_db),
+                    identity: Identity = Depends(require_paid)):
     """Delete a strategy AND any still-active markers it posted (a queued
     STRAT_BUY/STRAT_SELL must not fire for a strategy that no longer exists)."""
-    strat = db.query(Strategy).filter(Strategy.id == strategy_id).first()
+    strat = (db.query(Strategy)
+             .filter(Strategy.id == strategy_id, Strategy.user_id == identity.user_id)
+             .first())
     if not strat:
         raise HTTPException(status_code=404, detail="Strategy not found")
     orphaned = (db.query(ChartMarker)
-                .filter(ChartMarker.strategy_id == strategy_id, ChartMarker.active == 1)
+                .filter(ChartMarker.strategy_id == strategy_id,
+                        ChartMarker.user_id == identity.user_id,
+                        ChartMarker.active == 1)
                 .delete())
     db.delete(strat)
     db.commit()
@@ -518,27 +590,37 @@ def _validate_finder_interval(interval: str | None):
 
 
 @app.get("/finders", response_model=List[FinderListItem])
-def list_finders(db: Session = Depends(get_db)):
-    """List finders without code bodies (UI list + engine evaluator poll this)."""
-    return db.query(Finder).order_by(Finder.created_at).all()
+def list_finders(db: Session = Depends(get_db),
+                 identity: Identity = Depends(require_paid)):
+    """List this user's finders (service identity sees all, for the FinderHub)."""
+    q = db.query(Finder)
+    if not identity.is_service:
+        q = q.filter(Finder.user_id == identity.user_id)
+    return q.order_by(Finder.created_at).all()
 
 
 @app.get("/finders/{finder_id}", response_model=FinderResponse)
-def get_finder(finder_id: str, db: Session = Depends(get_db)):
-    f = db.query(Finder).filter(Finder.id == finder_id).first()
+def get_finder(finder_id: str, db: Session = Depends(get_db),
+               identity: Identity = Depends(require_paid)):
+    q = db.query(Finder).filter(Finder.id == finder_id)
+    if not identity.is_service:
+        q = q.filter(Finder.user_id == identity.user_id)
+    f = q.first()
     if not f:
         raise HTTPException(status_code=404, detail="Finder not found")
     return f
 
 
 @app.post("/finders", response_model=FinderResponse)
-def create_finder(f: FinderCreate, db: Session = Depends(get_db)):
+def create_finder(f: FinderCreate, db: Session = Depends(get_db),
+                  identity: Identity = Depends(require_paid)):
     import uuid
     _validate_finder_interval(f.interval)
     now_ms = int(time.time() * 1000)
     finder = Finder(
-        id=str(uuid.uuid4()), name=f.name, code=f.code, interval=f.interval,
-        params_json=f.params_json, created_at=now_ms, updated_at=now_ms,
+        id=str(uuid.uuid4()), user_id=identity.user_id, name=f.name, code=f.code,
+        interval=f.interval, params_json=f.params_json,
+        created_at=now_ms, updated_at=now_ms,
     )
     db.add(finder)
     db.commit()
@@ -547,10 +629,17 @@ def create_finder(f: FinderCreate, db: Session = Depends(get_db)):
 
 
 @app.patch("/finders/{finder_id}", response_model=FinderResponse)
-def update_finder(finder_id: str, f: FinderUpdate, db: Session = Depends(get_db)):
+def update_finder(finder_id: str, f: FinderUpdate, db: Session = Depends(get_db),
+                  identity: Identity = Depends(require_paid)):
     """updated_at bumps ONLY on definition changes (code/params/interval) —
-    status writes (last_run_at/last_error) must not reset live evaluators."""
-    finder = db.query(Finder).filter(Finder.id == finder_id).first()
+    status writes (last_run_at/last_error) must not reset live evaluators.
+
+    Service identity (FinderHub) may PATCH last_run_at/last_error on any finder.
+    """
+    q = db.query(Finder).filter(Finder.id == finder_id)
+    if not identity.is_service:
+        q = q.filter(Finder.user_id == identity.user_id)
+    finder = q.first()
     if not finder:
         raise HTTPException(status_code=404, detail="Finder not found")
     _validate_finder_interval(f.interval)
@@ -577,13 +666,18 @@ def update_finder(finder_id: str, f: FinderUpdate, db: Session = Depends(get_db)
 
 
 @app.delete("/finders/{finder_id}")
-def delete_finder(finder_id: str, db: Session = Depends(get_db)):
+def delete_finder(finder_id: str, db: Session = Depends(get_db),
+                  identity: Identity = Depends(require_paid)):
     """Delete a finder — refused while any strategy still references it, so a
     running portfolio strategy can never lose its token source mid-flight."""
-    finder = db.query(Finder).filter(Finder.id == finder_id).first()
+    finder = (db.query(Finder)
+              .filter(Finder.id == finder_id, Finder.user_id == identity.user_id)
+              .first())
     if not finder:
         raise HTTPException(status_code=404, detail="Finder not found")
-    users = db.query(Strategy).filter(Strategy.finder_id == finder_id).all()
+    users = (db.query(Strategy)
+             .filter(Strategy.finder_id == finder_id,
+                     Strategy.user_id == identity.user_id).all())
     if users:
         names = ", ".join(s.name for s in users[:5])
         raise HTTPException(status_code=409,
@@ -650,7 +744,8 @@ def _grouped_ohlc(db: Session, model, symbols: list[str], start_ms: int, end_ms:
 @app.get("/universe")
 def get_universe(interval: str = "15m", start_ms: int | None = None,
                  end_ms: int | None = None, min_vol_24h: float = 50_000,
-                 symbols: str | None = None, db: Session = Depends(get_db)):
+                 symbols: str | None = None, db: Session = Depends(get_db),
+                 identity: Identity = Depends(require_paid)):
     """Multi-token resampled OHLC + buy/sell flow — the Token Finder dataset.
 
     One payload with a common time axis; the UI/SDK fetch it once and re-rank
@@ -790,9 +885,10 @@ def get_debug_logs(
     limit: int = 200,
     since_ms: int | None = None,     # only return logs newer than this timestamp
     db: Session = Depends(get_db),
+    identity: Identity = Depends(require_paid),
 ):
-    """Get debug logs with optional level/source/time filtering."""
-    q = db.query(DebugLog)
+    """Get debug logs for this user PLUS shared 'system' logs (collector/api)."""
+    q = db.query(DebugLog).filter(DebugLog.user_id.in_([identity.user_id, "system"]))
     if level:
         levels = [l.strip() for l in level.split(",") if l.strip()]
         if levels:
@@ -807,10 +903,14 @@ def get_debug_logs(
 
 
 @app.post("/debug/logs", response_model=LogResponse)
-def create_debug_log(entry: LogCreate, db: Session = Depends(get_db)):
-    """Ingest a debug log entry from any program."""
+def create_debug_log(entry: LogCreate, db: Session = Depends(get_db),
+                     identity: Identity = Depends(require_paid)):
+    """Ingest a debug log entry. An engine's logs are owned by its user; the
+    shared collector/api processes (service identity) log as 'system'."""
     import time as _time
+    owner = "system" if identity.is_service else identity.user_id
     log_entry = DebugLog(
+        user_id=owner,
         source=entry.source,
         level=entry.level,
         message=entry.message,
@@ -824,10 +924,11 @@ def create_debug_log(entry: LogCreate, db: Session = Depends(get_db)):
 
 
 @app.delete("/debug/logs")
-def clear_debug_logs(db: Session = Depends(get_db)):
-    """Clear all debug logs (truncate the table)."""
-    count = db.query(DebugLog).count()
-    db.query(DebugLog).delete()
+def clear_debug_logs(db: Session = Depends(get_db),
+                     identity: Identity = Depends(require_paid)):
+    """Clear this user's debug logs (never touches other users or 'system')."""
+    count = (db.query(DebugLog)
+             .filter(DebugLog.user_id == identity.user_id).delete())
     db.commit()
     return {"deleted": count}
 
@@ -836,19 +937,27 @@ def clear_debug_logs(db: Session = Depends(get_db)):
 
 
 @app.get("/dashboard/overview", response_model=DashboardOverview)
-def get_dashboard_overview(db: Session = Depends(get_db)):
-    """Return all trading data needed by the wallet dashboard in one call."""
-    # All REAL trades, newest first, joined with markers for reason. PAPER rows
-    # (strategy dry-runs) are excluded here on purpose: the wallet PnL sums
-    # every row it receives, the engine's daily-cap counter reads this list,
-    # and a chatty dry-run would otherwise flood the 200-row window.
+def get_dashboard_overview(db: Session = Depends(get_db),
+                           identity: Identity = Depends(require_paid)):
+    """Return all trading data needed by the dashboard in one call (this user).
+
+    The engine daemon (its own user) calls this to see its markers + trades;
+    the web app calls it for the same user. token_prices is shared market data.
+    """
+    # This user's REAL trades, newest first, joined with markers for reason.
+    # PAPER rows (strategy dry-runs) are excluded here on purpose: dashboard PnL
+    # sums every row it receives, the engine's daily-cap counter reads this
+    # list, and a chatty dry-run would otherwise flood the 200-row window.
     trades = (db.query(TradeHistory)
+              .filter(TradeHistory.user_id == identity.user_id)
               .filter(TradeHistory.status != "PAPER")
               .order_by(TradeHistory.block_time.desc()).limit(200).all())
     all_marker_ids = [t.marker_id for t in trades if t.marker_id]
     markers_map = {}
     if all_marker_ids:
-        marker_rows = db.query(ChartMarker).filter(ChartMarker.id.in_(all_marker_ids)).all()
+        marker_rows = (db.query(ChartMarker)
+                       .filter(ChartMarker.user_id == identity.user_id)
+                       .filter(ChartMarker.id.in_(all_marker_ids)).all())
         markers_map = {m.id: m for m in marker_rows}
 
     trade_responses = []
@@ -870,8 +979,10 @@ def get_dashboard_overview(db: Session = Depends(get_db)):
             strategy_id=t.strategy_id, reason=reason, reason_label=reason_label,
         ))
 
-    # Active markers
-    open_markers = db.query(ChartMarker).filter(ChartMarker.active == 1).order_by(ChartMarker.created_at.desc()).limit(100).all()
+    # Active markers (this user)
+    open_markers = (db.query(ChartMarker)
+                    .filter(ChartMarker.user_id == identity.user_id, ChartMarker.active == 1)
+                    .order_by(ChartMarker.created_at.desc()).limit(100).all())
 
     # Latest prices per symbol
     tickers = db.query(LatestTicker).all()
@@ -966,26 +1077,122 @@ async def debug_log_middleware(request: Request, call_next):
 
 @app.get("/")
 def read_root():
-    return {"message": "Crypto Data Collector API is running. Check /docs for endpoints."}
+    return {"message": "Haven API is running. Check /docs for endpoints."}
+
+
+# ── Engine connection keys (Haven "Connect your engine") ────────────────────
+# The web app generates a key here; the desktop engine sends it as X-Api-Key.
+# Only the sha256 hash is stored — the raw key is shown ONCE, at creation.
+
+from database.models import ApiKey  # noqa: E402
+
+
+class ApiKeyInfo(BaseModel):
+    id: str
+    label: str
+    created_at: int | None
+    last_used_at: int | None
+    revoked: int
+
+
+class ApiKeyCreate(BaseModel):
+    label: str = "My engine"
+
+
+@app.get("/engine/keys", response_model=List[ApiKeyInfo])
+def list_engine_keys(db: Session = Depends(get_db),
+                     identity: Identity = Depends(require_paid)):
+    """This user's engine keys (metadata only — raw keys are never stored)."""
+    rows = (db.query(ApiKey)
+            .filter(ApiKey.user_id == identity.user_id, ApiKey.revoked == 0)
+            .order_by(ApiKey.created_at.desc()).all())
+    return rows
+
+
+@app.post("/engine/keys")
+def create_engine_key(body: ApiKeyCreate, db: Session = Depends(get_db),
+                      identity: Identity = Depends(require_paid)):
+    """Generate a new engine connection key. Returns the RAW key exactly once.
+
+    The user pastes it into the desktop engine's setup wizard. We keep only the
+    hash, so it can never be shown again — lost keys are revoked + regenerated.
+    """
+    import uuid
+    import secrets
+    raw = "haven_" + secrets.token_urlsafe(32)
+    row = ApiKey(
+        id=str(uuid.uuid4()), user_id=identity.user_id,
+        key_hash=hash_key(raw), label=body.label[:60] or "engine",
+        created_at=int(time.time() * 1000),
+    )
+    db.add(row)
+    db.commit()
+    return {"id": row.id, "label": row.label, "api_key": raw,
+            "note": "Copy this now — it is shown only once."}
+
+
+@app.delete("/engine/keys/{key_id}")
+def revoke_engine_key(key_id: str, db: Session = Depends(get_db),
+                      identity: Identity = Depends(require_paid)):
+    """Revoke an engine key (the engine using it stops being able to trade)."""
+    row = (db.query(ApiKey)
+           .filter(ApiKey.id == key_id, ApiKey.user_id == identity.user_id).first())
+    if not row:
+        raise HTTPException(status_code=404, detail="Key not found")
+    row.revoked = 1
+    db.commit()
+    return {"ok": True}
+
+
+@app.get("/engine/download")
+def download_engine(identity: Identity = Depends(require_paid)):
+    """Serve the packaged desktop engine zip (paid users only).
+
+    The zip is built by tools/build_engine_zip.py into api/static/. If it isn't
+    present the endpoint 404s with guidance rather than erroring cryptically.
+    """
+    from fastapi.responses import FileResponse
+    zip_path = os.path.join(os.path.dirname(__file__), "static", "haven-engine.zip")
+    if not os.path.exists(zip_path):
+        raise HTTPException(status_code=404,
+                            detail="Engine build not available yet. Run tools/build_engine_zip.py.")
+    return FileResponse(zip_path, media_type="application/zip",
+                        filename="haven-engine.zip")
+
+
+# Shared infrastructure processes — one instance serves everyone, so their
+# heartbeats are global. A user's own engine/runner heartbeats are namespaced
+# "{process}@{user_id}" so each account sees only its own engine dot.
+SHARED_PROCESSES = {"collector", "api"}
 
 
 @app.get("/health")
-def health_check(db: Session = Depends(get_db)):
-    """Returns live status of all background processes."""
-    now_ms = 0
+def health_check(db: Session = Depends(get_db),
+                 identity: Identity = Depends(get_identity)):
+    """Live status of shared processes (collector) + THIS user's engine/runner.
+
+    Uses get_identity (not require_paid) so the health dots still render on the
+    subscribe screen; the data here is not sensitive.
+    """
     from datetime import datetime, timezone
     now_ms = int(datetime.now(timezone.utc).timestamp() * 1000)
 
-    rows = db.query(Heartbeat).all()
-    statuses = {}
-    for row in rows:
-        age_sec = (now_ms - row.last_heartbeat) / 1000
+    def bucket(age_sec):
         if age_sec < 60:
-            statuses[row.process] = {"status": "ok", "last_seen_sec_ago": int(age_sec)}
-        elif age_sec < 180:
-            statuses[row.process] = {"status": "warning", "last_seen_sec_ago": int(age_sec)}
-        else:
-            statuses[row.process] = {"status": "down", "last_seen_sec_ago": int(age_sec)}
+            return "ok"
+        return "warning" if age_sec < 180 else "down"
+
+    statuses = {}
+    for row in db.query(Heartbeat).all():
+        proc, _, owner = row.process.partition("@")
+        if owner:                                  # a user's engine/runner
+            if owner != identity.user_id:
+                continue                           # hide other users' engines
+        elif proc not in SHARED_PROCESSES and not SOLO_MODE:
+            # Legacy un-namespaced engine row — only surface it in solo mode.
+            continue
+        age_sec = (now_ms - row.last_heartbeat) / 1000
+        statuses[proc] = {"status": bucket(age_sec), "last_seen_sec_ago": int(age_sec)}
 
     return statuses
 
@@ -1008,10 +1215,9 @@ class EngineSettingsUpdate(BaseModel):
     max_retry_attempts: int | None = None
 
 
-@app.get("/engine/settings")
-def get_engine_settings(db: Session = Depends(get_db)):
-    """Current engine settings (stored values merged over defaults)."""
-    stored = {r.key: r.value for r in db.query(EngineSetting).all()}
+def _engine_settings_for(db: Session, user_id: str):
+    stored = {r.key: r.value for r in
+              db.query(EngineSetting).filter(EngineSetting.user_id == user_id).all()}
     merged = {**ENGINE_SETTING_DEFAULTS, **stored}
     return {
         "paused": int(merged["paused"]),
@@ -1022,17 +1228,27 @@ def get_engine_settings(db: Session = Depends(get_db)):
     }
 
 
+@app.get("/engine/settings")
+def get_engine_settings(db: Session = Depends(get_db),
+                        identity: Identity = Depends(require_paid)):
+    """This user's engine settings (stored values merged over defaults)."""
+    return _engine_settings_for(db, identity.user_id)
+
+
 @app.patch("/engine/settings")
-def update_engine_settings(u: EngineSettingsUpdate, db: Session = Depends(get_db)):
-    """Update one or more engine settings (partial update)."""
+def update_engine_settings(u: EngineSettingsUpdate, db: Session = Depends(get_db),
+                           identity: Identity = Depends(require_paid)):
+    """Update one or more of this user's engine settings (partial update)."""
     for key, val in u.model_dump(exclude_none=True).items():
-        row = db.query(EngineSetting).filter(EngineSetting.key == key).first()
+        row = (db.query(EngineSetting)
+               .filter(EngineSetting.user_id == identity.user_id,
+                       EngineSetting.key == key).first())
         if row:
             row.value = str(val)
         else:
-            db.add(EngineSetting(key=key, value=str(val)))
+            db.add(EngineSetting(user_id=identity.user_id, key=key, value=str(val)))
     db.commit()
-    return get_engine_settings(db)
+    return _engine_settings_for(db, identity.user_id)
 
 
 class HeartbeatCreate(BaseModel):
@@ -1040,27 +1256,38 @@ class HeartbeatCreate(BaseModel):
 
 
 @app.post("/heartbeat")
-def write_heartbeat(hb: HeartbeatCreate, db: Session = Depends(get_db)):
-    """Record a liveness heartbeat for a process (e.g. the wallet executor)."""
+def write_heartbeat(hb: HeartbeatCreate, db: Session = Depends(get_db),
+                    identity: Identity = Depends(get_identity)):
+    """Record a liveness heartbeat for a process.
+
+    A user's own engine/runner is namespaced "{process}@{user_id}" so each
+    account tracks its own engine; shared infra (collector via the service key,
+    or anything in solo mode) heartbeats under its plain process name.
+    """
     from datetime import datetime, timezone
     now_ms = int(datetime.now(timezone.utc).timestamp() * 1000)
-    existing = db.query(Heartbeat).filter_by(process=hb.process).first()
+    proc = hb.process
+    if not identity.is_service and not SOLO_MODE and proc not in SHARED_PROCESSES:
+        proc = f"{proc}@{identity.user_id}"
+    existing = db.query(Heartbeat).filter_by(process=proc).first()
     if existing:
         existing.last_heartbeat = now_ms
     else:
-        db.add(Heartbeat(process=hb.process, last_heartbeat=now_ms))
+        db.add(Heartbeat(process=proc, last_heartbeat=now_ms))
     db.commit()
-    return {"ok": True, "process": hb.process, "last_heartbeat": now_ms}
+    return {"ok": True, "process": proc, "last_heartbeat": now_ms}
 
 
 @app.get("/tokens", response_model=List[TokenResponse])
-def get_tokens(skip: int = 0, limit: int = 100, db: Session = Depends(get_db)):
-    """Retrieve the list of tracked Alpha tokens."""
+def get_tokens(skip: int = 0, limit: int = 100, db: Session = Depends(get_db),
+               identity: Identity = Depends(require_paid)):
+    """Retrieve the list of tracked Alpha tokens (shared market data)."""
     tokens = db.query(Token).offset(skip).limit(limit).all()
     return tokens
 
 @app.get("/signals", response_model=List[SignalResponse])
-def get_top_signals(limit: int = 400, sort_by: str = "flow_1m", db: Session = Depends(get_db)):
+def get_top_signals(limit: int = 400, sort_by: str = "flow_1m", db: Session = Depends(get_db),
+                    identity: Identity = Depends(require_paid)):
     """Retrieve signals computed from 1-minute buckets + latest tickers.
 
     Aggregation happens in SQL (one GROUP BY over the last hour of buckets)
@@ -1257,8 +1484,12 @@ class AssistantChatRequest(BaseModel):
 
 
 @app.post("/assistant/chat")
-async def assistant_chat(req: AssistantChatRequest):
-    """Proxy a coding-assistant chat turn to DeepSeek (key stays server-side)."""
+async def assistant_chat(req: AssistantChatRequest,
+                         identity: Identity = Depends(require_paid)):
+    """Proxy a coding-assistant chat turn to DeepSeek (key stays server-side).
+
+    Paid-gated: each call costs us DeepSeek tokens, so it's Pro-only (there is
+    no free tier anyway — require_paid covers it)."""
     key = _load_deepseek_key()
     if not key:
         raise HTTPException(
@@ -1301,22 +1532,40 @@ async def assistant_chat(req: AssistantChatRequest):
     return {"reply": reply}
 
 
+# Short-TTL klines cache: every user watching the same token would otherwise
+# hit Binance separately. One shared fetch per (symbol, interval, limit) for a
+# few seconds collapses that fan-out — the candles barely move in that window.
+_KLINES_CACHE: dict = {}
+_KLINES_TTL_SEC = float(os.environ.get("KLINES_CACHE_TTL", "5"))
+
+
 @app.get("/klines/{symbol}")
-async def get_klines(symbol: str, interval: str = "5m", limit: int = 500):
-    """Retrieve historical klines for charting directly from Binance API"""
+async def get_klines(symbol: str, interval: str = "5m", limit: int = 500,
+                     identity: Identity = Depends(require_paid)):
+    """Retrieve historical klines for charting directly from Binance API."""
     # Binance Alpha klines API strictly requires the "ALPHA_" prefix
     alpha_symbol = f"ALPHA_{symbol}" if not symbol.startswith("ALPHA_") else symbol
 
+    cache_key = (alpha_symbol, interval, limit)
+    hit = _KLINES_CACHE.get(cache_key)
+    if hit and (time.time() - hit[0]) < _KLINES_TTL_SEC:
+        return hit[1]
+
     api = BinanceAlphaAPI()
     try:
-        return await api.get_klines(symbol=alpha_symbol, interval=interval, limit=limit)
+        data = await api.get_klines(symbol=alpha_symbol, interval=interval, limit=limit)
     finally:
         await api.close()
+    _KLINES_CACHE[cache_key] = (time.time(), data)
+    if len(_KLINES_CACHE) > 2000:            # bound memory
+        _KLINES_CACHE.clear()
+    return data
 
 
 @app.get("/flow/{symbol}")
 def get_flow(symbol: str, start_ms: int | None = None, end_ms: int | None = None,
-             limit: int = 10080, db: Session = Depends(get_db)):
+             limit: int = 10080, db: Session = Depends(get_db),
+             identity: Identity = Depends(require_paid)):
     """Raw 1-minute buy/sell USD flow buckets for strategy backtests.
 
     Returns ascending [[bucket_start_ms, buy_volume, sell_volume, trade_count], ...].

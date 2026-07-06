@@ -1,7 +1,9 @@
 import { useState, useEffect } from 'react';
 import '../dashboard.css';
+import SubscriptionPanel from './SubscriptionPanel.jsx';
+import EngineConnect from './EngineConnect.jsx';
 
-const API_URL = 'http://localhost:8000';
+const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:8000';
 
 const FIELDS = [
   { key: 'max_trades_per_day', label: 'Max trades per day', step: 1, min: 0,
@@ -54,6 +56,9 @@ export default function SettingsView() {
   };
 
   return (
+    <div>
+    <SubscriptionPanel />
+    <EngineConnect />
     <div className="settings-root">
       <h2 style={{ color: '#e5e9f0', marginTop: 0 }}>⚙ Engine risk limits</h2>
       <p className="dash-muted" style={{ fontSize: 12, marginBottom: 20 }}>
@@ -74,6 +79,7 @@ export default function SettingsView() {
       <button className="settings-save" disabled={!dirty || busy} style={{ opacity: dirty ? 1 : 0.4 }}
         onClick={save}>{busy ? 'Saving…' : 'Save changes'}</button>
       {msg && <div className={msg.kind === 'ok' ? 'dash-green' : 'dash-error'} style={{ marginTop: 10, fontSize: 12 }}>{msg.text}</div>}
+    </div>
     </div>
   );
 }

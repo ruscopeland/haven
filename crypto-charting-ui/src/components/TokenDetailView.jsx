@@ -6,7 +6,7 @@ import { fmtUsd, fmtQty, fmtPrice, fmtTime, tokenColor } from '../utils/format';
 import { fetchSwapPreview, fetchBnbPriceUsd, ENGINE_SLIPPAGE_PCT } from '../utils/quote';
 import '../dashboard.css';
 
-const API_URL = 'http://localhost:8000';
+const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:8000';
 
 // In-app token page (old wallet's TokenDetails, rebuilt key-free):
 // header with price/contract, the SAME chart as the Charts tab embedded in a

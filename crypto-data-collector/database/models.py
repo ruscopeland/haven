@@ -73,6 +73,7 @@ class ChartMarker(Base):
     __tablename__ = "chart_markers"
 
     id = Column(String, primary_key=True)       # UUID
+    user_id = Column(String, index=True, default="local", nullable=False)
     symbol = Column(String, index=True, nullable=False)
     price = Column(Float, nullable=False)
     marker_type = Column(String, nullable=False)  # BUY_GRID / SELL_GRID / TP / SL / DCA_ENTRY / ALERT
@@ -91,6 +92,7 @@ class TradeHistory(Base):
     __tablename__ = "trade_history"
 
     id = Column(String, primary_key=True)         # UUID
+    user_id = Column(String, index=True, default="local", nullable=False)
     symbol = Column(String, index=True, nullable=False)
     direction = Column(String, nullable=False)     # BUY or SELL
     marker_id = Column(String, nullable=True)      # which marker triggered this
@@ -129,6 +131,7 @@ class Strategy(Base):
     __tablename__ = "strategies"
 
     id = Column(String, primary_key=True)           # UUID
+    user_id = Column(String, index=True, default="local", nullable=False)
     name = Column(String, nullable=False)
     code = Column(String, nullable=False)            # JS source (strategy-sdk contract)
     params_json = Column(String, nullable=True)      # user overrides of the code's defaults
@@ -161,6 +164,7 @@ class Finder(Base):
     __tablename__ = "finders"
 
     id = Column(String, primary_key=True)            # UUID
+    user_id = Column(String, index=True, default="local", nullable=False)
     name = Column(String, nullable=False)
     code = Column(String, nullable=False)             # JS source (finder contract)
     params_json = Column(String, nullable=True)       # user overrides of the code's defaults
@@ -200,6 +204,10 @@ class EngineSetting(Base):
     """
     __tablename__ = "engine_settings"
 
+    # Composite PK so every user has their own pause flag + risk limits. The
+    # legacy solo SQLite table keeps its physical PK on (key) alone — fine for
+    # the single 'local' user; fresh Postgres DBs get the true composite PK.
+    user_id = Column(String, primary_key=True, default="local")
     key = Column(String, primary_key=True)
     value = Column(String, nullable=False)
 
@@ -207,6 +215,47 @@ class EngineSetting(Base):
 # ── Debug log levels ───────────────────────────────────────────────────────
 DEBUG_LEVELS = ("DEBUG", "ERROR", "TRADE", "INFO", "API_REQUEST", "API_RESPONSE")
 DEBUG_SOURCES = ("collector", "engine", "api", "wallet")
+
+
+class ApiKey(Base):
+    """Engine connection key (Haven SaaS).
+
+    Generated once in the web app's Settings ("Connect your engine"), shown to
+    the user a single time, stored ONLY as a SHA-256 hash. The engine daemon
+    sends the raw key in X-Api-Key; the API hashes and looks it up here to
+    know which user is trading.
+    """
+    __tablename__ = "api_keys"
+
+    id = Column(String, primary_key=True)                 # UUID
+    user_id = Column(String, index=True, nullable=False)
+    key_hash = Column(String, unique=True, nullable=False)  # sha256 hex of raw key
+    label = Column(String, default="engine")
+    created_at = Column(BigInteger)
+    last_used_at = Column(BigInteger, nullable=True)
+    revoked = Column(Integer, default=0)                   # 1 = key disabled
+
+
+class Subscription(Base):
+    """Stripe subscription state per user (Haven SaaS).
+
+    Written ONLY by the Stripe webhook handler (and checkout bootstrap).
+    status follows Stripe's vocabulary: active / trialing / past_due /
+    canceled / incomplete. `early` freezes the founding-member price tier the
+    user locked in (first 500 active subscribers).
+    """
+    __tablename__ = "subscriptions"
+
+    user_id = Column(String, primary_key=True)             # Clerk user id
+    stripe_customer_id = Column(String, index=True, nullable=True)
+    stripe_subscription_id = Column(String, index=True, nullable=True)
+    status = Column(String, default="none")
+    plan = Column(String, nullable=True)                   # monthly | annual
+    price_id = Column(String, nullable=True)
+    current_period_end = Column(BigInteger, nullable=True)  # unix ms
+    early = Column(Integer, default=0)                     # 1 = founding price lock
+    created_at = Column(BigInteger)
+    updated_at = Column(BigInteger)
 
 
 class DebugLog(Base):
@@ -219,6 +268,7 @@ class DebugLog(Base):
     __tablename__ = "debug_logs"
 
     id = Column(Integer, primary_key=True, autoincrement=True)
+    user_id = Column(String, index=True, default="system", nullable=False)
     source = Column(String, index=True, nullable=False)   # collector | engine | api | wallet
     level = Column(String, index=True, nullable=False)     # DEBUG | ERROR | TRADE | INFO | API_REQUEST | API_RESPONSE
     message = Column(String, nullable=False)

@@ -37,11 +37,16 @@ const TOKENS_REFRESH_MS = 300_000;   // tradeable-token set (has contract addres
 const INTERVAL_SEC = { '1m': 60, '5m': 300, '15m': 900, '30m': 1800, '1h': 3600, '4h': 14400, '1d': 86400 };
 
 export class StrategyRunner {
-  constructor({ api, log, finderHub = null }) {
+  constructor({ api, log, finderHub = null, paperOnly = false }) {
     this.api = api;
     this.log = log;
     this.finderHub = finderHub;
+    // paperOnly = the CLOUD runner: it runs every user's DRY strategies
+    // centrally (no wallet, PAPER trades only) and ignores LIVE strategies —
+    // those execute exclusively on each user's own machine.
+    this.paperOnly = paperOnly;
     this.runners = new Map();        // strategy id -> runner state
+    this.owners = new Map();         // strategy id -> user_id (for PAPER attribution)
     this.lastListFetch = 0;
     this.lastHeartbeat = 0;
     this.lastTokensFetch = 0;
@@ -100,7 +105,11 @@ export class StrategyRunner {
   // symbol/interval, which bump it server-side) recreates the runner from
   // scratch; a mode flip alone carries over without resetting warm-up state.
   reconcile(list) {
-    const wanted = new Map(list.filter(s => s.mode !== 'off').map(s => [s.id, s]));
+    // Local engine: run this user's dry AND live strategies. Cloud runner
+    // (paperOnly): run every user's dry strategies only.
+    const keep = this.paperOnly ? (s => s.mode === 'dry') : (s => s.mode !== 'off');
+    const wanted = new Map(list.filter(keep).map(s => [s.id, s]));
+    this.owners = new Map(list.map(s => [s.id, s.user_id]));
 
     for (const [id, r] of this.runners) {
       const s = wanted.get(id);
@@ -516,6 +525,9 @@ export class StrategyRunner {
       block_time: Date.now(),
       status: 'PAPER',
       strategy_id: r.id,
+      // Cloud runner attributes each PAPER trade to the strategy's owner (the
+      // service key honors user_id). Ignored for a local engine key.
+      user_id: this.owners.get(r.id),
     });
   }
 

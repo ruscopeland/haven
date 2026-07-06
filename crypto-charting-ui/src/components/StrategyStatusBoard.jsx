@@ -1,7 +1,7 @@
 import { useState, useEffect } from 'react';
 import { fmtUsd, fmtQty, timeAgo, intervalToMs, tokenLabel, tradeUsd, tradeQty } from '../utils/format';
 
-const API_URL = 'http://localhost:8000';
+const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:8000';
 
 // Freshness of a running strategy: green if it ran within 2 bar-intervals,
 // yellow within 5, red beyond that, grey if it has never run.
