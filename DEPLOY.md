@@ -1,5 +1,14 @@
 # Deploying Haven — the click-by-click runbook
 
+> **⚠ Updated model (2026-07-06): the owner no longer clicks through this file.**
+> The owner's part is **`OWNER-CHECKLIST.md`** (accounts, cards, API tokens). Claude
+> executes everything below THROUGH those tokens (Railway CLI/API, Cloudflare
+> API/wrangler, Stripe API, `gh`) — this file remains the authoritative wiring
+> reference (services, env vars, orders, smoke test), not an owner to-do list.
+> Two content updates pending from `DATA-ROADMAP.md`: the collector service gains
+> RPC env vars (Alchemy/QuickNode) and loses every Binance dependency (task M5);
+> domain is **haven.trading** (web app at root, API at api.haven.trading).
+
 This is the exact, ordered checklist to put Haven online. It is written so you
 (or a cheaper AI model in a later session) can follow it without guessing.
 Where a step is "yours", it's clicking in a dashboard — no code. Where it's

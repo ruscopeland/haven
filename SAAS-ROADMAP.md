@@ -32,7 +32,11 @@ older note disagree, this file wins. Written 2026-07-05.
 > (ships as a zip needing Node today), lawyer-reviewed legal pages, Sentry/uptime/backup
 > tests, engine auto-update. Tracked in Phases 5–6 below and DEPLOY.md §10.
 >
-> **Your next move:** do Phase 1 (accounts/domain), then work `DEPLOY.md`.
+> **Your next move (updated 2026-07-06):** work **`OWNER-CHECKLIST.md`** — it
+> replaces the old "you click through DEPLOY.md" model. The owner gathers accounts,
+> cards, and API tokens; Claude executes the deploys/DNS/webhooks/products through
+> those tokens at machine speed. Domain is bought: **haven.trading** (Cloudflare);
+> Railway/Stripe/Clerk accounts exist.
 >
 > **🚨 2026-07-06 (later): §5 risk 2 REALIZED** — Binance requires an enterprise license
 > for commercial data use and region restrictions block obtaining one. Hard stop EOD

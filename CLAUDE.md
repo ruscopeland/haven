@@ -9,6 +9,8 @@ D2 — see §5.) This doc traces the real runtime flow from source.
 
 > **➡ SaaS conversion in progress:** the binding plan for turning this stack into a
 > multi-user product is **`SAAS-ROADMAP.md`** — it supersedes ROADMAP.md Phase F.
+> Owner-side launch tasks (accounts/tokens for haven.trading): **`OWNER-CHECKLIST.md`**;
+> Claude executes the deploys through the collected tokens (`DEPLOY.md` = wiring reference).
 
 > **🚨 DATA MIGRATION in progress (2026-07-06, hard deadline EOD 2026-07-07):** Binance
 > market data may not be used commercially (enterprise license unobtainable — region

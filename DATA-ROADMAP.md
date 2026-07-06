@@ -26,11 +26,18 @@ never-touch list from `ROADMAP.md` still apply to every session. Written 2026-07
 > reliability, not legality.
 >
 > **Critical path: M0 → M1 → M2 → M3 → M4.** M4 is the cutover; it must land before
-> the cutoff. M5+ (more chains, Solana, rug filter, listings) follow after.
+> the cutoff. M5+ (more chains, Solana, rug filter, listings) follow immediately after.
 >
-> **Fail-safe (M-KILL):** if the clock beats us, at the deadline we stop the Collector
-> window, PAUSE the engine (stale prices must never drive trades), and close chart
-> tabs. Legal line held; trading resumes when M4 lands. This is the floor, not the plan.
+> **Pacing (owner decision 2026-07-06): machine speed.** The M-phases are commit-and-
+> verify **checkpoints, not calendar units** — execute as many back-to-back in one
+> session as context allows; a fresh window is context hygiene between big batches,
+> nothing more. The only true gates are M0 (owner pastes RPC keys) and each phase's
+> "Done when" checklist. Realistic batching: M1+M2 in one session, M3+M4 in the next,
+> M5–M9 in one or two more.
+>
+> **Fail-safe (M-KILL):** if anything external stalls past the deadline, stop the
+> Collector window, PAUSE the engine (stale prices must never drive trades), close
+> chart tabs. Legal line held; trading resumes when M4 lands. Floor, not plan.
 
 ---
 
@@ -150,13 +157,12 @@ them). Multichain **data** is day one; multichain **live trading** is not (AD-D8
 
 ## 3. M0 — Owner prerequisites (~20 minutes, do BEFORE the M2 session)
 
-- [ ] **M0.1 (you) QuickNode account** at quicknode.com (free signup). Create **three
-      endpoints**: BNB Smart Chain, Ethereum, Base. Each gives an HTTPS and a WSS URL —
-      paste all six into a message to me, or directly into
-      `crypto-data-collector/.env` as I'll specify in M1. Start on the **free tier**
-      (50M credits/mo); expect to click up to **Build ($49/mo)** after M5 if the
-      credit meter says so — M2 logs our real burn rate so the decision is data, not
-      guesswork. (Solana comes in M6 — Helius free tier, separate signup, not now.)
+- [ ] **M0.1 (you) Node provider keys — see `OWNER-CHECKLIST.md` steps 2–3.**
+      **Alchemy** (one free account, one API key, covers BSC + Ethereum + Base +
+      **Solana** — so M6 needs no extra signup) plus a **QuickNode** free BSC
+      endpoint as the failover provider. No cards: M2 measures the real credit burn
+      and the paid-tier decision (budget $0–50/mo, worst case ~$120 before cadence
+      tuning) is made on data, not guesswork.
 - [ ] **M0.2 (you) Confirm launch chains.** Default per AD-D3: BSC + Ethereum + Base
       now, Arbitrum config-ready but off, Solana in M6. Say if you want different.
 - [ ] **M0.3 (you) Run `backup-db.bat`** before the M1 session (schema work) and
@@ -164,7 +170,7 @@ them). Multichain **data** is day one; multichain **live trading** is not (AD-D8
 
 ---
 
-## 4. The phases (one session each, fresh window, WORKFLOW.md protocol)
+## 4. The phases (checkpoints — batch them per the pacing note; WORKFLOW.md protocol)
 
 ### M1 🧠 — Schema + chain registry + remap script (no behavior change)
 
@@ -254,7 +260,8 @@ Stack DOWN for this one (engine PAUSED first, then all four windows closed).
 
 ### M6 🧠 — Solana ingester
 
-- [ ] Helius (or equivalent) account (owner, ~5 min); separate `ingest/solana.py`
+- [ ] Uses the same Alchemy key (Solana enabled in M0.1; Helius is the fallback
+      option if Alchemy's Solana methods disappoint); separate `ingest/solana.py`
       module: poll-based transaction/log ingestion for Raydium/Orca/Pump pools,
       same pricing-anchor + bucket-writer path, `chain='solana'`, mint addresses,
       SOL_solana anchor. Paper trading works on day one; live trading stays BSC.
@@ -287,8 +294,8 @@ Stack DOWN for this one (engine PAUSED first, then all four windows closed).
 
 | Thing | Cost | Notes |
 |---|---|---|
-| QuickNode (BSC+ETH+Base RPC) | $0 → $49 | free tier likely OK; Build if M2's measured burn says so |
-| Helius (Solana, M6) | $0 → $49 | free tier first, same measure-then-pay rule |
+| Alchemy (BSC+ETH+Base+Solana RPC) | $0 → ~$50 | free 30M CU/mo first; M2 measures real burn before paying |
+| QuickNode (failover, BSC) | $0 | free endpoint |
 | GoPlus security API (M7) | $0 | free tier |
 | Extra DB storage | ~$0 | 2.5–4 GB at default retention; pennies on Railway later |
 | **Total** | **$0–100** | vs. $199–499/mo vendor route; zero licensing exposure |
@@ -331,8 +338,9 @@ list untouched throughout.
 
 ## 9. Immediate next steps
 
-1. **You, today:** M0.1 QuickNode signup + three endpoints; M0.3 backup. (~20 min)
-2. **Next session (fresh window):** "Do M1 from DATA-ROADMAP.md" — same protocol
-   as always.
-3. Then M2 → M3 → M4, one session each, watching the clock. M4 closes the legal gap;
-   everything after it is upside.
+1. **You, today:** `OWNER-CHECKLIST.md` steps 2–3 (Alchemy + QuickNode keys) and
+   M0.3 backup (~15 min). The rest of the checklist in parallel as you get to it.
+2. **Next session:** "Do DATA-ROADMAP" — M-phases execute back-to-back at machine
+   speed, batched per the pacing note, each checkpoint committed and verified.
+   M4 closes the legal gap; everything after it is upside; then the deploy
+   (`DEPLOY.md`) proceeds as your checklist values arrive.
