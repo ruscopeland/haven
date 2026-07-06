@@ -1,9 +1,31 @@
-# SaaS Master Plan — Alpha Terminal, from personal tool to paid product
+# SaaS Master Plan — "Haven", from personal tool to paid product
 
 **This is the ONE plan.** It supersedes ROADMAP.md Phase F, absorbs the two leftover
 items from the old roadmap (D2 — done 2026-07-05; E3b — now task S6.1), and replaces
 every earlier "future/multi-user" note scattered across the repo. When this file and an
 older note disagree, this file wins. Written 2026-07-05.
+
+> ## ⚡ BUILD STATUS — 2026-07-06 (product name: **Haven**, $10/mo → $20 after 500 users,
+> annual $60 → $120, no free tier)
+>
+> **All the CODE for Phases 2–5 and 7 is written, committed (`9fc92c9`), and tested.**
+> The app is multi-user, key-free, Clerk-authenticated, Stripe-billed, and ships a
+> downloadable engine. What remains is **not code** — it is YOUR account setup + the
+> deploy clicks, all scripted step-by-step in **`DEPLOY.md`**. Follow that file top to
+> bottom and Haven goes live.
+>
+> Done in code: Postgres support + per-user data isolation (verified: two users can't
+> see each other, service key sees all, unpaid = 402); Clerk auth + engine API keys;
+> Stripe checkout/webhook/portal + founding-500 pricing; cloud paper-runner; web
+> Landing/Subscribe/Gate + Settings billing & engine-connect; Dockerfiles; sqlite→
+> postgres migration; engine setup wizard + zip builder. Solo mode still runs the old
+> local stack login-free.
+>
+> Honestly NOT done (post-launch, none block a paying beta): signed Windows installer
+> (ships as a zip needing Node today), lawyer-reviewed legal pages, Sentry/uptime/backup
+> tests, engine auto-update. Tracked in Phases 5–6 below and DEPLOY.md §10.
+>
+> **Your next move:** do Phase 1 (accounts/domain), then work `DEPLOY.md`.
 
 The old ROADMAP.md stays in the repo as the historical record of Phases A–E (all done).
 Work sessions keep the same protocol as before (WORKFLOW.md): one task per session,
