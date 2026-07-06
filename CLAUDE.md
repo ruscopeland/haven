@@ -112,8 +112,10 @@ FastAPI over the same DB. Schema in `database/models.py`. Key endpoints:
 - **Strategies** (`strategies`): `GET /strategies` (list, no code), `GET/POST/PATCH/DELETE
   /strategies/{id}`. **`updated_at` bumps ONLY on definition changes (code/params/symbol/
   interval/finder_id/max_positions/switch_margin_pct)** — it is the runner's hot-reload key; a
-  mode flip must not reset a running strategy's warm-up state. DELETE also removes the
-  strategy's still-active markers. `GET /trades` accepts `status` and `strategy_id` filters.
+  mode flip must not reset a running strategy's warm-up state. DELETE removes the strategy's
+  still-active markers **and its PAPER/PAPER_ARCH/FAILED trade rows; FILLED rows are kept**
+  (real on-chain history — the wallet's avg-cost PnL walk would corrupt if money that actually
+  moved vanished from the books). `GET /trades` accepts `status` and `strategy_id` filters.
   Token selection: a fixed `symbol`, OR `finder_id` + `max_positions` (1–10) +
   `switch_margin_pct` with **`symbol=''`** (SQLite can't relax the NOT NULL; empty string +
   finder_id = dynamic). PATCH detaches a finder via the explicit `clear_finder` flag.
@@ -122,14 +124,25 @@ FastAPI over the same DB. Schema in `database/models.py`. Key endpoints:
   entitlements** (`entitlements()` in `api/auth.py`, added 2026-07-06): solo mode/service =
   unlimited; paid = `HAVEN_BASE_BOTS` (3) + `subscriptions.extra_bots`; Stripe `trialing` =
   `HAVEN_TRIAL_BOTS` (1) and **paper-only** (LIVE → 403). Over the cap → **409**; both carry
-  human-readable `detail` that the UIs alert as-is. `GET /billing/status` reports
-  `max_bots` (null = unlimited) / `bots_running` / `live_allowed` for the UI counters.
+  human-readable `detail` that the UIs alert as-is.
+  **Strategy lifecycle (S4.8, 2026-07-06):** POST is capped by `max_strategies`
+  (`HAVEN_MAX_STRATEGIES`, default 20; solo/service unlimited; bigger libraries = planned
+  sellable upgrade) → 409 over cap. **PATCHing `mode` to `live` archives the current dry run
+  server-side**: that strategy's PAPER trade rows flip to status **`PAPER_ARCH`** — live stats
+  start clean, the dry record stays viewable. PAPER_ARCH is excluded from `/dashboard/overview`
+  exactly like PAPER and is invisible to the runner's dry position rebuild (`status=PAPER`
+  fetch), so a later return to DRY can't resurrect phantom positions.
+  `POST /strategies/{id}/reset_dry` deletes the current PAPER rows (the archive is kept).
+  `GET /billing/status` reports `max_bots` (null = unlimited) / `bots_running` /
+  `live_allowed` / `strategies_saved` / `max_strategies` for the UI counters.
 - **`GET /strategies/{id}/performance`** (added 2026-07-06) — one call powering the per-bot
   performance page: strategy row + trade history split into `paper` / `live` / `failed`
   (each ascending, newest `limit` (1000, max 5000) rows, enriched with the triggering
   marker's type/label as `reason` so TP/SL legs identify themselves), this strategy's active
-  markers, `token_prices` for involved symbols, and `finder_name`. Stats/equity math happens
-  client-side in `utils/strategyPerf.js` (same avg-cost walk as the runner's `applyFill`).
+  markers, `token_prices` for involved symbols, and `finder_name`. Always includes
+  `paper_archived_count`; `?archived=1` adds the `paper_archived` rows (the page fetches them
+  only when the 📦 Archive view is opened). Stats/equity math happens client-side in
+  `utils/strategyPerf.js` (same avg-cost walk as the runner's `applyFill`).
 - **Finders** (`finders`): `GET /finders` (list, no code), `GET/POST/PATCH/DELETE /finders/{id}`.
   Same `updated_at` contract (bumps only on code/params/interval — it is the FinderHub's
   hot-reload key). DELETE returns **409 while any strategy references the finder**.
@@ -168,13 +181,23 @@ FastAPI over the same DB. Schema in `database/models.py`. Key endpoints:
   `runBacktest` from `strategy-sdk` (debounced 600 ms) over 500 `/klines` bars (+`/flow` when
   the code references `ctx.flow`) and overlays fills as arrows via `createSeriesMarkers`, plus
   an equity line and a stats/trades panel. Backtest fills at next-bar open, SL beats TP intrabar
-  (pessimistic), fee/slippage inputs in the toolbar. Per-strategy OFF/DRY/LIVE toggle PATCHes
-  `mode` (LIVE shows a confirm dialog; engine risk limits still apply).
-  **Token selection control**: "Fixed symbol" or a saved 🔍 finder + max positions + switch
-  margin — with a finder attached the backtest becomes `runPortfolioBacktest` over `/universe`
-  data (interval restricted to 5m/15m/30m/1h) and the chart pane becomes a **slot timeline**
-  (colored binding bands per slot with fills painted on, combined equity below); the trades
-  table gains Token and Rank@bind columns.
+  (pessimistic), fee/slippage inputs in the toolbar.
+  **Save/deploy flow (S4.8, 2026-07-06):** an editing note shows "Editing saved strategy
+  (deployed DRY/LIVE)" vs "New draft — not saved yet"; Save never arms anything and asks
+  before overwriting a DEPLOYED strategy (a definition PATCH hot-reloads the runner);
+  **"Save as copy"** forks the editor contents into a new saved strategy (auto-suffixes
+  " (copy)" if the name is unchanged). **▶ Deploy (paper)** arms DRY; **⏹ Stop** disarms;
+  there is NO LIVE control in the workbench — LIVE arms only from the bot's performance
+  page. Deploy hitting the bot-slot cap (409) opens a dialog listing running bots with
+  per-row Stop buttons + "Deploy again".
+  **Token selection control**: "Fixed symbol" or a saved 🔍 finder + max positions (the
+  switch-margin input was removed 2026-07-06, owner decision — the hysteresis runs
+  internally at the row's stored/default value (10); it only decides which token a FLAT
+  slot binds next, an open position is never closed by a rebind) — with a finder attached
+  the backtest becomes `runPortfolioBacktest` over `/universe` data (interval restricted
+  to 5m/15m/30m/1h) and the chart pane becomes a **slot timeline** (colored binding bands
+  per slot with fills painted on, combined equity below); the trades table gains Token
+  and Rank@bind columns.
 - **🔍 Token Finder tab** (`FinderWorkbench.jsx` + `RankingRiver.jsx`): CodeMirror editor for JS
   finders (contract: a `finder` object with `params`, optional `filter(ctx)`, required
   `score(ctx)`; ctx = strategy ctx minus trading plus `ctx.token` metadata). `/universe` is
@@ -199,7 +222,13 @@ FastAPI over the same DB. Schema in `database/models.py`. Key endpoints:
   `end_ms` when the trade predates the loaded candles), avg-cost price line while holding,
   open orders (queued signals/bracket legs), per-token breakdown + symbol chips for
   finder-bound strategies, failed-execution list (live). OFF/DRY/LIVE toggle lives here too
-  (same LIVE confirm; surfaces the 409/403 entitlement errors). The Dashboard strategy board
+  (same LIVE confirm; surfaces the 409/403 entitlement errors) — **this page is the ONLY
+  place LIVE can be armed** (S4.8), and the confirm notes that the dry run gets archived.
+  S4.8 additions: a **📦 Archive pill** (appears when `paper_archived_count > 0`; shows the
+  dry runs auto-archived at live-arm, fetched with `?archived=1`), **🧹 Reset dry run**
+  (confirm → `POST .../reset_dry`, clears current paper trades, archive kept), and
+  **🗑 Delete bot** (confirm → DELETE; removes paper/archived/failed rows, keeps FILLED,
+  then returns to the Dashboard). The Dashboard strategy board
   header shows "N of M bots running" (M from `/billing/status`; hidden cap in solo =
   unlimited).
 
@@ -261,8 +290,11 @@ Every 15s it syncs `GET /strategies`: rows with `mode != off` get a runner; a ch
 - **DRY signal** → `POST /trades` directly with `status='PAPER'` and a synthetic
   `tx_hash` (`paper-<uuid>` — tx_hash is UNIQUE). TP/SL simulated locally with the
   backtester's pessimistic rules. PAPER rows are **excluded from `/dashboard/overview`**
-  server-side, so they can never touch wallet PnL or the engine's daily cap
-  (`countTradesToday` counts FILLED only anyway).
+  server-side (as is `PAPER_ARCH`, the archived-dry status the API writes at live-arm),
+  so they can never touch wallet PnL or the engine's daily cap
+  (`countTradesToday` counts FILLED only anyway). The runner's dry position rebuild
+  fetches `status=PAPER` only, so archived dry runs never resurrect phantom positions —
+  all of this needed **zero engine changes** (S4.8 is API+UI only).
 - Strategy exceptions → `PATCH last_error` (surfaces as a red dot in the workbench) + debug
   log; other strategies keep running. Successful bars set `last_run_at` and clear the error.
   Heartbeats as `strategy_runner` when any strategy is armed.

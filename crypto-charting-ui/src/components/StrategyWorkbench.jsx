@@ -63,6 +63,7 @@ export default function StrategyWorkbench({ signals = [], initialSelectId = null
   const [finders, setFinders] = useState([]);
   const [pfUniverse, setPfUniverse] = useState(null);   // normalized universe of the last portfolio run
   const [showGuide, setShowGuide] = useState(false);
+  const [showSlots, setShowSlots] = useState(false);    // "bot slots full" dialog (deploy hit a 409)
   const dataCache = useRef(new Map());   // `${symbol}|${interval}` → { bars, flowRows, at }
   const universeCache = useRef(new Map()); // `${interval}` → { normalized, at }
   const finderCache = useRef(new Map());   // finderId → { code, params, updatedAt }
@@ -138,18 +139,38 @@ export default function StrategyWorkbench({ signals = [], initialSelectId = null
     selectStrategy(initialSelectId);
   }, [initialSelectId, list]);
 
-  const saveDraft = async () => {
-    const body = {
+  // The saved shape of the current editor contents. switch_margin_pct has no
+  // UI field anymore (owner decision 2026-07-06) — it rides along at the
+  // loaded row's value or the default 10; it only affects which token a FLAT
+  // slot picks next, never an open position.
+  const draftBody = () => {
+    const margin = parseFloat(draft.switchMarginPct);
+    return {
       name: draft.name,
       code: draft.code,
-      // '' + finder_id means dynamic selection server-side; PATCH needs the
-      // explicit clear flag to detach a finder.
+      // '' + finder_id means dynamic selection server-side.
       symbol: draft.finderId ? '' : draft.symbol,
       interval: draft.interval,
       params_json: JSON.stringify(draft.params || {}),
       max_positions: parseInt(draft.maxPositions, 10) || 1,
-      switch_margin_pct: parseFloat(draft.switchMarginPct) || 0,
+      switch_margin_pct: Number.isFinite(margin) ? margin : 10,
       ...(draft.finderId ? { finder_id: draft.finderId } : {}),
+    };
+  };
+
+  const saveDraft = async () => {
+    // Overwriting a RUNNING strategy hot-reloads the deployed bot with the new
+    // definition — never do that silently.
+    if (draft.id && selectedRow && selectedRow.mode !== 'off') {
+      const ok = window.confirm(
+        `"${selectedRow.name}" is deployed (${selectedRow.mode.toUpperCase()}) — saving updates ` +
+        `the running bot with this new definition (it restarts and re-warms from history).\n\n` +
+        `OK = update the running bot.\nCancel = go back (use "Save as copy" to keep it untouched).`);
+      if (!ok) return;
+    }
+    const body = {
+      ...draftBody(),
+      // PATCH needs the explicit clear flag to detach a finder.
       ...(draft.id && !draft.finderId ? { clear_finder: true } : {}),
     };
     try {
@@ -170,6 +191,26 @@ export default function StrategyWorkbench({ signals = [], initialSelectId = null
     }
   };
 
+  // Fork the current editor contents into a NEW saved strategy, leaving the
+  // selected one (and its stats/deployment) untouched.
+  const saveCopy = async () => {
+    const body = draftBody();
+    if (selectedRow && body.name === selectedRow.name) body.name = `${body.name} (copy)`;
+    try {
+      const res = await fetch(`${API_URL}/strategies`, {
+        method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
+      if (!res.ok) throw new Error((await res.json()).detail || res.statusText);
+      const s = await res.json();
+      setDraft(d => ({ ...d, id: s.id, name: s.name }));
+      setDirty(false);
+      setSaveMsg('Saved as copy ✓');
+      setTimeout(() => setSaveMsg(''), 2000);
+      fetchList();
+    } catch (err) {
+      setSaveMsg(`Save failed: ${err.message}`);
+    }
+  };
+
   const deleteStrategy = async () => {
     if (!draft.id) return;
     if (!window.confirm(`Delete strategy "${draft.name}"? Any queued markers it posted are removed too.`)) return;
@@ -180,38 +221,35 @@ export default function StrategyWorkbench({ signals = [], initialSelectId = null
     } catch (err) { console.error('Failed to delete strategy', err); }
   };
 
-  const setMode = async (mode) => {
+  // Deploy = arm in DRY (paper) mode. LIVE can only be armed from the bot's
+  // Performance page (owner decision 2026-07-06) — the workbench never
+  // touches real funds.
+  const armDry = async () => {
     if (!draft.id) return;
-    if (dirty && mode !== 'off') {
+    if (dirty) {
       window.alert('Save the strategy first — the runner executes the SAVED code, not this draft.');
       return;
-    }
-    if (mode === 'live') {
-      const usd = draft.params.usd ?? paramDefaults.usd;
-      const target = draft.finderId
-        ? `the Token Finder's top picks (up to ${draft.maxPositions} slots)`
-        : draft.symbol;
-      const ok = window.confirm(
-        `Run "${draft.name}" LIVE on ${target}?\n\n` +
-        `• Signals become REAL on-chain swaps via the marker engine${usd ? ` (~$${usd} per signal)` : ''}.\n` +
-        `• Engine risk limits still apply: max trade USD, daily cap, price-impact guard, pause flag.\n` +
-        `• Flip back to DRY or OFF here at any time.`);
-      if (!ok) return;
     }
     try {
       const res = await fetch(`${API_URL}/strategies/${draft.id}`, {
         method: 'PATCH', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ mode }),
+        body: JSON.stringify({ mode: 'dry' }),
       });
-      if (res.ok) {
-        fetchList();
-      } else {
-        // e.g. the bot limit (409) or a trial trying to go LIVE (403) — the
-        // server's detail is written for humans, show it as-is.
-        const d = await res.json().catch(() => ({}));
-        window.alert(d.detail || `Could not change mode (HTTP ${res.status}).`);
-      }
-    } catch (err) { console.error('Failed to set mode', err); }
+      if (res.ok) { fetchList(); return; }
+      if (res.status === 409) { setShowSlots(true); return; }  // bot slots full → offer to stop one
+      const d = await res.json().catch(() => ({}));
+      window.alert(d.detail || `Could not deploy (HTTP ${res.status}).`);
+    } catch (err) { console.error('Failed to deploy', err); }
+  };
+
+  const stopStrategy = async (id) => {
+    try {
+      const res = await fetch(`${API_URL}/strategies/${id}`, {
+        method: 'PATCH', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ mode: 'off' }),
+      });
+      if (res.ok) fetchList();
+    } catch (err) { console.error('Failed to stop strategy', err); }
   };
 
   // ── Live/dry activity for the selected saved strategy ───────────────────
@@ -417,6 +455,17 @@ export default function StrategyWorkbench({ signals = [], initialSelectId = null
         </div>
 
         <div className="wb-config">
+          <div className="wb-editing-note">
+            {draft.id ? (
+              <>Editing saved strategy
+                {selectedRow && selectedRow.mode !== 'off' && (
+                  <b className={`wb-running-tag mode-${selectedRow.mode}`}> — deployed {selectedRow.mode.toUpperCase()}</b>
+                )}
+              </>
+            ) : (
+              <b className="wb-new-tag">New draft — not saved yet</b>
+            )}
+          </div>
           <input
             className="wb-input wb-name"
             value={draft.name}
@@ -458,12 +507,10 @@ export default function StrategyWorkbench({ signals = [], initialSelectId = null
                        value={draft.maxPositions}
                        onChange={(e) => patchDraft({ maxPositions: e.target.value })} />
               </label>
-              <label className="wb-mini-label" title="A flat slot only switches token when the challenger's score beats the current one by this margin">
-                switch margin %
-                <input className="wb-input wb-mini" type="number" min="0" max="100" step="1"
-                       value={draft.switchMarginPct}
-                       onChange={(e) => patchDraft({ switchMarginPct: e.target.value })} />
-              </label>
+              {/* switch margin % field removed 2026-07-06 (owner decision): the
+                  hysteresis keeps its default internally — a slot holding a
+                  position is never closed by a rebind; only FLAT slots pick a
+                  new token, after the previous trade closed. */}
             </div>
           )}
 
@@ -501,29 +548,37 @@ export default function StrategyWorkbench({ signals = [], initialSelectId = null
           <button className="wb-btn wb-save" onClick={saveDraft}>
             {draft.id ? 'Save' : 'Save as new'}{dirty ? ' *' : ''}
           </button>
+          {draft.id && (
+            <button className="wb-btn" title="Save these edits as a NEW strategy — the selected one keeps its code, stats and deployment"
+              onClick={saveCopy}>
+              Save as copy
+            </button>
+          )}
           {draft.id && <button className="wb-btn wb-delete" onClick={deleteStrategy}>Delete</button>}
           <button className="wb-btn wb-guide" onClick={() => setShowGuide(true)}>📖 Guide</button>
           {draft.id && onOpenStrategyPage && (
-            <button className="wb-btn wb-guide" title="How is this bot doing? Stats, equity, every fill on a chart."
+            <button className="wb-btn wb-guide" title="How is this bot doing? Stats, equity, every fill on a chart — and the LIVE switch."
               onClick={() => onOpenStrategyPage(draft.id)}>
               📊 Performance
             </button>
           )}
           <span className="wb-save-msg">{saveMsg}</span>
           <div style={{ flex: 1 }} />
-          {draft.id && selectedRow && (
-            <div className="wb-mode-toggle">
-              {['off', 'dry', 'live'].map(m => (
-                <button
-                  key={m}
-                  className={`wb-mode-btn mode-${m} ${selectedRow.mode === m ? 'active' : ''}`}
-                  onClick={() => setMode(m)}
-                >
-                  {m.toUpperCase()}
-                </button>
-              ))}
-            </div>
-          )}
+          {draft.id && selectedRow && (selectedRow.mode === 'off' ? (
+            <button className="wb-btn wb-deploy"
+              title="Start this bot in DRY (paper) mode — simulated fills, no real funds. Go LIVE from its Performance page."
+              onClick={armDry}>
+              ▶ Deploy (paper)
+            </button>
+          ) : (
+            <>
+              <span className={`wb-mode-badge mode-${selectedRow.mode}`}>{selectedRow.mode.toUpperCase()}</span>
+              <button className="wb-btn wb-stop" title="Stop this bot (it keeps its stats and can be redeployed any time)"
+                onClick={() => stopStrategy(draft.id)}>
+                ⏹ Stop
+              </button>
+            </>
+          ))}
         </div>
 
         <AssistantPanel
@@ -621,6 +676,47 @@ export default function StrategyWorkbench({ signals = [], initialSelectId = null
           onClose={() => setShowGuide(false)}
           onInsert={(code) => { patchDraft({ code }); setShowGuide(false); }}
         />
+      )}
+
+      {/* Deploy hit the plan's bot-slot cap (409): show what's running and let
+          the user free a slot without leaving the page. Stopped bots keep
+          their stats and can be redeployed any time. */}
+      {showSlots && (
+        <div className="wb-modal-backdrop" onClick={() => setShowSlots(false)}>
+          <div className="wb-modal" onClick={(e) => e.stopPropagation()}>
+            <h3>All bot slots are in use</h3>
+            <p className="bt-muted wb-modal-text">
+              Your plan's running-bot slots are full. Stop one of these bots to free a
+              slot, then deploy again. Stopped bots keep all their stats and can be
+              redeployed whenever you want.
+            </p>
+            <div className="wb-modal-list">
+              {list.filter(s => s.mode !== 'off').map(s => (
+                <div key={s.id} className="wb-modal-row">
+                  <div className="wb-list-main">
+                    <span className="wb-list-name">{s.name}</span>
+                    <span className="wb-list-sub">
+                      {s.finder_id
+                        ? `🔍 ${finders.find(f => f.id === s.finder_id)?.name || 'finder'} ×${s.max_positions || 1}`
+                        : s.symbol.replace('USDT', '')} · {s.interval}
+                    </span>
+                  </div>
+                  <span className={`wb-mode-badge mode-${s.mode}`}>{s.mode.toUpperCase()}</span>
+                  <button className="wb-btn wb-stop" onClick={() => stopStrategy(s.id)}>⏹ Stop</button>
+                </div>
+              ))}
+              {list.filter(s => s.mode !== 'off').length === 0 && (
+                <div className="bt-muted">Nothing is running now — a slot is free.</div>
+              )}
+            </div>
+            <div className="wb-modal-actions">
+              <button className="wb-btn wb-deploy" onClick={() => { setShowSlots(false); armDry(); }}>
+                ▶ Deploy again
+              </button>
+              <button className="wb-btn" onClick={() => setShowSlots(false)}>Cancel</button>
+            </div>
+          </div>
+        </div>
       )}
     </div>
   );

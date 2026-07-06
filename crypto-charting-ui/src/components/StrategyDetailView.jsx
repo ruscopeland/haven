@@ -51,11 +51,15 @@ export default function StrategyDetailView({ strategyId, onBack, onEdit }) {
   const [bnbPrice, setBnbPrice] = useState(null);
   const [showFailed, setShowFailed] = useState(false);
   const kindPicked = useRef(false);
+  // Once the user opens the archive view, every subsequent poll includes the
+  // archived rows (a ref so loadPerf stays stable and the poll isn't reset).
+  const includeArchived = useRef(false);
 
   // ── Data polls ───────────────────────────────────────────────────────────
   const loadPerf = useCallback(async () => {
     try {
-      const r = await fetch(`${API_URL}/strategies/${strategyId}/performance`);
+      const arch = includeArchived.current ? '?archived=1' : '';
+      const r = await fetch(`${API_URL}/strategies/${strategyId}/performance${arch}`);
       if (!r.ok) throw new Error(r.status === 404
         ? 'Strategy not found — it may have been deleted (or the API server is running an older build and needs a restart).'
         : (await r.json()).detail || r.statusText);
@@ -68,6 +72,7 @@ export default function StrategyDetailView({ strategyId, onBack, onEdit }) {
 
   useEffect(() => {
     kindPicked.current = false;
+    includeArchived.current = false;
     setPerf(null); setErr(null); setKind(null);
     setSelectedTradeId(null); setChartSymbol(null);
     loadPerf();
@@ -104,7 +109,11 @@ export default function StrategyDetailView({ strategyId, onBack, onEdit }) {
     else setKind((perf.live || []).length > 0 ? 'live' : 'paper');
   }, [perf]);
 
-  const trades = useMemo(() => (kind === 'live' ? perf?.live : perf?.paper) || [], [perf, kind]);
+  const trades = useMemo(() => (
+    kind === 'live' ? perf?.live
+      : kind === 'archive' ? perf?.paper_archived
+        : perf?.paper
+  ) || [], [perf, kind]);
   const calc = useMemo(() => computePerformance(trades, perf?.token_prices || {}), [trades, perf]);
 
   // Chart symbol: fixed strategies always chart their symbol; portfolio
@@ -130,9 +139,51 @@ export default function StrategyDetailView({ strategyId, onBack, onEdit }) {
 
   const switchKind = (k) => {
     if (k === kind) return;
+    if (k === 'archive' && !includeArchived.current) {
+      includeArchived.current = true;   // polls now fetch the archived rows too
+      loadPerf();
+    }
     setKind(k);
     setSelectedTradeId(null);
     setChartSymbol(null);
+  };
+
+  // ── Manage: reset the dry run / delete the bot (owner asks, 2026-07-06) ──
+  const resetDry = async () => {
+    const n = (perf?.paper || []).length;
+    const ok = window.confirm(
+      `Reset the dry run for "${strat.name}"?\n\n` +
+      `Deletes ${n} paper trade${n === 1 ? '' : 's'} so the paper stats start from zero. ` +
+      `Archived dry runs (from before going LIVE) are kept. This cannot be undone.`);
+    if (!ok) return;
+    try {
+      const r = await fetch(`${API_URL}/strategies/${strategyId}/reset_dry`, { method: 'POST' });
+      if (!r.ok) {
+        const d = await r.json().catch(() => ({}));
+        window.alert(d.detail || `Could not reset (HTTP ${r.status}${r.status === 404
+          ? ' — the API server may be running an older build and need a restart' : ''}).`);
+        return;
+      }
+      setSelectedTradeId(null);
+      loadPerf();
+    } catch (e) { window.alert(`Could not reset: ${e.message || e}`); }
+  };
+
+  const deleteBot = async () => {
+    const ok = window.confirm(
+      `Delete "${strat.name}" completely?\n\n` +
+      `Removes the strategy, its paper + archived + failed records, and any queued markers. ` +
+      `Real on-chain fills stay in your wallet's trade history.\n\nThis cannot be undone.`);
+    if (!ok) return;
+    try {
+      const r = await fetch(`${API_URL}/strategies/${strategyId}`, { method: 'DELETE' });
+      if (!r.ok) {
+        const d = await r.json().catch(() => ({}));
+        window.alert(d.detail || `Could not delete (HTTP ${r.status}).`);
+        return;
+      }
+      onBack?.();
+    } catch (e) { window.alert(`Could not delete: ${e.message || e}`); }
   };
 
   // ── Mode toggle (same semantics as the workbench, incl. the LIVE gate) ──
@@ -146,6 +197,7 @@ export default function StrategyDetailView({ strategyId, onBack, onEdit }) {
         `Run "${strat.name}" LIVE on ${target}?\n\n` +
         `• Signals become REAL on-chain swaps via the marker engine.\n` +
         `• Engine risk limits still apply: max trade USD, daily cap, price-impact guard, pause flag.\n` +
+        `• Your current dry-run record is archived (viewable under 📦 Archive) so live stats start clean.\n` +
         `• Flip back to DRY or OFF here at any time.`);
       if (!ok) return;
     }
@@ -229,7 +281,7 @@ export default function StrategyDetailView({ strategyId, onBack, onEdit }) {
         </div>
       )}
 
-      {/* ── Paper / Live sections ── */}
+      {/* ── Paper / Live / Archive sections ── */}
       <div className="sd-kind-row">
         <div className="sd-kind-toggle">
           <button className={`sd-kind-btn ${kind === 'paper' ? 'active' : ''}`} onClick={() => switchKind('paper')}>
@@ -238,17 +290,36 @@ export default function StrategyDetailView({ strategyId, onBack, onEdit }) {
           <button className={`sd-kind-btn ${kind === 'live' ? 'active' : ''}`} onClick={() => switchKind('live')}>
             ⛓ Live run <span className="sd-kind-count">{(perf.live || []).length}</span>
           </button>
+          {(perf.paper_archived_count || 0) > 0 && (
+            <button className={`sd-kind-btn ${kind === 'archive' ? 'active' : ''}`} onClick={() => switchKind('archive')}>
+              📦 Archive <span className="sd-kind-count">{perf.paper_archived_count}</span>
+            </button>
+          )}
         </div>
         <span className="sd-kind-note">
           {kind === 'paper'
             ? 'Simulated fills recorded by the runner in DRY mode — no real funds.'
-            : 'Real on-chain fills executed by the engine in LIVE mode.'}
+            : kind === 'archive'
+              ? 'Dry runs archived when this bot went LIVE — kept for reference, separate from current stats.'
+              : 'Real on-chain fills executed by the engine in LIVE mode.'}
         </span>
+        <div className="sd-spacer" />
+        {kind === 'paper' && (perf.paper || []).length > 0 && (
+          <button className="sd-manage-btn" onClick={resetDry}
+            title="Delete this bot's current paper trades so the dry-run stats start from zero (archived runs are kept)">
+            🧹 Reset dry run
+          </button>
+        )}
+        <button className="sd-manage-btn danger" onClick={deleteBot}
+          title="Remove this strategy and its paper/archived/failed records — real on-chain fills stay in your trade history">
+          🗑 Delete bot
+        </button>
       </div>
 
       {/* ── KPIs ── */}
       <div className="sd-kpis">
-        <Kpi label={`Net PnL ${kind === 'paper' ? '(paper)' : ''}`} value={fmtUsd(s.netPnl)} cls={pnlClass(s.netPnl)}
+        <Kpi label={`Net PnL ${kind === 'paper' ? '(paper)' : kind === 'archive' ? '(archived)' : ''}`}
+          value={fmtUsd(s.netPnl)} cls={pnlClass(s.netPnl)}
           sub={`realized ${fmtUsd(s.realized)} · unrealized ${fmtUsd(s.unrealized)}`} />
         <Kpi label="Win rate" value={s.winRate == null ? '—' : `${s.winRate.toFixed(0)}%`}
           sub={s.closes > 0 ? `${s.wins} wins · ${s.losses} losses` : 'no closed trades yet'} />
@@ -296,7 +367,7 @@ export default function StrategyDetailView({ strategyId, onBack, onEdit }) {
               />
             ) : (
               <div className="sd-chart-placeholder">
-                No {kind === 'paper' ? 'paper' : 'live'} fills yet — the chart appears with the first trade.
+                No {kind === 'live' ? 'live' : 'paper'} fills yet — the chart appears with the first trade.
               </div>
             )}
           </div>
@@ -344,8 +415,10 @@ export default function StrategyDetailView({ strategyId, onBack, onEdit }) {
                   {calc.rows.length === 0 && (
                     <tr><td colSpan={isPortfolio ? 9 : 8} className="dash-muted sd-empty-cell">
                       {kind === 'paper'
-                        ? 'No paper trades yet. Arm the strategy in DRY mode and leave it running — it trades on closed bars.'
-                        : 'No live fills yet. Signals only execute while the strategy is LIVE and the engine is running with a key.'}
+                        ? 'No paper trades yet. Deploy the strategy in DRY mode and leave it running — it trades on closed bars.'
+                        : kind === 'archive'
+                          ? 'Loading archived dry runs…'
+                          : 'No live fills yet. Signals only execute while the strategy is LIVE and the engine is running with a key.'}
                     </td></tr>
                   )}
                 </tbody>
@@ -448,7 +521,6 @@ export default function StrategyDetailView({ strategyId, onBack, onEdit }) {
             <div className="sd-about">
               <div><span>Token source</span><b>{source}</b></div>
               <div><span>Interval</span><b>{strat.interval}</b></div>
-              {isPortfolio && <div><span>Switch margin</span><b>{strat.switch_margin_pct}%</b></div>}
               <div><span>First {kind} trade</span><b>{s.firstTradeAt ? fmtTime(s.firstTradeAt) : '—'}</b></div>
               <div><span>Last {kind} trade</span><b>{s.lastTradeAt ? fmtTime(s.lastTradeAt) : '—'}</b></div>
               <div><span>Created</span><b>{fmtTime(strat.created_at)}</b></div>

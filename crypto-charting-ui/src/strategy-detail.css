@@ -107,6 +107,20 @@
 }
 .sd-kind-note { color: var(--text-muted); font-size: 11px; }
 
+/* manage buttons (reset dry run / delete bot), right side of the kind row */
+.sd-manage-btn {
+  background: var(--bg-glass);
+  border: 1px solid var(--border-glass);
+  color: var(--text-muted);
+  padding: 6px 12px;
+  border-radius: 8px;
+  cursor: pointer;
+  font-size: 11px;
+}
+.sd-manage-btn:hover { background: var(--bg-glass-hover); border-color: var(--border-glass-hover); color: var(--text-normal); }
+.sd-manage-btn.danger { color: var(--accent-red, #fb7185); }
+.sd-manage-btn.danger:hover { border-color: var(--accent-red, #fb7185); }
+
 /* ── KPI cards ── */
 .sd-kpis {
   display: grid;

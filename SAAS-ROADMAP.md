@@ -261,6 +261,58 @@ forever), but the code underneath can tell users apart.
         focus works, zero console errors. ⚠ Remaining for launch: Stripe add-on product
         for extra bot slots (until then `extra_bots` is set manually), and choosing
         whether to enable `HAVEN_TRIAL_DAYS`.
+- [x] **S4.8 (me) Strategy lifecycle rework — save → deploy → archive (owner decisions
+      2026-07-06).** ✔ DONE same session. Verified: 31/31 scratch-DB TestClient gate tests
+      (library cap 409 + human detail, service/solo unlimited, bot-cap regression,
+      PAPER→PAPER_ARCH on live-arm + merge on re-arm + idempotent, other strategies
+      untouched, mode flip doesn't bump updated_at, performance archived fields,
+      reset_dry scoping + 404, overview excludes both paper kinds, delete keeps FILLED +
+      removes markers/paper/arch/failed, billing counts) — plus in-browser against a
+      second new-code API on :8001 (preview :5198): editing-note states, no switch-margin
+      field, Save-as-new created a SECOND strategy with the user's "tweaker strat" still
+      running DRY untouched (the "save killed my previous strategy" bug — root cause was
+      Save PATCHing the selected armed row), Deploy(paper)→DRY badge+Stop, TWO bots DRY
+      simultaneously (solo unlimited confirmed live), performance page manage buttons +
+      delete-bot flow returning to Dashboard, zero console errors. Also reset the user's
+      tweaker strat switch_margin_pct 100→10 (he'd maxed the knob defensively; hidden now).
+      ⚠ User action: restart the **API window** (engine/collector/UI need nothing — the
+      UI HMRs, the engine is untouched). Until then reset/archive/delete-trades 404 on :8000.
+      The user's asks from this session, verbatim intent:
+      1. **Switch margin % disappears from the UI** (workbench field + stats-page About
+         row). The mechanic itself is unchanged and keeps its default (10): it is flat-slot
+         rebind hysteresis only — a slot holding a position is NEVER closed by a better-
+         ranked token (that fear was a misreading of the label; `chooseBinding` untouched
+         per the never-touch rule). Column, SDK, engine all stay as-is.
+      2. **Saving never overwrites silently and never arms.** Workbench shows whether you
+         are editing a saved strategy or a new draft; saving over a RUNNING strategy asks
+         first (it hot-reloads the runner); new **"Save as copy"** button forks the current
+         editor contents into a new saved strategy. POST /strategies already creates
+         mode='off' — the "new strategy was already running DRY" report was the overwrite
+         hot-reloading the selected (armed) row.
+      3. **Deploy replaces the workbench mode toggle**: ▶ Deploy (paper) arms DRY; ⏹ Stop
+         disarms; LIVE can ONLY be armed from the bot's performance page. Deploy hitting
+         the bot-slot cap (409) opens a dialog listing running bots with per-row Stop
+         buttons + "deploy again".
+      4. **Arming LIVE archives the current dry-run record** server-side (trade rows flip
+         status PAPER → PAPER_ARCH): live stats start clean, dry/live data can never mix,
+         and the archive stays viewable on the performance page (📦 pill). PAPER_ARCH is
+         excluded from /dashboard/overview exactly like PAPER (wallet PnL + engine caps
+         stay clean) and is invisible to the runner's position rebuild (status=PAPER).
+      5. **Performance page gets "Reset dry run"** (deletes the strategy's current PAPER
+         rows after a confirm; archived rows are kept) **and "Delete bot"** (removes the
+         strategy + its PAPER/PAPER_ARCH/FAILED rows + queued markers). DELIBERATE
+         DEVIATION: FILLED rows are kept on delete — they are real on-chain history and
+         the wallet's avg-cost PnL walk would corrupt if they vanished. Stopped (OFF)
+         strategies stay listed with their stats page — that part already worked.
+      6. **Saved-strategy cap**: entitlements gain `max_strategies` (env
+         `HAVEN_MAX_STRATEGIES`, default 20; solo/service unlimited). POST /strategies
+         over the cap → 409 with a human-readable detail. `/billing/status` reports
+         `strategies_saved`/`max_strategies`. 💡 Post-launch upsell recorded: bigger
+         libraries (50 / 100 slots, all trade history kept) as a plan upgrade, same
+         shape as `extra_bots`.
+      Files: api/server.py, api/auth.py, api/billing.py, StrategyWorkbench.jsx,
+      StrategyDetailView.jsx, strategies.css, strategy-detail.css, CLAUDE.md.
+      Engine/SDK untouched (restart API window only).
 - **Done when:** a stranger can sign up, pay with Stripe's test card, and run a paper
   strategy end-to-end in their browser — no help from you.
 

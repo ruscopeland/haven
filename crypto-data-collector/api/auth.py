@@ -165,23 +165,31 @@ def require_paid(identity: Identity = Depends(get_identity)) -> Identity:
     return identity
 
 
-# ── Bot entitlements ─────────────────────────────────────────────────────────
-# A "bot" is a strategy armed DRY or LIVE (mode != off). Saved strategies are
-# unlimited — only running ones count. Plan allowances (owner decision
-# 2026-07-06): paid subscription includes BASE_BOTS, extra slots can be sold on
-# top (subscriptions.extra_bots); a Stripe trial gets TRIAL_BOTS and may only
-# paper-trade. Solo mode and the service runner are never limited.
+# ── Bot + library entitlements ───────────────────────────────────────────────
+# A "bot" is a strategy armed DRY or LIVE (mode != off). Plan allowances (owner
+# decisions 2026-07-06): paid subscription includes BASE_BOTS running at once,
+# extra slots can be sold on top (subscriptions.extra_bots); a Stripe trial gets
+# TRIAL_BOTS and may only paper-trade. SAVED strategies are capped separately at
+# MAX_STRATEGIES per user (storage control) — bigger libraries (50/100 slots,
+# all trade history kept) are a planned sellable upgrade, same shape as
+# extra_bots. Solo mode and the service runner are never limited by any of it.
 BASE_BOTS = int(os.environ.get("HAVEN_BASE_BOTS", "3"))
 TRIAL_BOTS = int(os.environ.get("HAVEN_TRIAL_BOTS", "1"))
+MAX_STRATEGIES = int(os.environ.get("HAVEN_MAX_STRATEGIES", "20"))
 
 
 def entitlements(db: Session, identity: Identity) -> dict:
-    """What this identity may run: {max_bots (None = unlimited), live_allowed,
-    trial}. Enforced where a strategy's mode is armed (PATCH /strategies)."""
+    """What this identity may run/keep: {max_bots (None = unlimited),
+    live_allowed, trial, max_strategies (None = unlimited)}. Enforced where a
+    strategy's mode is armed (PATCH /strategies) and where one is saved
+    (POST /strategies)."""
     if SOLO_MODE or identity.is_service:
-        return {"max_bots": None, "live_allowed": True, "trial": False}
+        return {"max_bots": None, "live_allowed": True, "trial": False,
+                "max_strategies": None}
     sub = db.query(Subscription).filter(Subscription.user_id == identity.user_id).first()
     if sub and sub.status == "trialing":
-        return {"max_bots": TRIAL_BOTS, "live_allowed": False, "trial": True}
+        return {"max_bots": TRIAL_BOTS, "live_allowed": False, "trial": True,
+                "max_strategies": MAX_STRATEGIES}
     extra = (sub.extra_bots or 0) if sub else 0
-    return {"max_bots": BASE_BOTS + extra, "live_allowed": True, "trial": False}
+    return {"max_bots": BASE_BOTS + extra, "live_allowed": True, "trial": False,
+            "max_strategies": MAX_STRATEGIES}

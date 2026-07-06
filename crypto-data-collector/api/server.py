@@ -457,6 +457,19 @@ def create_strategy(s: StrategyCreate, db: Session = Depends(get_db),
     _validate_strategy_fields(s.interval, None)
     _validate_token_selection(db, identity.user_id, s.symbol, s.finder_id,
                               s.max_positions, s.switch_margin_pct)
+    # Library cap (solo/service = unlimited): saved strategies per user, so one
+    # account can't grow the DB without bound. 409 detail is shown to the user
+    # as-is by the workbench's save message.
+    ent = entitlements(db, identity)
+    if ent["max_strategies"] is not None:
+        saved = (db.query(Strategy)
+                 .filter(Strategy.user_id == identity.user_id).count())
+        if saved >= ent["max_strategies"]:
+            raise HTTPException(
+                status_code=409,
+                detail=(f"Strategy library full: {saved} of {ent['max_strategies']} saved. "
+                        "Delete a strategy you no longer use — larger libraries are a "
+                        "planned plan upgrade."))
     now_ms = int(time.time() * 1000)
     strat = Strategy(
         id=str(uuid.uuid4()), user_id=identity.user_id, name=s.name, code=s.code,
@@ -532,6 +545,18 @@ def update_strategy(strategy_id: str, s: StrategyUpdate, db: Session = Depends(g
     if s.name is not None:
         strat.name = s.name
     if s.mode is not None:
+        # Arming LIVE archives the current dry run (owner decision 2026-07-06):
+        # PAPER rows flip to PAPER_ARCH so live stats start clean while the dry
+        # record stays viewable on the performance page. PAPER_ARCH is excluded
+        # from /dashboard/overview like PAPER, and the runner's dry position
+        # rebuild (status=PAPER) never sees it — no phantom positions if the
+        # strategy later returns to DRY.
+        if s.mode == "live" and strat.mode != "live":
+            (db.query(TradeHistory)
+             .filter(TradeHistory.user_id == strat.user_id,
+                     TradeHistory.strategy_id == strategy_id,
+                     TradeHistory.status == "PAPER")
+             .update({"status": "PAPER_ARCH"}, synchronize_session=False))
         strat.mode = s.mode
     if s.last_run_at is not None:
         strat.last_run_at = s.last_run_at
@@ -546,11 +571,38 @@ def update_strategy(strategy_id: str, s: StrategyUpdate, db: Session = Depends(g
     return strat
 
 
+@app.post("/strategies/{strategy_id}/reset_dry")
+def reset_dry_run(strategy_id: str, db: Session = Depends(get_db),
+                  identity: Identity = Depends(require_paid)):
+    """Clear the strategy's CURRENT dry run: delete its PAPER trade rows.
+
+    Archived dry runs (PAPER_ARCH, created when the bot went live) are kept —
+    they are the historical record the performance page's archive view shows.
+    The runner rebuilds its dry position from PAPER rows before each bar, so
+    after a reset a running DRY bot simply starts flat with fresh stats."""
+    strat = (db.query(Strategy)
+             .filter(Strategy.id == strategy_id, Strategy.user_id == identity.user_id)
+             .first())
+    if not strat:
+        raise HTTPException(status_code=404, detail="Strategy not found")
+    deleted = (db.query(TradeHistory)
+               .filter(TradeHistory.user_id == identity.user_id,
+                       TradeHistory.strategy_id == strategy_id,
+                       TradeHistory.status == "PAPER")
+               .delete(synchronize_session=False))
+    db.commit()
+    return {"ok": True, "deleted_paper_trades": deleted}
+
+
 @app.delete("/strategies/{strategy_id}")
 def delete_strategy(strategy_id: str, db: Session = Depends(get_db),
                     identity: Identity = Depends(require_paid)):
-    """Delete a strategy AND any still-active markers it posted (a queued
-    STRAT_BUY/STRAT_SELL must not fire for a strategy that no longer exists)."""
+    """Delete a strategy completely: the row, any still-active markers it
+    posted (a queued STRAT_BUY/STRAT_SELL must not fire for a strategy that no
+    longer exists), and its simulated/failed trade rows (PAPER, PAPER_ARCH,
+    FAILED). FILLED rows are deliberately KEPT: they are real on-chain history
+    — the wallet's avg-cost PnL walk and the dashboard trade log would corrupt
+    if money that actually moved disappeared from the books."""
     strat = (db.query(Strategy)
              .filter(Strategy.id == strategy_id, Strategy.user_id == identity.user_id)
              .first())
@@ -561,13 +613,19 @@ def delete_strategy(strategy_id: str, db: Session = Depends(get_db),
                         ChartMarker.user_id == identity.user_id,
                         ChartMarker.active == 1)
                 .delete())
+    deleted_trades = (db.query(TradeHistory)
+                      .filter(TradeHistory.user_id == identity.user_id,
+                              TradeHistory.strategy_id == strategy_id,
+                              TradeHistory.status.in_(("PAPER", "PAPER_ARCH", "FAILED")))
+                      .delete(synchronize_session=False))
     db.delete(strat)
     db.commit()
-    return {"ok": True, "deleted_active_markers": orphaned}
+    return {"ok": True, "deleted_active_markers": orphaned,
+            "deleted_trade_rows": deleted_trades}
 
 
 @app.get("/strategies/{strategy_id}/performance")
-def strategy_performance(strategy_id: str, limit: int = 1000,
+def strategy_performance(strategy_id: str, limit: int = 1000, archived: int = 0,
                          db: Session = Depends(get_db),
                          identity: Identity = Depends(require_paid)):
     """Everything the per-strategy performance page needs, in one call.
@@ -581,6 +639,10 @@ def strategy_performance(strategy_id: str, limit: int = 1000,
     symbol involved, and the attached finder's name. Stats/equity are computed
     client-side from these rows so the math lives in one place (the UI's
     strategyPerf util).
+
+    `paper_archived_count` is always included (dry runs archived when the bot
+    went live); pass ?archived=1 to also get those rows as `paper_archived` —
+    the page only fetches them when the user opens the archive view.
     """
     q = db.query(Strategy).filter(Strategy.id == strategy_id)
     if not identity.is_service:
@@ -603,6 +665,11 @@ def strategy_performance(strategy_id: str, limit: int = 1000,
     paper = fetch_trades("PAPER", limit)
     live = fetch_trades("FILLED", limit)
     failed = fetch_trades("FAILED", 100)
+    paper_archived_count = (db.query(TradeHistory)
+                            .filter(TradeHistory.user_id == owner,
+                                    TradeHistory.strategy_id == strategy_id,
+                                    TradeHistory.status == "PAPER_ARCH").count())
+    paper_archived = fetch_trades("PAPER_ARCH", limit) if archived else []
 
     marker_ids = {t.marker_id for t in [*live, *failed] if t.marker_id}
     markers_map = {}
@@ -633,7 +700,7 @@ def strategy_performance(strategy_id: str, limit: int = 1000,
                             ChartMarker.active == 1)
                     .order_by(ChartMarker.created_at.desc()).limit(100).all())
 
-    symbols = {t.symbol for t in [*paper, *live, *failed]}
+    symbols = {t.symbol for t in [*paper, *live, *failed, *paper_archived]}
     symbols.update(m.symbol for m in open_markers)
     if strat.symbol:
         symbols.add(strat.symbol)
@@ -653,6 +720,8 @@ def strategy_performance(strategy_id: str, limit: int = 1000,
         "paper": [trade_dict(t) for t in paper],
         "live": [trade_dict(t) for t in live],
         "failed": [trade_dict(t) for t in failed],
+        "paper_archived_count": paper_archived_count,
+        "paper_archived": [trade_dict(t) for t in paper_archived],
         "open_markers": [MarkerResponse.model_validate(m).model_dump() for m in open_markers],
         "token_prices": token_prices,
         "finder_name": finder_name,
@@ -1062,12 +1131,13 @@ def get_dashboard_overview(db: Session = Depends(get_db),
     the web app calls it for the same user. token_prices is shared market data.
     """
     # This user's REAL trades, newest first, joined with markers for reason.
-    # PAPER rows (strategy dry-runs) are excluded here on purpose: dashboard PnL
-    # sums every row it receives, the engine's daily-cap counter reads this
-    # list, and a chatty dry-run would otherwise flood the 200-row window.
+    # PAPER rows (strategy dry-runs) and PAPER_ARCH (dry runs archived when a
+    # bot went live) are excluded here on purpose: dashboard PnL sums every row
+    # it receives, the engine's daily-cap counter reads this list, and a chatty
+    # dry-run would otherwise flood the 200-row window.
     trades = (db.query(TradeHistory)
               .filter(TradeHistory.user_id == identity.user_id)
-              .filter(TradeHistory.status != "PAPER")
+              .filter(TradeHistory.status.notin_(("PAPER", "PAPER_ARCH")))
               .order_by(TradeHistory.block_time.desc()).limit(200).all())
     all_marker_ids = [t.marker_id for t in trades if t.marker_id]
     markers_map = {}

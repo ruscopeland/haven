@@ -95,14 +95,19 @@ def billing_status(db: Session = Depends(get_db),
 
     Also reports bot entitlements (a bot = a strategy armed DRY or LIVE):
     max_bots (null = unlimited, i.e. solo mode), how many are running now,
-    and whether LIVE mode is allowed (trials are paper-only).
+    whether LIVE mode is allowed (trials are paper-only), and the saved-
+    strategy library usage (strategies_saved / max_strategies, null = unlimited).
     """
     ent = entitlements(db, identity)
     bots_running = (db.query(Strategy)
                     .filter(Strategy.user_id == identity.user_id,
                             Strategy.mode != "off").count())
+    strategies_saved = (db.query(Strategy)
+                        .filter(Strategy.user_id == identity.user_id).count())
     bots = {"max_bots": ent["max_bots"], "bots_running": bots_running,
-            "live_allowed": ent["live_allowed"]}
+            "live_allowed": ent["live_allowed"],
+            "max_strategies": ent["max_strategies"],
+            "strategies_saved": strategies_saved}
     if SOLO_MODE:
         return {"status": "active", "plan": "solo", "early": True, "paid": True, **bots}
     sub = db.query(Subscription).filter(Subscription.user_id == identity.user_id).first()
