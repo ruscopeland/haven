@@ -4,6 +4,10 @@
 > remaining and future work now lives in `SAAS-ROADMAP.md` — the binding master plan
 > for the multi-user product. This file stays as the historical record of the reorg;
 > its Execution rules and never-touch list still apply to every session.**
+>
+> **➡ 2026-07-06: `DATA-ROADMAP.md` added** — binding plan for replacing the Binance
+> market-data feeds with self-hosted on-chain ingestion (legal deadline EOD 2026-07-07).
+> Same execution rules; task IDs M0–M9.
 
 Goal: merge the three browser apps' functionality into ONE app (the charting UI, working
 title "Alpha Terminal") with a Dashboard home page, while the money path stays in the

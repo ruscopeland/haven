@@ -10,6 +10,14 @@ D2 — see §5.) This doc traces the real runtime flow from source.
 > **➡ SaaS conversion in progress:** the binding plan for turning this stack into a
 > multi-user product is **`SAAS-ROADMAP.md`** — it supersedes ROADMAP.md Phase F.
 
+> **🚨 DATA MIGRATION in progress (2026-07-06, hard deadline EOD 2026-07-07):** Binance
+> market data may not be used commercially (enterprise license unobtainable — region
+> restriction). The collector/`/klines`/Chart.jsx Binance feeds are being replaced by
+> **self-hosted multichain on-chain ingestion** — binding plan: **`DATA-ROADMAP.md`**
+> (phases M0–M9; M4 is the legal cutover). Until M4 lands, everything this doc says
+> about Binance WS/REST feeds describes the system being removed. Do not build anything
+> new on the Binance feeds.
+
 > **⚠ Working agreement (2026-07-05):** This repo is under git (`v0-baseline` = pre-reorg
 > state). A reorganization into one app is in progress — **before making ANY change, read
 > `ROADMAP.md` (task list + binding execution rules) and `WORKFLOW.md` (session protocol)**.

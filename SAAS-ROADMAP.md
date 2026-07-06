@@ -33,6 +33,13 @@ older note disagree, this file wins. Written 2026-07-05.
 > tests, engine auto-update. Tracked in Phases 5–6 below and DEPLOY.md §10.
 >
 > **Your next move:** do Phase 1 (accounts/domain), then work `DEPLOY.md`.
+>
+> **🚨 2026-07-06 (later): §5 risk 2 REALIZED** — Binance requires an enterprise license
+> for commercial data use and region restrictions block obtaining one. Hard stop EOD
+> 2026-07-07. The fix is **`DATA-ROADMAP.md`** (binding): self-hosted multichain
+> on-chain ingestion replaces every Binance feed. **Do DATA-ROADMAP M0–M4 BEFORE any
+> further deploy clicks** — deploying a collector that consumes Binance is deploying
+> the liability. DEPLOY.md gets its RPC-env update in task M5.
 
 The old ROADMAP.md stays in the repo as the historical record of Phases A–E (all done).
 Work sessions keep the same protocol as before (WORKFLOW.md): one task per session,
@@ -136,8 +143,11 @@ Stripe account activation is the slowest external wait — start it first.
       automated trading can lose all funds committed; software provided as-is").
       Before you charge real money, pay a lawyer a few hundred dollars to review these
       AND answer two specific questions I'm flagging honestly:
-      1. Redistribution of market data derived from Binance's public streams to paying
-         subscribers — exchanges have terms about this; a lawyer should eyeball it.
+      1. ~~Redistribution of market data derived from Binance's public streams to paying
+         subscribers — exchanges have terms about this; a lawyer should eyeball it.~~
+         **RESOLVED 2026-07-06: this risk bit before launch. Binance data is being
+         removed entirely (`DATA-ROADMAP.md`); post-M4 we serve only our own buckets
+         computed from public blockchain data — question is moot, strike it.**
       2. Whether your state/country adds anything for non-custodial trading software.
 - **Done when:** domain owned; all five accounts exist; Stripe fully activated (test
   payment possible); a price is chosen; legal drafts exist and a lawyer is booked.
@@ -399,6 +409,7 @@ forever), but the code underneath can tell users apart.
 | Clerk (logins) | $0 | free to 10,000 monthly users |
 | Stripe | $0 monthly | ~2.9% + 30¢ per charge (+0.7% if Clerk Billing) |
 | Sentry + uptime monitor | $0 | free tiers are plenty |
+| RPC node provider (market data, DATA-ROADMAP) | $0–49 | QuickNode; measured in M2, updated in M5 |
 | Code-signing cert | ~$10–35/mo equivalent | yearly purchase, Phase 5 |
 | DeepSeek (AI assistant) | usage-based, small | metered, Pro-only |
 | **Total** | **~$25–90/mo** | roughly 1–3 subscribers to break even |
@@ -409,10 +420,12 @@ forever), but the code underneath can tell users apart.
 
 1. **Live trading needs the customer's PC on.** We say it plainly everywhere. Paper
    trading in the cloud softens it. V2 options exist (embedded wallets, VPS guides).
-2. **Binance data terms.** We re-serve *derived* data (our own buckets/rankings) from
-   Binance's public streams to paying users. Lawyer question, flagged in S1.4 — and if
-   it ever bites, there are engineering outs (customers' engines already can fetch
-   candles from Binance directly).
+2. ~~**Binance data terms.**~~ **REALIZED 2026-07-06** — commercial use requires an
+   enterprise license the owner cannot obtain (region restriction), hard stop EOD
+   2026-07-07. The engineering out is being executed as the binding
+   **`DATA-ROADMAP.md`**: self-hosted multichain on-chain ingestion, zero Binance
+   data post-M4. This risk then disappears permanently (public blockchain data,
+   our own derived buckets).
 3. **Customers can lose real money.** Risk disclosure at signup, LIVE confirmations,
    risk caps ON by default, paper-first onboarding, and we never promise returns.
 4. **Support is a real job.** Beta will tell us how heavy. Docs + Discord absorb most.
