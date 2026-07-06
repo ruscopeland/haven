@@ -1,10 +1,14 @@
 # Alpha Trading Stack — how it actually works
 
 A BNB-chain trading stack: a Python collector feeds market data into a shared SQLite DB,
-a FastAPI server exposes it, a charting UI places order "markers" on price levels, and a
-**headless Node daemon (`marker-engine/`) executes real on-chain swaps** when price crosses
-them. The wallet app is the dashboard/control panel — it does NOT execute markers.
-`start.bat` launches all five windows. This doc traces the real runtime flow from source.
+a FastAPI server exposes it, the **Alpha Terminal** UI (charts + dashboard + engine
+controls, `crypto-charting-ui`) places order "markers" on price levels, and a **headless
+Node daemon (`marker-engine/`) executes real on-chain swaps** when price crosses them.
+`start.bat` launches all four windows. (The old wallet app was retired 2026-07-05, Phase
+D2 — see §5.) This doc traces the real runtime flow from source.
+
+> **➡ SaaS conversion in progress:** the binding plan for turning this stack into a
+> multi-user product is **`SAAS-ROADMAP.md`** — it supersedes ROADMAP.md Phase F.
 
 > **⚠ Working agreement (2026-07-05):** This repo is under git (`v0-baseline` = pre-reorg
 > state). A reorganization into one app is in progress — **before making ANY change, read
@@ -19,13 +23,12 @@ them. The wallet app is the dashboard/control panel — it does NOT execute mark
 ```
 Binance Alpha WS ─aggTrade/ticker─► collector ──writes──► crypto_data.db ◄──reads/writes── FastAPI :8000
                                     (standalone_collector.py)   (SQLite, WAL)      (api/server.py via main.py)
-                                                                                     ▲        ▲        ▲
-                                    GET /klines + POST /markers ── charting-ui :5173┘        │        │
-                                                                                              │        │
-                    GET /dashboard/overview + /engine/settings ──────── marker-engine daemon ┘        │
-                    POST /markers/{id}/claim → OpenOcean swap → POST /trades   (Node, headless)       │
-                                                                                                       │
-                    dashboard polls (overview/logs/settings) + pause toggle ───────── wallet :5174 ────┘
+                                                                                     ▲        ▲
+        GET /klines + POST /markers + dashboard polls ─── Alpha Terminal :5173 ─────┘        │
+        (overview / logs / settings + pause toggle)                                          │
+                                                                                              │
+                    GET /dashboard/overview + /engine/settings ──────── marker-engine daemon ┘
+                    POST /markers/{id}/claim → OpenOcean swap → POST /trades   (Node, headless)
 ```
 
 Everything is glued together by the **shared SQLite file `crypto-data-collector/crypto_data.db`**
@@ -94,7 +97,7 @@ FastAPI over the same DB. Schema in `database/models.py`. Key endpoints:
   this is how a marker fires **exactly once**. Do not replace with client-side flags.
 - **Trades** (`trade_history`): `POST /trades`, `GET /trades`. `block_time` now stores the real
   block timestamp in ms (legacy rows contain block *numbers*).
-- **`GET /dashboard/overview`** — main poll for wallet + engine: last 200 trades (enriched with
+- **`GET /dashboard/overview`** — main poll for the Terminal dashboard + engine: last 200 trades (enriched with
   marker type/label as "reason"), up to 100 active markers, `token_prices` from `latest_tickers`.
 - **`GET/PATCH /engine/settings`** — engine pause flag + risk limits (`paused`,
   `max_trades_per_day`, `max_trade_usd`, `max_price_impact_pct`, `max_retry_attempts`), stored in
@@ -175,8 +178,9 @@ FastAPI over the same DB. Schema in `database/models.py`. Key endpoints:
 (side-effect-free decision logic: cross detection, sizing, price-impact, brackets, immediate-fire
 TTL — unit-tested in `pure.test.js`, run `npm test`), `chain.js` (ethers helpers),
 `strategy-runner.js` (turns saved strategies into signals; see below).
-Started by `start.bat` in the "Alpha Engine" window. Key: `marker-engine/.env` `PRIVATE_KEY`,
-falling back to `crypto-wallet/.env` `VITE_PRIVATE_KEY`. Without a key it runs observe-only
+Started by `start.bat` in the "Alpha Engine" window. Key: `marker-engine/.env` `PRIVATE_KEY`
+(canonical since D2; the legacy `crypto-wallet/.env` fallback still exists in code, and that
+untracked file remains on disk as a key backup). Without a key it runs observe-only
 and does NOT heartbeat (green "Engine" dot = trades will actually fire).
 
 Each ~3s tick: fetch `/engine/settings` + `/dashboard/overview`, refresh token map (5 min), then:
@@ -251,28 +255,27 @@ Every 15s it syncs `GET /strategies`: rows with `mode != off` get a runner; a ch
 - **Fail-closed rule**: hub error or no ranking yet → flat slots do NOT bind (no new exposure),
   but slots with positions keep running their strategy (exits still work).
 
-## 5. Wallet — `crypto-wallet` (:5174) — dashboard + controls, NOT the marker executor
+## 5. (Retired) Wallet app — removed 2026-07-05, Phase D2
 
-Polls `/dashboard/overview` (5s), `/debug/logs` (3s), `/engine/settings` (15s) with no key
-needed. Shows Open Orders / Trade History / System Debug Log, and the **ENGINE LIVE / PAUSED
-toggle** (Dashboard, Open Orders header) which PATCHes `/engine/settings`.
-
-Still in the wallet: balances/prices/PnL (DexScreener + BscScan trace), manual swaps
-(SwapPanel/TokenDetails), and a separate **auto-trade engine** (60s loop, localStorage jobs,
-DexScreener prices) — ⚠️ it shares no nonce queue with the daemon, so a concurrent auto-trade
-and marker fire can still collide. **User decision 2026-07-05 (ROADMAP D1): the auto-trade
-will NOT be used anymore — dropped, not migrated. Never build on or fix it; it disappears
-with the wallet app in Phase D2. Until then, leftover localStorage jobs can still fire if
-the old wallet tab is left open with the key loaded.**
+The old `crypto-wallet` app (:5174) and its in-browser auto-trade loop are **gone** —
+`git rm`'d in D2 after the user confirmed the new Dashboard with a real-funds trade.
+Everything it did now lives in Alpha Terminal: Dashboard tab (balances/PnL/trades/markers),
+toolbar Engine LIVE/PAUSED toggle, Settings tab (risk limits), token pages (manual key-free
+buy/sell via immediate-fire markers). To view the old code: `git checkout v2-wallet-panels
+-- crypto-wallet` (tag holds its final state). The `crypto-wallet/` folder on disk now
+contains ONLY the untracked `.env` (kept as a private-key backup — never delete it without
+confirming `marker-engine/.env` exists and works).
 
 ---
 
-## ⚠️ Three independent price feeds (source of most confusion)
+## ⚠️ Two independent price feeds (source of most confusion)
 
 1. **Collector `latest_tickers.last_price`** (aggTrade WS, 3s save) → `/dashboard/overview` →
-   **what the marker engine crosses against.**
-2. **DexScreener** → wallet USD display + auto-trade engine. Not used for marker crossing.
-3. **Direct Binance kline WS** in `Chart.jsx` → the candles you watch. Purely visual.
+   **what the marker engine crosses against** — and what the Terminal's USD displays use
+   (one source of truth with the engine; C1/C2 deviation note).
+2. **Direct Binance kline WS** in `Chart.jsx` → the candles you watch. Purely visual.
+
+(The third feed, DexScreener, left with the retired wallet app.)
 
 ## Restart rules (what needs a restart after an edit)
 
@@ -289,16 +292,15 @@ the old wallet tab is left open with the key loaded.**
   runner needs `/finders` + `/universe` and the new strategy columns to exist. Never arm a
   finder-bound strategy while an old engine build is running (it would treat `symbol=''` as a
   broken symbol runner).
-- Wallet/chart UI edits → Vite HMR usually suffices; hard-reload the wallet tab after context
-  changes. (Marker execution no longer lives in the browser, so stale HMR instances can no
-  longer double-fire trades.)
-- Wallet key: auto-loads `VITE_PRIVATE_KEY` only when there is **no** saved
-  `crypto_wallet_config` in localStorage; the engine daemon reads the key from .env directly.
+- Chart UI (Alpha Terminal) edits → Vite HMR usually suffices. (Marker execution no longer
+  lives in the browser, so stale HMR instances can never double-fire trades.)
+- Engine key: `marker-engine/.env` `PRIVATE_KEY` — the daemon reads it directly at startup;
+  changing it requires an Engine window restart.
 
 ## Cross-app contracts — do not change one side alone
 
 - **Marker shape** is written by the chart, stored by the API/DB, read by the engine daemon and
-  the wallet dashboard. Field/type changes must land in all of them.
+  the Terminal dashboard. Field/type changes must land in all of them.
 - **Finder shape** (`finders` row + the `filter`/`score` contract) is written by the Finder tab,
   read by the Strategy Workbench (portfolio backtests) and the FinderHub. Same `updated_at`
   hot-reload contract as strategies.

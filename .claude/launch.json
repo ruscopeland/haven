@@ -2,13 +2,6 @@
   "version": "0.0.1",
   "configurations": [
     {
-      "name": "wallet",
-      "runtimeExecutable": "npx",
-      "runtimeArgs": ["vite", "--port", "5174"],
-      "cwd": "crypto-wallet",
-      "port": 5174
-    },
-    {
       "name": "chart",
       "runtimeExecutable": "npx",
       "runtimeArgs": ["vite", "--port", "5173"],
