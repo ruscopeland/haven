@@ -73,8 +73,14 @@ Use your strongest-model prompts ONLY for tasks marked 🧠 in the roadmap:
 - Real-money changes (task C3, anything in `marker-engine`) are 🧠-only and get tested
   with $5 first. That's in the task definitions.
 
-## Updating the program after people subscribe (future, Phase F)
+## Updating the program after people subscribe
 
-Git already gives you the release mechanism: subscribers run a tagged version
-(`v4-alpha-terminal`), you develop past it, and "releasing" = testing + moving the tag.
-Nothing to decide today; the habit you're building now IS the release process later.
+This is now planned for real: see **`SAAS-ROADMAP.md`** (the master plan for the paid,
+multi-user product — supersedes the old "Phase F" everywhere). The short version:
+subscribers install a signed desktop engine that auto-updates from your releases, and
+the website updates instantly when we deploy. Your git tags ARE the releases — the habit
+you built during the reorg is the release process.
+
+One correction to the note at the top of this file: since D2 (2026-07-05) your private
+key lives in `marker-engine\.env` (canonical) with `crypto-wallet\.env` kept on disk
+only as a backup. Git still never saves either — keep your own copy somewhere safe.

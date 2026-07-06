@@ -1,5 +1,10 @@
 # Reorganization Roadmap — Alpha Terminal
 
+> **➡ 2026-07-05: Phases A–E are complete and D2 has landed (tag `v3-one-app`). All
+> remaining and future work now lives in `SAAS-ROADMAP.md` — the binding master plan
+> for the multi-user product. This file stays as the historical record of the reorg;
+> its Execution rules and never-touch list still apply to every session.**
+
 Goal: merge the three browser apps' functionality into ONE app (the charting UI, working
 title "Alpha Terminal") with a Dashboard home page, while the money path stays in the
 headless marker-engine daemon. Zero-breakage strategy: the old wallet app keeps running
@@ -119,7 +124,7 @@ The user's top ask: when a strategy runs DRY or LIVE, its status/results must be
       and check it appears in Recent trades as FILLED with reason "Manual BUY $5".
 - [x] C4 🧠 **Review checkpoint.** Tag `v2-wallet-panels`. ✔ See B4 (shared review commit).
 
-## Phase D — Retire the old wallet app + in-browser auto-trade (D2 ← NEEDS USER)
+## Phase D — Retire the old wallet app + in-browser auto-trade ✅ 2026-07-05 (tag `v3-one-app`)
 
 D2 deletes the user's working fallback dashboard — that happens only after he has used
 the new Dashboard for a while and placed the C3 $5 test trade successfully.
@@ -133,9 +138,17 @@ the new Dashboard for a while and placed the C3 $5 test trade successfully.
       localStorage could still fire real trades if the old wallet tab is opened with the
       key loaded — so don't leave the old wallet open unattended, and cancel any jobs
       still listed there. D2 removes this risk permanently.
-- [ ] D2 🔧 **Retire.** Remove wallet window from `start.bat`; `git rm -r crypto-wallet`
+- [x] D2 🔧 **Retire.** Remove wallet window from `start.bat`; `git rm -r crypto-wallet`
       (history keeps it forever; `git checkout v2-wallet-panels -- crypto-wallet` brings
       it back). Update CLAUDE.md sections that mention the wallet app. Tag `v3-one-app`.
+      ✔ Done 2026-07-05 after the user confirmed the new Dashboard with a real-funds
+      swap. Safety detail found during execution: `marker-engine/.env` did NOT exist —
+      the engine was running on the wallet's fallback key. Created `marker-engine/.env`
+      (`PRIVATE_KEY`) BEFORE removing the app; `crypto-wallet/.env` deliberately kept on
+      disk (untracked) as the key backup. Wallet dev server on :5174 killed; wallet
+      entry removed from `.claude/launch.json`; start.bat down to four windows.
+      ⚠ User: close any old "Alpha Wallet" browser tabs still open — a loaded tab keeps
+      its JS (incl. the legacy auto-trade loop) until closed.
 
 ## Phase E — Product polish (E1+E2 ✅ 2026-07-05)
 
@@ -295,16 +308,16 @@ the new Dashboard for a while and placed the C3 $5 test trade successfully.
       exactly 592px — the same width as the Asset Allocation panel below it (both are
       siblings in the same right `dash-col`) — loss color renders correctly
       (`rgb(251,113,133)`), zero console errors.
-- [ ] E3b 🧠 Remaining UX pass with the user: naming, empty states, confirmation dialogs
-      for LIVE. Tag `v4-alpha-terminal`. ← NEEDS USER (it's your opinion that matters here).
+- [→] E3b 🧠 Remaining UX pass with the user — **moved to `SAAS-ROADMAP.md` task S6.1**
+      (it lands after auth/billing exist, so one pass covers everything a customer sees).
 
-## Phase F — Multi-user platform (DO NOT START without a dedicated planning session)
+## Phase F — Multi-user platform → SUPERSEDED by `SAAS-ROADMAP.md` (2026-07-05)
 
-Open decisions, in order: custody model (non-custodial strongly recommended: each user
-runs their own engine or connects a wallet — you holding keys = money-transmitter
-territory), auth, per-user data isolation (SQLite → Postgres), hosting, billing,
-update/release channel for subscribers. Each is its own 🧠 session. Nothing in Phases A–E
-blocks any of these choices; that is deliberate.
+The dedicated planning session happened 2026-07-05. Every open decision listed here is
+now settled and scheduled in `SAAS-ROADMAP.md`: custody = non-custodial (user-run engine,
+keys never leave the customer's machine), auth = Clerk, billing = Stripe (Clerk Billing
+route A / classic webhooks route B), data isolation = PostgreSQL + per-user rows, hosting
+= Railway + Vercel, release channel = signed Electron installer with auto-update.
 
 ---
 
