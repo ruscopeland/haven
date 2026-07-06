@@ -43,6 +43,7 @@ class AlphaCollector:
     RETENTION_DAYS = 7
     TICKER_INTERVAL = 60      # seconds between bulk-ticker syncs
     REST_TICKER_INTERVAL = 300  # seconds between REST API ticker fetch for quiet tokens
+    ALPHA_VOLUME_INTERVAL = 60  # seconds between Alpha token-list volume/pct refreshes
     LIVE_PRICE_INTERVAL = 3   # seconds between persisting live trade prices to latest_tickers
     TOKEN_SYNC_INTERVAL = 24 * 60 * 60  # seconds between token-list refreshes
     DEBUG_LOG_RETENTION_HOURS = 48
@@ -388,18 +389,18 @@ class AlphaCollector:
                     success = resp.get("success", False)
                     data = resp.get("data")
                     if success and data:
-                        pct = float(data.get("priceChangePercent", 0))
-                        vol = float(data.get("quoteVolume", 0))
+                        # 24h volume/pct now come from the Alpha token-list sync
+                        # (aggregated figure matching the Binance Alpha page); this
+                        # per-token endpoint only refreshes last_price for quiet tokens.
                         lp = float(data.get("lastPrice", 0))
-                        old = self.tickers.get(token.symbol, {})
-                        if (old.get("price_change_24h") != pct or
-                            old.get("volume_24h") != vol or
-                            old.get("last_price") != lp):
+                        old = self.tickers.get(token.symbol)
+                        if old is None:
                             self.tickers[token.symbol] = {
-                                "price_change_24h": pct,
-                                "volume_24h": vol,
-                                "last_price": lp,
+                                "price_change_24h": 0.0, "volume_24h": 0.0, "last_price": lp,
                             }
+                            self._tickers_changed.add(token.symbol)
+                        elif old.get("last_price") != lp:
+                            old["last_price"] = lp
                             self._tickers_changed.add(token.symbol)
                     elif not success:
                         # Binance explicitly rejected the symbol — cache so we don't retry.
@@ -441,6 +442,46 @@ class AlphaCollector:
                 await self._sync_tickers_rest()
                 self._save_tickers()
 
+    async def _periodic_alpha_volume_sync(self):
+        """Refresh 24h volume + pct-change from the Alpha token-LIST endpoint.
+
+        The per-token ticker endpoint's quoteVolume is CEX-order-book only and
+        reads far lower than the aggregated 24h volume shown on the Binance Alpha
+        page. The token-list endpoint (get_all_tokens) carries that aggregated
+        figure per token, so it is the authoritative source for
+        latest_tickers.volume_24h / price_change_24h. One bulk request covers
+        every token. Runs immediately on start, then every ALPHA_VOLUME_INTERVAL.
+        """
+        while self.is_running:
+            try:
+                api = BinanceAlphaAPI()
+                try:
+                    resp = await api.get_all_tokens()
+                finally:
+                    await api.close()
+                updated = 0
+                for t in (resp or {}).get("data", []) or []:
+                    alpha_id = t.get("alphaId")
+                    if not alpha_id:
+                        continue
+                    symbol = f"{alpha_id}USDT"
+                    try:
+                        vol = float(t.get("volume24h") or 0)
+                        pct = float(t.get("percentChange24h") or 0)
+                    except (TypeError, ValueError):
+                        continue
+                    row = self.tickers.setdefault(
+                        symbol, {"price_change_24h": pct, "volume_24h": vol, "last_price": 0.0})
+                    row["volume_24h"] = vol
+                    row["price_change_24h"] = pct
+                    self._tickers_changed.add(symbol)
+                    updated += 1
+                await asyncio.to_thread(self._save_tickers)
+                log(f"Alpha volume sync done - updated {updated} tokens from token list")
+            except Exception as e:
+                log(f"Alpha volume sync failed: {e}", "ERROR")
+            await asyncio.sleep(self.ALPHA_VOLUME_INTERVAL)
+
     # ── Ticker persistence ───────────────────────────────────────────────────
 
     def _save_tickers(self):
@@ -459,17 +500,17 @@ class AlphaCollector:
                     continue
                 existing = db.query(LatestTicker).filter_by(symbol=symbol).first()
                 if existing:
-                    existing.price_change_24h = data["price_change_24h"]
-                    existing.volume_24h = data["volume_24h"]
-                    existing.last_price = data["last_price"]
+                    existing.price_change_24h = data.get("price_change_24h", 0.0)
+                    existing.volume_24h = data.get("volume_24h", 0.0)
+                    existing.last_price = data.get("last_price", 0.0)
                     existing.last_updated = self._now_ms()
                 else:
                     db.add(
                         LatestTicker(
                             symbol=symbol,
-                            price_change_24h=data["price_change_24h"],
-                            volume_24h=data["volume_24h"],
-                            last_price=data["last_price"],
+                            price_change_24h=data.get("price_change_24h", 0.0),
+                            volume_24h=data.get("volume_24h", 0.0),
+                            last_price=data.get("last_price", 0.0),
                             last_updated=self._now_ms(),
                         )
                     )
@@ -652,6 +693,7 @@ class AlphaCollector:
                     flush_task = asyncio.create_task(periodic_flush())
                     ticker_task = asyncio.create_task(periodic_ticker_save())
                     rest_ticker_task = asyncio.create_task(self._periodic_rest_ticker_sync())
+                    alpha_volume_task = asyncio.create_task(self._periodic_alpha_volume_sync())
                     live_price_task = asyncio.create_task(periodic_live_price_save())
                     token_sync_task = asyncio.create_task(periodic_token_sync())
                     archive_task = asyncio.create_task(periodic_archive())
@@ -716,21 +758,20 @@ class AlphaCollector:
                             # ── 24hr Ticker ──
                             elif event_type == "24hrTicker":
                                 sym = raw.get("s")
-                                pct = float(raw.get("P", 0.0))
-                                vol = float(raw.get("q", 0.0))
                                 lp = float(raw.get("c", 0.0))
-                                self.tickers[sym] = {
-                                    "price_change_24h": pct,
-                                    "volume_24h": vol,
-                                    "last_price": lp,
-                                }
+                                # 24h pct/volume now come from the Alpha token-list sync
+                                # (aggregated figure matching the Binance Alpha page); the
+                                # WS ticker only refreshes last_price here.
+                                row = self.tickers.setdefault(
+                                    sym, {"price_change_24h": 0.0, "volume_24h": 0.0, "last_price": lp})
+                                row["last_price"] = lp
                                 # Mark for persistence so periodic_ticker_save writes it —
                                 # without this, WS ticker updates never reach the DB.
                                 self._tickers_changed.add(sym)
                     finally:
                         background_tasks = [flush_task, ticker_task, rest_ticker_task,
-                                            live_price_task, token_sync_task, heartbeat_task,
-                                            archive_task]
+                                            alpha_volume_task, live_price_task,
+                                            token_sync_task, heartbeat_task, archive_task]
                         for task in background_tasks:
                             task.cancel()
                         for task in background_tasks:

@@ -8,6 +8,7 @@ import BacktestChart from './BacktestChart';
 import BacktestResults from './BacktestResults';
 import SlotTimeline from './SlotTimeline';
 import GuidePanel from './GuidePanel';
+import AssistantPanel from './AssistantPanel';
 import '../strategies.css';
 
 const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:8000';
@@ -511,6 +512,12 @@ export default function StrategyWorkbench({ signals = [], initialSelectId = null
             </div>
           )}
         </div>
+
+        <AssistantPanel
+          mode="strategy"
+          code={draft.code}
+          onInsertCode={(code) => patchDraft({ code })}
+        />
       </div>
 
       {/* ── Right: chart + results ── */}

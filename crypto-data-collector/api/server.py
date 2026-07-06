@@ -15,6 +15,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi import Request
 from contextlib import asynccontextmanager
 import asyncio
+import os
 import time
 import json
 
@@ -902,6 +903,7 @@ async def debug_log_middleware(request: Request, call_next):
             or request.url.path.startswith("/flow")
             or request.url.path.startswith("/strategies")
             or request.url.path.startswith("/finders")      # UI + evaluator poll
+            or request.url.path.startswith("/assistant")     # chat turns — no DB value, may be large
             or request.url.path.startswith("/universe")):   # large payload, refetched per timeframe
         return await call_next(request)
 
@@ -1162,6 +1164,142 @@ def get_top_signals(limit: int = 400, sort_by: str = "flow_1m", db: Session = De
         signals.sort(key=lambda s: s.net_flow_1m, reverse=True)
 
     return signals[:limit]
+
+# ── In-app coding assistant (DeepSeek proxy) ─────────────────────────────────
+# The chart UI embeds a chat window under the code editor on the Strategies and
+# Token Finder pages. The DeepSeek key stays server-side (repo-root .env); the
+# browser only ever talks to this proxy. Scoped by `mode` to helping the user
+# write the strategy/finder JS for the page it is on.
+
+_DEEPSEEK_KEY = None            # cached once found
+_SDK_DOC_CACHE = {}
+DEEPSEEK_URL = "https://api.deepseek.com/chat/completions"
+DEEPSEEK_MODEL = "deepseek-v4-flash"
+
+
+def _load_deepseek_key():
+    """Read `deepseek_v4_flash_key` from the repo-root .env (env var wins)."""
+    global _DEEPSEEK_KEY
+    if _DEEPSEEK_KEY:
+        return _DEEPSEEK_KEY
+    key = os.environ.get("deepseek_v4_flash_key") or os.environ.get("DEEPSEEK_V4_FLASH_KEY")
+    if not key:
+        env_path = os.path.join(os.path.dirname(__file__), "..", "..", ".env")
+        try:
+            with open(env_path, "r", encoding="utf-8") as f:
+                for line in f:
+                    line = line.strip()
+                    if not line or line.startswith("#") or "=" not in line:
+                        continue
+                    k, _, v = line.partition("=")
+                    if k.strip().lower() == "deepseek_v4_flash_key":
+                        key = v.strip().strip('"').strip("'")
+                        break
+        except OSError:
+            key = None
+    if key:
+        _DEEPSEEK_KEY = key
+    return key or None
+
+
+def _read_sdk_doc(name):
+    """Read (and cache) a strategy-sdk contract doc to embed in the system prompt."""
+    if name in _SDK_DOC_CACHE:
+        return _SDK_DOC_CACHE[name]
+    path = os.path.join(os.path.dirname(__file__), "..", "..", "strategy-sdk", "docs", name)
+    try:
+        with open(path, "r", encoding="utf-8") as f:
+            text = f.read()
+    except OSError:
+        text = ""
+    _SDK_DOC_CACHE[name] = text
+    return text
+
+
+def _assistant_system_prompt(mode, code):
+    if mode == "finder":
+        role = ("You are a coding assistant embedded in the Token Finder page of the "
+                "Alpha Terminal trading app. Your ONLY job is to help the user write and "
+                "debug the JavaScript for a Token Finder — a `finder` object that ranks "
+                "tokens (params, optional filter(ctx), required score(ctx)).")
+        contract = _read_sdk_doc("finder-contract.md")
+    else:
+        role = ("You are a coding assistant embedded in the Strategies page of the Alpha "
+                "Terminal trading app. Your ONLY job is to help the user write and debug "
+                "the JavaScript for a trading strategy — a `strategy` object with params, "
+                "optional init(ctx), and an onBar(bar, ctx) handler.")
+        contract = _read_sdk_doc("strategy-contract.md")
+    parts = [
+        role,
+        "Stay strictly on that task. If asked about anything unrelated to writing this "
+        "page's code (small talk, other topics, unrelated parts of the app, trading "
+        "advice, or moving money), briefly decline and steer back to the code.",
+        "Be concise. When you provide code, return a COMPLETE, runnable definition in a "
+        "single ```js fenced block that follows the contract exactly, so it can be pasted "
+        "straight into the editor. Only use the ctx surface and indicators documented below.",
+        "=== CONTRACT ===\n" + contract,
+        "=== INDICATOR REFERENCE ===\n" + _read_sdk_doc("indicator-reference.md"),
+    ]
+    if code and code.strip():
+        parts.append("=== USER'S CURRENT EDITOR CODE ===\n```js\n" + code.strip()[:8000] + "\n```")
+    return "\n\n".join(parts)
+
+
+class AssistantMessage(BaseModel):
+    role: str
+    content: str
+
+
+class AssistantChatRequest(BaseModel):
+    mode: str = "strategy"
+    messages: List[AssistantMessage] = []
+    code: str | None = None
+
+
+@app.post("/assistant/chat")
+async def assistant_chat(req: AssistantChatRequest):
+    """Proxy a coding-assistant chat turn to DeepSeek (key stays server-side)."""
+    key = _load_deepseek_key()
+    if not key:
+        raise HTTPException(
+            status_code=503,
+            detail="AI assistant not configured: set deepseek_v4_flash_key in the .env file.")
+    mode = req.mode if req.mode in ("strategy", "finder") else "strategy"
+    # We own the system prompt; only forward user/assistant turns from the client.
+    convo = [{"role": m.role, "content": m.content}
+             for m in req.messages
+             if m.role in ("user", "assistant") and m.content]
+    if not convo:
+        raise HTTPException(status_code=422, detail="No message to send.")
+    convo = convo[-20:]   # cap history length
+
+    payload = {
+        "model": DEEPSEEK_MODEL,
+        "messages": [{"role": "system", "content": _assistant_system_prompt(mode, req.code)}] + convo,
+        "temperature": 0.3,
+        "stream": False,
+    }
+    headers = {"Authorization": f"Bearer {key}", "Content-Type": "application/json"}
+
+    import aiohttp
+    try:
+        timeout = aiohttp.ClientTimeout(total=90)
+        async with aiohttp.ClientSession(timeout=timeout) as session:
+            async with session.post(DEEPSEEK_URL, json=payload, headers=headers) as resp:
+                text = await resp.text()
+                if resp.status != 200:
+                    raise HTTPException(status_code=502,
+                                        detail=f"DeepSeek error {resp.status}: {text[:300]}")
+                data = json.loads(text)
+    except aiohttp.ClientError as e:
+        raise HTTPException(status_code=502, detail=f"DeepSeek request failed: {e}")
+
+    try:
+        reply = data["choices"][0]["message"]["content"]
+    except (KeyError, IndexError, TypeError):
+        raise HTTPException(status_code=502, detail="DeepSeek returned no reply.")
+    return {"reply": reply}
+
 
 @app.get("/klines/{symbol}")
 async def get_klines(symbol: str, interval: str = "5m", limit: int = 500):

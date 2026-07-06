@@ -12,6 +12,7 @@ import {
 } from '@sdk/index.js';
 import RankingRiver, { QualityStrip, colorMap } from './RankingRiver';
 import GuidePanel from './GuidePanel';
+import AssistantPanel from './AssistantPanel';
 import '../strategies.css';
 
 const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:8000';
@@ -292,6 +293,12 @@ export default function FinderWorkbench() {
           <button className="wb-btn wb-guide" onClick={() => setShowGuide(true)}>📖 Guide</button>
           <span className="wb-save-msg">{saveMsg}</span>
         </div>
+
+        <AssistantPanel
+          mode="finder"
+          code={draft.code}
+          onInsertCode={(code) => patchDraft({ code })}
+        />
       </div>
 
       {/* ── Right: ranking river + quality + pinned table ── */}
