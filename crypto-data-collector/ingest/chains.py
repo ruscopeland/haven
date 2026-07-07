@@ -70,7 +70,10 @@ CHAINS = {
         ],
         "v3_fee_tiers": [100, 500, 2500, 10000],
         "poll_seconds": 2.0,
-        "finality_lag": 3,          # blocks held back before processing
+        # 8 blocks ≈ 6s: covers reorg depth AND Alchemy's load-balanced fleet
+        # skew (their header nodes lag their tip nodes by a few blocks; at
+        # lag=3 "block not yet available" fired every minute or two).
+        "finality_lag": 8,
         "block_time": 0.75,         # avg seconds/block (timestamp interpolation)
         "liquidity_floor_usd": 25_000.0,
         "recent_pool_scan_days": 30,  # bootstrap factory-scan window (deep scan = M5)
@@ -126,7 +129,7 @@ CHAINS = {
         ],
         "v3_fee_tiers": [100, 500, 3000, 10000],
         "poll_seconds": 2.0,
-        "finality_lag": 3,
+        "finality_lag": 5,          # same provider-skew headroom as BSC
         "block_time": 2.0,
         "liquidity_floor_usd": 25_000.0,
         "recent_pool_scan_days": 30,

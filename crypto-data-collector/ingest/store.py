@@ -29,7 +29,12 @@ def env_int(name: str, default: int) -> int:
 
 def log(msg, level="INFO"):
     ts = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-    print(f"{ts} | {level:<8} | {msg}")
+    line = f"{ts} | {level:<8} | {msg}"
+    try:
+        print(line)
+    except UnicodeEncodeError:
+        # Windows consoles are cp1252; token names can contain anything.
+        print(line.encode("ascii", "replace").decode("ascii"))
 
 
 def now_ms() -> int:

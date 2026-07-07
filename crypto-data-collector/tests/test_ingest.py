@@ -127,9 +127,23 @@ def test_string_decode():
     check("garbage tolerated", evm.decode_string_result("0x") == "")
 
 
+def test_sqrt_price():
+    # WETH(18)/USDT(6), WETH=token0, target $1782: p_raw = 1782e-12
+    # sqrtPriceX96 = sqrt(1782e-12) * 2^96
+    sqrt_p = int((1782e-12 ** 0.5) if False else (1782e-12) ** 0.5 * (1 << 96))
+    p = evm.price_from_sqrt_x96(sqrt_p, 18, 6)
+    check("sqrt price math", abs(p - 1782.0) < 0.01)
+    # inverted orientation: USDT(6)/WBNB(18) with USDT=token0 at BNB=$600
+    # price of USDT in WBNB = 1/600 → p_raw human = 1/600
+    sqrt_p2 = int(((1 / 600) * 10 ** (18 - 6)) ** 0.5 * (1 << 96))
+    p2 = evm.price_from_sqrt_x96(sqrt_p2, 6, 18)
+    check("sqrt price inverted", abs(1.0 / p2 - 600.0) < 0.01)
+
+
 def test_slugs():
     check("sanitize", evm.sanitize_display_symbol(" pepe!2 ") == "PEPE2")
     check("sanitize empty", evm.sanitize_display_symbol("$$$") == "TOKEN")
+    check("sanitize non-ascii", evm.sanitize_display_symbol("木ANA木") == "ANA")
     taken = set()
     s1 = evm.make_slug("PEPE", "bsc", taken, TOKEN)
     taken.add(s1)
@@ -158,7 +172,7 @@ def test_bucket_store():
 
 if __name__ == "__main__":
     for fn in [test_v2_swap_buy, test_v2_swap_sell, test_v3_swap_signs,
-               test_pool_created_decode, test_reserves_price,
+               test_pool_created_decode, test_reserves_price, test_sqrt_price,
                test_aggregate3_roundtrip, test_string_decode, test_slugs,
                test_bucket_store]:
         print(fn.__name__)

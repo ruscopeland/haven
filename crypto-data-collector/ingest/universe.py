@@ -24,6 +24,7 @@ from .store import log, now_ms, write_debug_log
 
 EVM_ADDR_RE = re.compile(r"^0x[0-9a-fA-F]{40}$")
 SEL_GET_RESERVES = "0x0902f1ac"
+SEL_SLOT0 = "0x3850c7bd"
 
 
 class UniverseManager:
@@ -150,24 +151,33 @@ class UniverseManager:
             if bal > best[0]:
                 best = (bal, pool, stable)
         _, self.anchor_pool, anchor_stable = best
-        # Initial native price from the anchor's balances ratio (v2 or v3 alike:
-        # stable_balance / native_balance ≈ mid price — good enough to boot;
-        # live trades take over immediately).
-        res = await self._multicall([
-            (self.native_addr, evm.calldata_balance_of(self.anchor_pool)),
-            (anchor_stable, evm.calldata_balance_of(self.anchor_pool)),
-        ])
-        nat = evm.uint(res[0][1], 0) / 10 ** self.cfg["native"]["decimals"]
-        stb = evm.uint(res[1][1], 0) / 10 ** self.quotes[anchor_stable][1]
-        if nat > 0:
-            self.native_usd = stb / nat
-        # The anchor is watched like any pool; its "ranked token" is the native.
         # Kind detection: v2 getReserves() reverts on a v3 pool.
         try:
-            await self.rpc.eth_call(self.anchor_pool, SEL_GET_RESERVES)
+            reserves = await self.rpc.eth_call(self.anchor_pool, SEL_GET_RESERVES)
             anchor_kind = "v2"
         except RpcError:
+            reserves = None
             anchor_kind = "v3"
+        # Initial native price: v2 = reserves ratio; v3 = slot0 sqrtPrice
+        # (balance ratios are MEANINGLESS on v3 — concentrated liquidity).
+        native_dec = self.cfg["native"]["decimals"]
+        stable_dec = self.quotes[anchor_stable][1]
+        native_is_token0 = self.native_addr.lower() < anchor_stable.lower()
+        if anchor_kind == "v2" and reserves:
+            r0, r1 = evm.uint(reserves, 0), evm.uint(reserves, 1)
+            r_nat, r_stb = (r0, r1) if native_is_token0 else (r1, r0)
+            p = evm.v2_price_from_reserves(r_nat, r_stb, native_dec, stable_dec, 1.0)
+            if p:
+                self.native_usd = p
+        else:
+            slot0 = await self.rpc.eth_call(self.anchor_pool, SEL_SLOT0)
+            sqrt_p = evm.uint(slot0, 0)
+            if native_is_token0:
+                self.native_usd = evm.price_from_sqrt_x96(sqrt_p, native_dec, stable_dec)
+            else:
+                p = evm.price_from_sqrt_x96(sqrt_p, stable_dec, native_dec)
+                self.native_usd = 1.0 / p if p > 0 else 0.0
+        # The anchor is watched like any pool; its "ranked token" is the native.
         self.candidates[self.anchor_pool.lower()] = {
             "token": self.native_addr, "quote": anchor_stable,
             "dex": "anchor", "kind": anchor_kind, "fee": 0,
@@ -315,6 +325,10 @@ class UniverseManager:
 
         db = SessionLocal()
         added_t = added_p = 0
+        # autoflush is OFF on SessionLocal — rows added this batch are invisible
+        # to queries, so track them locally or a multi-pool token INSERTs twice.
+        batch_rows: dict[str, Token] = {}
+        batch_pools: set[str] = set()
         try:
             for (pool, token, quote, dex, kind, fee), liq in keep:
                 is_native = token == self.native_addr
@@ -322,7 +336,7 @@ class UniverseManager:
                 if m is None and not is_native:
                     continue
                 tid = self._tid(token)
-                row = db.query(Token).filter_by(id=tid).first()
+                row = batch_rows.get(tid) or db.query(Token).filter_by(id=tid).first()
                 if row is None:
                     display = (self.cfg["native"]["symbol"] if is_native
                                else m["symbol"])
@@ -338,25 +352,28 @@ class UniverseManager:
                     added_t += 1
                 elif (row.liquidity_usd or 0) < liq:
                     row.liquidity_usd = liq
+                batch_rows[tid] = row
                 pid = self._pid(pool)
-                if not db.query(Pool).filter_by(id=pid).first():
+                if pid not in batch_pools \
+                        and not db.query(Pool).filter_by(id=pid).first():
                     db.add(Pool(id=pid, chain=self.chain, dex=dex, kind=kind,
                                 token_id=tid, quote_address=quote,
                                 token_is_token0=1 if token.lower() < quote.lower() else 0,
                                 fee_tier=fee, liquidity_usd=liq, watch=1,
                                 created_at=now_ms(), last_checked=now_ms()))
+                    batch_pools.add(pid)
                     added_p += 1
                 if not row.primary_pool or (row.liquidity_usd or 0) <= liq:
                     row.primary_pool = pid
             db.commit()
+            log(f"[{self.chain}] added {added_t} tokens / {added_p} pools over "
+                f"${floor:,.0f} floor")
         except Exception as e:
             db.rollback()
-            log(f"[{self.chain}] probe/add failed: {e}", "ERROR")
+            log(f"[{self.chain}] probe/add failed (batch rolled back): {e}", "ERROR")
             write_debug_log("ERROR", f"[{self.chain}] probe/add failed: {e}")
         finally:
             db.close()
-        log(f"[{self.chain}] added {added_t} tokens / {added_p} pools ≥ "
-            f"${floor:,.0f} floor")
 
     def _load_ctx_from_db(self):
         """(Re)build the in-memory decode map from watched pools."""

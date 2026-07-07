@@ -123,9 +123,17 @@ class RpcClient:
         return int(await self.call("eth_blockNumber", []), 16)
 
     async def get_block_timestamp(self, block_number: int) -> int:
-        """Block timestamp in unix SECONDS (header-only fetch)."""
-        blk = await self.call("eth_getBlockByNumber", [hex(block_number), False])
-        return int(blk["timestamp"], 16)
+        """Block timestamp in unix SECONDS (header-only fetch).
+
+        Load-balanced providers occasionally return null for a block another
+        of their nodes just announced — retry briefly before giving up.
+        """
+        for attempt in range(4):
+            blk = await self.call("eth_getBlockByNumber", [hex(block_number), False])
+            if blk is not None:
+                return int(blk["timestamp"], 16)
+            await asyncio.sleep(0.4 * (attempt + 1))
+        raise RpcError(f"block {block_number} not yet available on provider")
 
     async def get_logs(self, from_block: int, to_block: int,
                        addresses: list[str] | None, topics: list) -> list[dict]:

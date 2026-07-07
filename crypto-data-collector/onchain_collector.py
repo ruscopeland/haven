@@ -70,7 +70,18 @@ async def run_async():
         if alive:
             BucketStore.heartbeat("collector")
 
-    tasks = [asyncio.create_task(i.run()) for i in ingesters]
+    async def run_chain(ing):
+        # One chain's failure never kills the others (alert-first, M0.1):
+        # log loudly, let the heartbeat go stale, retry in a minute.
+        while True:
+            try:
+                await ing.run()
+            except Exception as e:
+                log(f"[{ing.chain}] ingester crashed: {e} — retrying in 60s", "ERROR")
+                write_debug_log("ERROR", f"[{ing.chain}] ingester crashed: {e}")
+                await asyncio.sleep(60)
+
+    tasks = [asyncio.create_task(run_chain(i)) for i in ingesters]
     tasks += [
         asyncio.create_task(periodic(store.flush_completed, 10)),
         asyncio.create_task(periodic(store.save_live_prices, 3)),

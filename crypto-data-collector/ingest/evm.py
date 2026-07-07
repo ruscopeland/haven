@@ -172,6 +172,19 @@ def v2_price_from_reserves(reserve_token: int, reserve_quote: int,
     return (q / t) * quote_usd
 
 
+def price_from_sqrt_x96(sqrt_price_x96: int, token0_decimals: int,
+                        token1_decimals: int) -> float:
+    """v3 slot0/swap price → human price of token0 denominated in token1.
+
+    (sqrtPriceX96 / 2^96)^2 is raw-token1-per-raw-token0; decimal adjustment
+    converts to human units. NEVER use pool token balances for a v3 price —
+    concentrated liquidity makes the balance ratio meaningless (found live:
+    WETH read $1,135 instead of $1,782 off the balance ratio).
+    """
+    p_raw = (sqrt_price_x96 / (1 << 96)) ** 2
+    return p_raw * 10 ** (token0_decimals - token1_decimals)
+
+
 # ── Call-data builders ───────────────────────────────────────────────────────
 
 def calldata_balance_of(owner: str) -> str:
@@ -239,7 +252,9 @@ def decode_aggregate3(result: str, n: int) -> list[tuple[bool, str]]:
 # ── Slug assignment (AD-D1) ─────────────────────────────────────────────────
 
 def sanitize_display_symbol(raw: str) -> str:
-    s = "".join(ch for ch in (raw or "").upper() if ch.isalnum())[:12]
+    # ASCII alnum only — slugs live in URLs, DB keys, and cp1252 consoles.
+    s = "".join(ch for ch in (raw or "").upper()
+                if ch.isalnum() and ch.isascii())[:12]
     return s or "TOKEN"
 
 
