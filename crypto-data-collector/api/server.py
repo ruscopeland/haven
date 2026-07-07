@@ -10,7 +10,7 @@ from database.models import (
 from api.auth import (
     get_identity, require_paid, Identity, SOLO_MODE, hash_key, entitlements,
 )
-from fetcher.alpha_api import BinanceAlphaAPI
+from ingest.chains import LEGACY_CHAIN_ID_MAP
 from pydantic import BaseModel
 from typing import List, Any
 from collections import defaultdict
@@ -528,6 +528,18 @@ def update_strategy(strategy_id: str, s: StrategyUpdate, db: Session = Depends(g
             raise HTTPException(
                 status_code=403,
                 detail="Trial accounts run paper (DRY) bots only. Subscribe to unlock live trading.")
+        # Live trading is BSC-only (DATA-ROADMAP AD-D8). Paper (DRY) bots may
+        # run on any chain's data. Finder-bound strategies (symbol='') are
+        # policed at slot-bind time by the runner's tradeable filter instead.
+        if s.mode == "live" and next_symbol:
+            tok = db.query(Token).filter(Token.symbol == next_symbol).first()
+            tok_chain = str(tok.chain_id or "") if tok else ""
+            tok_chain = LEGACY_CHAIN_ID_MAP.get(tok_chain, tok_chain)
+            if tok and tok_chain and tok_chain != "bsc":
+                raise HTTPException(
+                    status_code=422,
+                    detail=(f"Live trading is BSC-only for now — '{next_symbol}' is on "
+                            f"{tok_chain}. Run it as a paper (DRY) bot instead."))
         if ent["max_bots"] is not None and strat.mode == "off":
             running = (db.query(Strategy)
                        .filter(Strategy.user_id == strat.user_id,
@@ -934,10 +946,20 @@ def _grouped_ohlc(db: Session, model, symbols: list[str], start_ms: int, end_ms:
     return out
 
 
+def _token_chain_map(db: Session) -> dict:
+    """symbol → chain slug ('bsc'/'ethereum'/...); legacy numeric ids mapped."""
+    out = {}
+    for t in db.query(Token).all():
+        cid = str(t.chain_id or "")
+        out[t.symbol] = LEGACY_CHAIN_ID_MAP.get(cid, cid) or None
+    return out
+
+
 @app.get("/universe")
 def get_universe(interval: str = "15m", start_ms: int | None = None,
                  end_ms: int | None = None, min_vol_24h: float = 50_000,
-                 symbols: str | None = None, db: Session = Depends(get_db),
+                 symbols: str | None = None, chains: str | None = None,
+                 db: Session = Depends(get_db),
                  identity: Identity = Depends(require_paid)):
     """Multi-token resampled OHLC + buy/sell flow — the Token Finder dataset.
 
@@ -946,9 +968,13 @@ def get_universe(interval: str = "15m", start_ms: int | None = None,
     for intervals >= 15m the fifteen_min_buckets archive extends the range
     (one-minute data wins where both cover a group).
 
-    Returns { interval, times: [ms...], tokens: [{symbol, name, volume24h,
-    priceChange24h, o, h, l, c, buy, sell, trades}] } with arrays aligned to
-    times and null where a token has no data for that bar.
+    `chains` (optional, comma-separated slugs e.g. "bsc,base") filters the
+    universe to those chains; each token entry carries its `chain` so the SDK
+    passes it through to finder ctxs (DATA-ROADMAP M3).
+
+    Returns { interval, times: [ms...], tokens: [{symbol, name, chain,
+    volume24h, priceChange24h, o, h, l, c, buy, sell, trades}] } with arrays
+    aligned to times and null where a token has no data for that bar.
     """
     if interval not in UNIVERSE_INTERVALS:
         raise HTTPException(status_code=422,
@@ -971,12 +997,16 @@ def get_universe(interval: str = "15m", start_ms: int | None = None,
     # Universe = tracked tokens over the volume floor (or an explicit list).
     tickers = {t.symbol: t for t in db.query(LatestTicker).all()}
     names = {t.symbol: t.name for t in db.query(Token).all()}
+    chain_of = _token_chain_map(db)
     if symbols:
         wanted = [s.strip() for s in symbols.split(",") if s.strip()]
     else:
         wanted = [s for s, t in tickers.items()
                   if (t.volume_24h or 0) >= min_vol_24h and s in names]
         wanted.sort(key=lambda s: tickers[s].volume_24h or 0, reverse=True)
+    if chains:
+        allowed = {c.strip() for c in chains.split(",") if c.strip()}
+        wanted = [s for s in wanted if chain_of.get(s) in allowed]
     wanted = wanted[:UNIVERSE_MAX_TOKENS]
     if not wanted:
         return {"interval": interval, "times": [], "tokens": []}
@@ -1006,6 +1036,7 @@ def get_universe(interval: str = "15m", start_ms: int | None = None,
         t = tickers.get(sym)
         tokens_out.append({
             "symbol": sym, "name": names.get(sym),
+            "chain": chain_of.get(sym),
             "volume24h": (t.volume_24h if t else 0) or 0,
             "priceChange24h": (t.price_change_24h if t else 0) or 0,
             "o": o, "h": h, "l": l, "c": c,
@@ -1066,6 +1097,10 @@ class DashboardOverview(BaseModel):
     trades: List[TradeWithReason]
     open_markers: List[MarkerResponse]
     token_prices: dict  # symbol → last_price
+    # symbol → last_updated (unix ms). Additive (old consumers ignore it);
+    # the engine's stale-price guard reads it so a frozen collector price can
+    # never drive a marker execution (DATA-ROADMAP M3).
+    price_updated: dict = {}
 
 
 # ── Debug log endpoints ────────────────────────────────────────────────────
@@ -1178,14 +1213,17 @@ def get_dashboard_overview(db: Session = Depends(get_db),
                     .filter(ChartMarker.user_id == identity.user_id, ChartMarker.active == 1)
                     .order_by(ChartMarker.created_at.desc()).limit(100).all())
 
-    # Latest prices per symbol
+    # Latest prices per symbol (+ freshness for the engine's stale-price guard)
     tickers = db.query(LatestTicker).all()
     token_prices = {t.symbol: t.last_price for t in tickers if t.last_price and t.last_price > 0}
+    price_updated = {t.symbol: t.last_updated for t in tickers
+                     if t.last_price and t.last_price > 0 and t.last_updated}
 
     return DashboardOverview(
         trades=trade_responses,
         open_markers=[MarkerResponse.model_validate(m) for m in open_markers],
         token_prices=token_prices,
+        price_updated=price_updated,
     )
 
 
@@ -1745,41 +1783,111 @@ async def assistant_chat(req: AssistantChatRequest,
     return {"reply": reply}
 
 
-# Short-TTL klines cache: every user watching the same token would otherwise
-# hit Binance separately. One shared fetch per (symbol, interval, limit) for a
-# few seconds collapses that fan-out — the candles barely move in that window.
-_KLINES_CACHE: dict = {}
-_KLINES_TTL_SEC = float(os.environ.get("KLINES_CACHE_TTL", "5"))
+KLINE_INTERVALS = {"1m": 60_000, "3m": 180_000, "5m": 300_000, "15m": 900_000,
+                   "30m": 1_800_000, "1h": 3_600_000, "4h": 14_400_000,
+                   "1d": 86_400_000}
+KLINES_MAX_LIMIT = 1500
+
+
+def _resolve_bucket_symbol(db: Session, symbol: str) -> str:
+    """Symbols are used as-is (slugs post-cutover); a legacy caller passing an
+    un-prefixed Binance name still resolves via the historical ALPHA_ prefix."""
+    if db.query(LatestTicker).filter(LatestTicker.symbol == symbol).first():
+        return symbol
+    if not symbol.startswith("ALPHA_"):
+        legacy = f"ALPHA_{symbol}"
+        if db.query(LatestTicker).filter(LatestTicker.symbol == legacy).first():
+            return legacy
+    return symbol
 
 
 @app.get("/klines/{symbol}")
-async def get_klines(symbol: str, interval: str = "5m", limit: int = 500,
-                     end_ms: int | None = None,
-                     identity: Identity = Depends(require_paid)):
-    """Retrieve historical klines for charting directly from Binance API.
+def get_klines(symbol: str, interval: str = "5m", limit: int = 500,
+               end_ms: int | None = None, include_open: int = 0,
+               db: Session = Depends(get_db),
+               identity: Identity = Depends(require_paid)):
+    """Historical klines served from OUR buckets (DATA-ROADMAP AD-D9).
 
-    end_ms (optional) asks Binance for candles ending at that timestamp — the
-    strategy performance chart uses it to jump back to trades older than the
-    most recent window.
+    Same array layout the Binance proxy returned — {data: [[open_time_ms, o, h,
+    l, c, volume, close_time_ms], ...]} with string prices — so the chart, the
+    workbench backtester, and the strategy runner stay byte-compatible
+    consumers. `volume` is buy+sell USD (our buckets carry no token-qty
+    volume). Interior/trailing gaps are forward-filled flat with volume 0,
+    matching the continuous-bar series Binance emitted.
+
+    end_ms: return candles at/before that timestamp (performance-chart jumps).
+    include_open=1: append the still-forming bar (built from the current
+    interval's 1m buckets + the live ticker price) — Chart.jsx polls this
+    every ~3s as the replacement for the old Binance kline WebSocket.
+
+    Sources: one_min_buckets (~7-day retention) resampled SQL-side, plus the
+    fifteen_min_buckets archive for >=15m intervals (1m data wins where both
+    cover a group — same rule as /universe).
     """
-    # Binance Alpha klines API strictly requires the "ALPHA_" prefix
-    alpha_symbol = f"ALPHA_{symbol}" if not symbol.startswith("ALPHA_") else symbol
+    if interval not in KLINE_INTERVALS:
+        raise HTTPException(status_code=422,
+                            detail=f"Invalid interval '{interval}'. Allowed: {tuple(KLINE_INTERVALS)}")
+    interval_ms = KLINE_INTERVALS[interval]
+    limit = max(1, min(limit, KLINES_MAX_LIMIT))
 
-    cache_key = (alpha_symbol, interval, limit, end_ms)
-    hit = _KLINES_CACHE.get(cache_key)
-    if hit and (time.time() - hit[0]) < _KLINES_TTL_SEC:
-        return hit[1]
+    now_ms = int(time.time() * 1000)
+    current_group = now_ms - (now_ms % interval_ms)
+    last_group = current_group - interval_ms          # newest CLOSED bar
+    if end_ms is not None:
+        last_group = min((end_ms // interval_ms) * interval_ms, last_group)
+    start_group = last_group - (limit - 1) * interval_ms
 
-    api = BinanceAlphaAPI()
-    try:
-        data = await api.get_klines(symbol=alpha_symbol, interval=interval,
-                                    limit=limit, end_time=end_ms)
-    finally:
-        await api.close()
-    _KLINES_CACHE[cache_key] = (time.time(), data)
-    if len(_KLINES_CACHE) > 2000:            # bound memory
-        _KLINES_CACHE.clear()
-    return data
+    sym = _resolve_bucket_symbol(db, symbol)
+    grouped = {}
+    if interval_ms >= 900_000:
+        grouped.update(_grouped_ohlc(db, FifteenMinBucket, [sym], start_group,
+                                     last_group + interval_ms, interval_ms))
+    grouped.update(_grouped_ohlc(db, OneMinBucket, [sym], start_group,
+                                 last_group + interval_ms, interval_ms))
+
+    data = []
+    prev_close = None
+    if grouped:
+        first_group = min(g for (_, g) in grouped)
+        for g in range(first_group, last_group + interval_ms, interval_ms):
+            row = grouped.get((sym, g))
+            if row:
+                o, h, l, c, buy, sell, _ = row
+                vol = (buy or 0.0) + (sell or 0.0)
+                prev_close = c
+            elif prev_close is not None:
+                o = h = l = c = prev_close                 # quiet bar — flat fill
+                vol = 0.0
+            else:
+                continue
+            data.append([g, str(o), str(h), str(l), str(c), str(vol),
+                         g + interval_ms - 1])
+
+    if include_open:
+        forming = _grouped_ohlc(db, OneMinBucket, [sym], current_group,
+                                current_group + interval_ms, interval_ms
+                                ).get((sym, current_group))
+        ticker = (db.query(LatestTicker)
+                  .filter(LatestTicker.symbol == sym).first())
+        live = ticker.last_price if ticker and (ticker.last_price or 0) > 0 else None
+        o = h = l = c = None
+        vol = 0.0
+        if forming:
+            o, h, l, c, buy, sell, _ = forming
+            vol = (buy or 0.0) + (sell or 0.0)
+        if live is not None:
+            c = live
+            o = o if o is not None else (prev_close if prev_close is not None else live)
+            h = max(h, live) if h is not None else max(o, live)
+            l = min(l, live) if l is not None else min(o, live)
+        elif forming is None and prev_close is not None:
+            o = h = l = c = prev_close
+        if c is not None:
+            data.append([current_group, str(o), str(h), str(l), str(c),
+                         str(vol), current_group + interval_ms - 1])
+
+    return {"code": "000000", "message": None, "symbol": sym,
+            "interval": interval, "data": data}
 
 
 @app.get("/flow/{symbol}")
@@ -1792,7 +1900,7 @@ def get_flow(symbol: str, start_ms: int | None = None, end_ms: int | None = None
     The collector prunes buckets after ~7 days (= 10080 minutes), so this is the
     maximum honest lookback for flow-based strategies.
     """
-    alpha_symbol = f"ALPHA_{symbol}" if not symbol.startswith("ALPHA_") else symbol
+    alpha_symbol = _resolve_bucket_symbol(db, symbol)
     q = db.query(OneMinBucket).filter(OneMinBucket.symbol == alpha_symbol)
     if start_ms is not None:
         q = q.filter(OneMinBucket.bucket_start >= start_ms)

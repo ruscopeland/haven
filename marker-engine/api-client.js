@@ -24,7 +24,9 @@ export class ApiClient {
   }
 
   getOverview() { return this.#json('/dashboard/overview'); }
-  getTokens() { return this.#json('/tokens?limit=2000'); }
+  // The on-chain universe is thousands of tokens (vs ~400 Alpha ones) — the
+  // limit must clear it or the engine/runner token maps silently truncate.
+  getTokens() { return this.#json('/tokens?limit=20000'); }
   getEngineSettings() { return this.#json('/engine/settings'); }
   claimMarker(id) { return this.#post(`/markers/${id}/claim`); }
   recordTrade(trade) { return this.#post('/trades', trade); }

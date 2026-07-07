@@ -86,6 +86,7 @@ export function normalizeUniverse(payload) {
     }
     tokens.push({
       symbol: t.symbol, name: t.name ?? t.symbol,
+      chain: t.chain ?? null,                       // chain slug passthrough (M3)
       volume24h: t.volume24h ?? 0, priceChange24h: t.priceChange24h ?? 0,
       offset, bars, flow: { buy, sell, net, trades },
     });
@@ -101,6 +102,7 @@ export function createFinderCtx({ token, params, state, log }) {
   });
   ctx.token = {
     symbol: token.symbol, name: token.name,
+    chain: token.chain ?? null,
     volume24h: token.volume24h, priceChange24h: token.priceChange24h,
   };
   return ctx;

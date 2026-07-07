@@ -31,6 +31,9 @@ function loadPrivateKey() {
 
 // HAVEN_API_URL is the cloud name; API_URL kept as the legacy/solo alias.
 const API_URL = process.env.HAVEN_API_URL || process.env.API_URL || 'http://localhost:8000';
+// AD-D7: set RPC_URL in .env to the paid endpoint; the public BSC dataseed
+// node stays as the zero-config fallback. (A public RPC node is blockchain
+// infrastructure, not market data — no licensing concern.)
 const RPC_URL = process.env.RPC_URL || 'https://bsc-dataseed.binance.org';
 const POLL_MS = parseInt(process.env.POLL_MS || '3000', 10);
 // The connection key from the web app's "Connect your engine" screen. Sent as
@@ -42,6 +45,9 @@ const config = {
   slippagePct: process.env.SLIPPAGE_PCT || '0.5',
   quickBuyPercent: parseFloat(process.env.QUICK_BUY_PERCENT || '5'),
   quickSellPercent: parseFloat(process.env.QUICK_SELL_PERCENT || '100'),
+  // Stale-price guard (DATA-ROADMAP M3): skip marker evaluation for a token
+  // whose collector price is older than this — never trade a frozen price.
+  stalePriceMs: parseInt(process.env.STALE_PRICE_MS || '180000', 10),
 };
 
 // ── Wiring ──────────────────────────────────────────────────────────────────

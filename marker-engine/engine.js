@@ -29,6 +29,8 @@ export class MarkerEngine {
     this.cooldownUntil = new Map(); // marker id -> earliest next try (ms)
     this.tokenAddrMap = new Map();  // SYMBOL -> checksummed contract address
     this.tickerMap = new Map();     // SYMBOL -> display ticker
+    this.staleWarnAt = new Map();   // symbol -> next stale-price warning (ms)
+    this.apiBnbPrice = 0;           // fresh WBNB_bsc price from the overview
     this.lastTokenRefresh = 0;
     this.lastWatchCount = -1;
     this.settings = {               // refreshed each tick; safe defaults if API omits
@@ -44,14 +46,19 @@ export class MarkerEngine {
     const tokens = await this.api.getTokens();
     for (const t of tokens) {
       if (!t.symbol || !t.contract_address || !ethers.isAddress(t.contract_address)) continue;
-      // Alpha tokens exist on several chains; an EVM-looking address on Base or
-      // Ethereum would pass isAddress but point at the wrong (or no) contract on
-      // BSC. This engine only trades BSC — skip everything else.
-      if (t.chain_id && t.chain_id !== '56') continue;
+      // Tokens exist on several chains; an EVM-looking address on Base or
+      // Ethereum would pass isAddress but point at the wrong (or no) contract
+      // on BSC. This engine only trades BSC (AD-D8) — skip everything else.
+      // chain_id is 'bsc' on new-format rows, legacy Binance rows used '56'.
+      if (t.chain_id && t.chain_id !== 'bsc' && t.chain_id !== '56') continue;
+      if (t.status && t.status !== 'active') continue;   // retired/staged/blacklisted
       this.tokenAddrMap.set(t.symbol, ethers.getAddress(t.contract_address));
+      // Display name: new-format rows carry a clean display_symbol; legacy
+      // rows fall back to the name-derived ticker.
       const name = t.name || '';
       const i = name.indexOf(' (');
-      this.tickerMap.set(t.symbol, (i > 0 ? name.slice(0, i) : name).trim() || t.symbol);
+      this.tickerMap.set(t.symbol,
+        t.display_symbol || (i > 0 ? name.slice(0, i) : name).trim() || t.symbol);
     }
     this.lastTokenRefresh = Date.now();
   }
@@ -67,7 +74,14 @@ export class MarkerEngine {
 
     const markers = (overview.open_markers || []).filter(m => m.active);
     const prices = overview.token_prices || {};
+    const priceUpdated = overview.price_updated || {};
     this.openMarkers = markers; // snapshot for OCO sibling lookup at fill time
+
+    // Fresh WBNB/USD from our own collector (AD-D7) — only trusted when it
+    // passes the same staleness bar as everything else; executeSwap falls
+    // back to the on-chain router when this is 0.
+    this.apiBnbPrice = this.isStale('WBNB_bsc', prices, priceUpdated)
+      ? 0 : (prices['WBNB_bsc'] || 0);
 
     // Forget state for markers that are gone (filled, deleted, deactivated)
     const activeIds = new Set(markers.map(m => m.id));
@@ -98,6 +112,15 @@ export class MarkerEngine {
         }
         continue;
       }
+      // Stale-price guard (DATA-ROADMAP M3, owner decision M0.1): a price the
+      // collector hasn't refreshed within stalePriceMs must never drive an
+      // execution — data outage = loud log + safe pause, not a trade against
+      // a frozen price. Skipped immediate markers age out via the TTL above.
+      if (price > 0 && this.isStale(marker.symbol, prices, priceUpdated)) {
+        this.warnStale(marker.symbol, priceUpdated[marker.symbol]);
+        continue;
+      }
+
       if (immediate === 'fire') {
         if (!(price > 0)) continue;   // sizing/impact need a live price; TTL cleans up
         if (Date.now() < (this.cooldownUntil.get(marker.id) || 0)) continue;
@@ -122,6 +145,29 @@ export class MarkerEngine {
     for (const fire of fired) {
       executedThisTick += await this.handleCross(fire, dailyCount + executedThisTick) ? 1 : 0;
     }
+  }
+
+  // True when the collector's last_updated for the symbol is older than the
+  // configured threshold. Symbols with no freshness info (old API, or a price
+  // that never came from the collector) are NOT considered stale — the guard
+  // only acts on positive evidence of a frozen feed.
+  isStale(symbol, prices, priceUpdated) {
+    if (!(prices[symbol] > 0)) return false;
+    const updatedAt = priceUpdated[symbol];
+    if (!updatedAt) return false;
+    return Date.now() - updatedAt > (this.config.stalePriceMs || 180_000);
+  }
+
+  warnStale(symbol, updatedAt) {
+    const now = Date.now();
+    if (now < (this.staleWarnAt.get(symbol) || 0)) return;
+    this.staleWarnAt.set(symbol, now + 60_000);
+    const ageSec = Math.round((now - updatedAt) / 1000);
+    const limitSec = Math.round((this.config.stalePriceMs || 180_000) / 1000);
+    this.log('ERROR',
+      `STALE PRICE: ${this.sym(symbol)} last collector update ${ageSec}s ago ` +
+      `(limit ${limitSec}s) — marker evaluation for this token is PAUSED until data resumes.`,
+      { symbol });
   }
 
   softSkip(marker, message) {
@@ -215,7 +261,7 @@ export class MarkerEngine {
     const metaUsd = parseFloat(meta.usd) || 0;
     const metaAmount = parseFloat(meta.amount) || 0;
 
-    const bnbPrice = await getBnbPriceUsd(this.provider);
+    const bnbPrice = await getBnbPriceUsd(this.provider, this.apiBnbPrice);
 
     let decimalsIn = 18, balance;
     if (isBuy) {

@@ -50,7 +50,11 @@ export class StrategyRunner {
     this.lastListFetch = 0;
     this.lastHeartbeat = 0;
     this.lastTokensFetch = 0;
-    this.tradeable = null;           // Set(symbol) with a contract address; null until fetched
+    // Slot-binding filters (AD-D8): DRY strategies may bind any chain's token
+    // (paper needs no wallet); LIVE slots bind BSC tokens only — the engine
+    // can't execute anywhere else. Both null until first fetched.
+    this.tradeable = null;           // dry: Set(symbol) with a contract address
+    this.tradeableLive = null;       // live: same, restricted to chain 'bsc'
   }
 
   // Called from the daemon's main loop, alongside engine.tick().
@@ -79,8 +83,13 @@ export class StrategyRunner {
         this.lastTokensFetch = now;
         try {
           const tokens = await this.api.getTokens();
-          this.tradeable = new Set(tokens.filter(t => t.contract_address).map(t => t.symbol));
-        } catch { /* keep the previous set */ }
+          const withAddr = tokens.filter(t => t.contract_address);
+          this.tradeable = new Set(withAddr.map(t => t.symbol));
+          // chain_id is 'bsc' on new-format rows; legacy Binance rows used '56'.
+          this.tradeableLive = new Set(withAddr
+            .filter(t => !t.chain_id || t.chain_id === 'bsc' || t.chain_id === '56')
+            .map(t => t.symbol));
+        } catch { /* keep the previous sets */ }
       }
       if (this.finderHub) {
         try {
@@ -279,7 +288,9 @@ export class StrategyRunner {
       }));
       const next = chooseBinding(view, st.ranking, {
         switchMarginPct: r.switchMarginPct,
-        tradeable: this.tradeable,
+        // LIVE slots may only bind what the engine can execute: BSC (AD-D8).
+        tradeable: r.mode === 'live' ? (this.tradeableLive ?? this.tradeable)
+                                     : this.tradeable,
       });
       const rankOf = new Map(st.ranking.map((x, i) => [x.symbol, i + 1]));
       for (let k = 0; k < r.slots.length; k++) {

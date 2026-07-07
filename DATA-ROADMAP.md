@@ -219,26 +219,39 @@ deviations recorded above (bootstrap deep-scan deferred to M5 pending PAYG;
 remap dry-run review moved to M4 prep). Both run alongside the old collector
 now — the new feed is live data the old stack simply doesn't read yet.
 
-### M3 🧠 — API cutover (/klines, /universe, engine price)
+### M3 🧠 — API cutover (/klines, /universe, engine price) ✅ 2026-07-07
 
-- [ ] `/klines` rewritten per AD-D9 (serve from buckets, same shape, `end_ms`,
-      `include_open=1`); Binance import path unused. Verify the strategy runner and
-      the workbench backtester against it (parity: same bars in = same fills out).
-- [ ] `/universe` + SDK `normalizeUniverse`: chain passthrough + `chains` filter
-      param (payload shape otherwise unchanged; both workbench tabs + FinderHub
-      inherit it via the SDK — never hand-parse, per the existing contract).
-- [ ] Engine: `getBnbPriceUsd` re-pointed per AD-D7 (API primary, on-chain router
-      fallback, DexScreener deleted); `RPC_URL` env'd; token map from `/tokens`
-      handles slugs + `status`/chain filtering; tradeable filter per AD-D8; LIVE-arm
-      validation message for non-BSC symbols.
-- [ ] **Stale-price guard** (M0.1 owner decision): the engine skips cross evaluation
-      for a marker when its token's `last_updated` is older than a threshold
-      (default 3 min, env) and logs loudly — data outage = safe pause + alert,
-      never trades against frozen prices. (Pure sizing/claim/TTL logic untouched.)
-- [ ] Engine + SDK test suites green (32 + 45, incl. both parity gates).
-- **Done when:** with the NEW collector feeding, a chart loads candles for a slug
-  token via /klines, the workbench backtests it, and the engine (dry) sizes a trade
-  using the API's WBNB price. Old collector still running for the old symbols.
+- [x] `/klines` rewritten per AD-D9 (served from our buckets via the shared
+      `_grouped_ohlc` resampler, same Binance array shape, `end_ms`,
+      `include_open=1` forming bar from 1m buckets + live ticker, gaps
+      forward-filled flat like Binance's continuous series, 15m archive merged
+      for ≥15m intervals); Binance import removed from server.py. Verified live
+      on :8001: slug + legacy + un-prefixed symbols, end_ms jump-back, 15m
+      merge. Parity: workbench-style and runner-style parsing produce an
+      identical bar series; runBacktest over it is deterministic.
+- [x] `/universe` + SDK `normalizeUniverse`: `chain` on every token entry
+      (legacy numeric ids mapped to slugs), `chains` filter param,
+      `ctx.token.chain` in finder ctxs. Verified: `chains=bsc` filters 351/…,
+      unfiltered mix shows bsc/ethereum/base + legacy ids.
+- [x] Engine: `getBnbPriceUsd(provider, apiPriceUsd)` — API `WBNB_bsc` primary
+      (fed each tick from /dashboard/overview, only when FRESH), on-chain
+      PancakeSwap router fallback, DexScreener deleted; `RPC_URL` written to
+      marker-engine/.env (Alchemy BSC; public dataseed = in-code fallback);
+      token map accepts chain_id 'bsc'+'56', skips non-active status, prefers
+      display_symbol, getTokens limit raised to 20k (universe > old 2k cap);
+      runner keeps TWO tradeable sets — dry = any chain, live = BSC only
+      (AD-D8) — chooseBinding itself untouched; LIVE-arm on a non-BSC symbol →
+      422 with a human-readable message (verified live).
+- [x] **Stale-price guard**: `/dashboard/overview` now returns `price_updated`
+      (symbol → last_updated ms, additive field); the engine skips ALL marker
+      evaluation for a token whose price is older than `STALE_PRICE_MS`
+      (default 180s) with a loud once-per-minute ERROR log; skipped immediate
+      markers age out via the existing TTL. WBNB API price passes the same
+      freshness bar before it may size trades. Pure sizing/claim/TTL untouched.
+- [x] Engine + SDK test suites green (32 + 45, incl. both parity gates).
+- **Done when** ✔: NEW collector feeding, /klines serves slug candles
+  (WBNB_bsc verified), SDK backtests them, sizeTrade priced a $5 buy from the
+  API's WBNB price (0.6s-old ticker). Old collector still running in parallel.
 
 ### M4 🧠 — CUTOVER + Binance removal (⏰ must land before EOD 2026-07-07)
 

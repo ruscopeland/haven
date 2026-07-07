@@ -134,27 +134,18 @@ export async function parseSwapFill(receipt, tokenAddress, tokenDecimals, wallet
   return fill;
 }
 
-// ── BNB/USD price (60s cache): DexScreener, PancakeSwap on-chain fallback ──
+// ── BNB/USD price (60s cache) — DATA-ROADMAP AD-D7 ─────────────────────────
+// Primary: OUR collector's WBNB_bsc price, passed in by the engine from the
+// /dashboard/overview it already polls (one price source with the rest of the
+// stack; the engine only passes it when it is FRESH per the stale-price
+// guard). Fallback: the PancakeSwap router on-chain. No third-party feeds.
 let bnbCache = { price: 0, ts: 0 };
-export async function getBnbPriceUsd(provider) {
+export async function getBnbPriceUsd(provider, apiPriceUsd = 0) {
+  if (apiPriceUsd > 0) {
+    bnbCache = { price: apiPriceUsd, ts: Date.now() };
+    return apiPriceUsd;
+  }
   if (bnbCache.price > 0 && Date.now() - bnbCache.ts < 60_000) return bnbCache.price;
-
-  try {
-    const res = await fetch(`https://api.dexscreener.com/latest/dex/tokens/${WBNB}`);
-    if (res.ok) {
-      const data = await res.json();
-      let best = null;
-      for (const p of data.pairs || []) {
-        if ((p.baseToken?.address || '').toLowerCase() !== WBNB) continue;
-        const liq = parseFloat(p.liquidity?.usd || 0);
-        if (!best || liq > best.liq) best = { liq, price: parseFloat(p.priceUsd || 0) };
-      }
-      if (best && best.price > 0) {
-        bnbCache = { price: best.price, ts: Date.now() };
-        return best.price;
-      }
-    }
-  } catch { /* try on-chain */ }
 
   try {
     const router = new ethers.Contract(PANCAKE_ROUTER,
