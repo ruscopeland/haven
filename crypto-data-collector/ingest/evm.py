@@ -19,6 +19,10 @@ TOPIC_V3_POOL_CREATED = "0x783cca1c0412dd0d695e784568c96da2e9c22ff989357a2e8b1d9
 TOPIC_V3_SWAP        = "0xc42079f94a6350d7e6235f29174924f928cc2ac818eb64fed8004e115fbcca67"
 
 # ── ERC-20 / factory call selectors ──────────────────────────────────────────
+SEL_ALL_PAIRS_LENGTH = "0x574f2ba3"   # v2 factory: allPairsLength()
+SEL_ALL_PAIRS    = "0x1e3dd18b"       # v2 factory: allPairs(uint256)
+SEL_TOKEN0       = "0x0dfe1681"
+SEL_TOKEN1       = "0xd21220a7"
 SEL_SYMBOL       = "0x95d89b41"
 SEL_NAME         = "0x06fdde03"
 SEL_DECIMALS     = "0x313ce567"
@@ -193,6 +197,10 @@ def calldata_balance_of(owner: str) -> str:
 
 def calldata_v2_get_pair(a: str, b: str) -> str:
     return SEL_V2_GET_PAIR + pad_address(a) + pad_address(b)
+
+
+def calldata_all_pairs(i: int) -> str:
+    return SEL_ALL_PAIRS + hex(i)[2:].rjust(64, "0")
 
 
 def calldata_v3_get_pool(a: str, b: str, fee: int) -> str:

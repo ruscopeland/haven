@@ -96,6 +96,17 @@ class EvmIngester:
         if self._native_slug and self.universe.native_usd > 0:
             self.store.set_live_price(self._native_slug, self.universe.native_usd)
 
+        # Full-universe deep scan runs in the background alongside live
+        # ingestion — new pools go live batch by batch as it walks the factory.
+        async def deep_scan_wrapper():
+            try:
+                await self.universe.deep_scan()
+            except Exception as e:
+                log(f"[{self.chain}] deep scan failed: {e} — resumes on next "
+                    f"restart from its saved cursor", "ERROR")
+                write_debug_log("ERROR", f"[{self.chain}] deep scan failed: {e}")
+        self._deep_scan_task = asyncio.create_task(deep_scan_wrapper())
+
         head = await self.rpc.block_number()
         target_start = head - self.cfg["finality_lag"]
         saved = self._load_last_block()

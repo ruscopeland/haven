@@ -41,7 +41,7 @@ class RpcClient:
         self._id += 1
         return self._id
 
-    async def call(self, method: str, params: list, retries: int = 3):
+    async def call(self, method: str, params: list, retries: int = 5):
         """Single JSON-RPC call with exponential backoff on transport errors."""
         payload = {"jsonrpc": "2.0", "id": self._next_id(),
                    "method": method, "params": params}
@@ -64,7 +64,7 @@ class RpcClient:
                 return body.get("result")
             except RpcError as e:
                 if e.code == 429 and attempt < retries - 1:
-                    await asyncio.sleep(1.0 * (2 ** attempt))
+                    await asyncio.sleep(2.0 * (2 ** attempt))  # 2s → 4s → 8s…
                     last_err = e
                     continue
                 raise

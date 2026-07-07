@@ -190,9 +190,15 @@ a new BSC pool live. Findings that changed the design, recorded here:
 - **Alchemy free tier caps eth_getLogs at 10 blocks** → adaptive range
   stepping (learns the cap, regrows hourly). Live polling fits; the 30-day
   bootstrap factory scan does NOT → runs on a public bulk-scan lane instead.
-- **publicnode gates archive getLogs** → the 30-day backscan currently skips
-  (WARNING); universe = legacy Alpha seed (all 309 BSC tokens probed) +
-  forward watch. Re-run the deep scan when Alchemy PAYG is enabled (M5).
+- **publicnode gates archive getLogs** → the event-based backscan is dead, BUT
+  the real answer needed no archive at all: **v2 factories are enumerable by
+  index (`allPairs(i)`)** — a background deep scan now walks EVERY pair on
+  every factory (resumable cursor, throttle-proof, one chain at a time),
+  keeps quote-paired pools ≥ the floor, probes v3 pools per surviving token.
+  Owner decision 2026-07-07: **breadth over latency** — floors lowered to
+  $10k (bsc/base), cadence bar-aligned (bsc 15s — live TP/SL rides this
+  price — base 30s / eth 60s). BSC passed 1,000 watched pools while the scan
+  was still in its first 2% of PancakeSwap's 2.6M pairs. Nothing is deferred.
 - **Credit burn — RE-TUNED to the owner's ≤$49 budget (2026-07-07):** Alchemy
   has NO mid-tier plan (free 30M CU → PAYG $0.45/M), and getLogs (75 CU) is
   88% of every poll, so cost = poll cadence, linearly. Defaults now: BSC 4s /

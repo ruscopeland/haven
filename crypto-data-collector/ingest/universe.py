@@ -15,7 +15,7 @@ import re
 import time
 
 from database.db import SessionLocal
-from database.models import Token, Pool
+from database.models import Token, Pool, EngineSetting
 
 from . import evm
 from .chains import CHAINS, LEGACY_CHAIN_ID_MAP, MULTICALL3, STAGED
@@ -25,6 +25,10 @@ from .store import log, now_ms, write_debug_log
 EVM_ADDR_RE = re.compile(r"^0x[0-9a-fA-F]{40}$")
 SEL_GET_RESERVES = "0x0902f1ac"
 SEL_SLOT0 = "0x3850c7bd"
+
+# One deep scan at a time across all chains — they share one Alchemy app and
+# its rate budget. BSC's ingester starts first, so the money chain scans first.
+_DEEP_SCAN_LOCK = asyncio.Lock()
 
 
 class UniverseManager:
@@ -56,10 +60,10 @@ class UniverseManager:
         return 1.0 if info[2] else self.native_usd
 
     async def _multicall(self, calls: list[tuple[str, str]]) -> list[tuple[bool, str]]:
-        """aggregate3 in chunks of 300 targets."""
+        """aggregate3 in chunks of 150 targets (free-tier CUPS-friendly)."""
         out: list[tuple[bool, str]] = []
-        for i in range(0, len(calls), 300):
-            chunk = calls[i:i + 300]
+        for i in range(0, len(calls), 150):
+            chunk = calls[i:i + 150]
             data = evm.encode_aggregate3(chunk)
             res = await self.rpc.eth_call(MULTICALL3, data)
             out.extend(evm.decode_aggregate3(res, len(chunk)))
@@ -414,6 +418,141 @@ class UniverseManager:
                 }
         finally:
             db.close()
+
+    # ── Full-universe deep scan (no archive access needed) ──────────────────
+    # v2 factories expose allPairs(i)/allPairsLength — EVERY pair ever created
+    # is enumerable by plain eth_calls. This walks the whole factory, keeps
+    # quote-paired pools above the floor, and probes v3 pools for each
+    # surviving token. Resumable (cursor persisted per factory), paced to
+    # coexist with live polling, cheap (multicalls = flat-rate eth_calls).
+
+    def _kv(self, db, key):
+        return (db.query(EngineSetting)
+                .filter_by(user_id="system", key=key).first())
+
+    def _kv_get(self, key) -> str | None:
+        db = SessionLocal()
+        try:
+            row = self._kv(db, key)
+            return row.value if row else None
+        finally:
+            db.close()
+
+    def _kv_set(self, key, value: str):
+        db = SessionLocal()
+        try:
+            row = self._kv(db, key)
+            if row:
+                row.value = value
+            else:
+                db.add(EngineSetting(user_id="system", key=key, value=value))
+            db.commit()
+        except Exception:
+            db.rollback()
+        finally:
+            db.close()
+
+    async def deep_scan(self):
+        # ONE chain scans at a time (shared Alchemy app, shared rate budget) —
+        # BSC's ingester is started first so the money chain scans first.
+        async with _DEEP_SCAN_LOCK:
+            await self._deep_scan_inner()
+
+    async def _deep_scan_inner(self):
+        floor = self.cfg["liquidity_floor_usd"]
+        for f in (f for f in self.cfg["factories"] if f["kind"] == "v2"):
+            cursor_key = f"deep_scan_{self.chain}_{f['address'][:10]}"
+            state = self._kv_get(cursor_key)
+            if state == "done":
+                continue
+            cursor = int(state) if state else 0
+            total_hex = await self.rpc.eth_call(f["address"], evm.SEL_ALL_PAIRS_LENGTH)
+            total = evm.uint(total_hex, 0)
+            log(f"[{self.chain}] deep scan {f['dex']}: {total} pairs total, "
+                f"resuming at {cursor}")
+            batch_tokens: set[str] = set()
+            candidates: list[tuple] = []
+            processed_since_probe = 0
+            while cursor < total:
+                idxs = list(range(cursor, min(cursor + 600, total)))
+                try:
+                    pair_res = await self._multicall(
+                        [(f["address"], evm.calldata_all_pairs(i)) for i in idxs])
+                    pairs = [evm.word_address(r, 0) for ok, r in pair_res if ok]
+                    t01 = await self._multicall(
+                        [c for p in pairs for c in
+                         ((p, evm.SEL_TOKEN0), (p, evm.SEL_TOKEN1))])
+                    quote_paired = []
+                    for j, p in enumerate(pairs):
+                        ok0, r0 = t01[j * 2]
+                        ok1, r1 = t01[j * 2 + 1]
+                        if not (ok0 and ok1):
+                            continue
+                        t0, t1 = evm.word_address(r0, 0), evm.word_address(r1, 0)
+                        if (t0 in self.quotes) == (t1 in self.quotes):
+                            continue
+                        token = t1 if t0 in self.quotes else t0
+                        quote = t0 if t0 in self.quotes else t1
+                        quote_paired.append((p, token, quote))
+                    if quote_paired:
+                        bals = await self._multicall(
+                            [(q, evm.calldata_balance_of(p)) for p, _t, q in quote_paired])
+                        for (p, token, quote), (ok, r) in zip(quote_paired, bals):
+                            if not ok:
+                                continue
+                            liq = 2 * (evm.uint(r, 0) / 10 ** self.quotes[quote][1]) \
+                                * self.quote_usd(quote)
+                            if liq >= floor:
+                                candidates.append((p, token, quote, f["dex"], "v2", 0))
+                                batch_tokens.add(token)
+                except RpcError as e:
+                    # Throttled/transient: wait it out and retry this window —
+                    # the scan must survive rate limits, not die on them.
+                    log(f"[{self.chain}] deep scan throttled ({e}) — pausing 30s",
+                        "WARNING")
+                    await asyncio.sleep(30)
+                    continue
+                cursor += len(idxs)
+                processed_since_probe += len(idxs)
+                self._kv_set(cursor_key, str(cursor))
+                if processed_since_probe >= 30_000 or cursor >= total:
+                    processed_since_probe = 0
+                    if candidates:
+                        await self._probe_and_add(candidates)
+                        await self._probe_v3_for_tokens(sorted(batch_tokens))
+                        self._load_ctx_from_db()
+                        candidates, batch_tokens = [], set()
+                    log(f"[{self.chain}] deep scan {f['dex']}: {cursor}/{total} "
+                        f"({len(self.pool_ctx)} pools watched)")
+                await asyncio.sleep(0.8)   # pace under the free tier's throughput cap
+            self._kv_set(cursor_key, "done")
+            log(f"[{self.chain}] deep scan {f['dex']} COMPLETE — "
+                f"{len(self.pool_ctx)} pools watched")
+            write_debug_log("INFO", f"[{self.chain}] deep scan {f['dex']} complete: "
+                                    f"{len(self.pool_ctx)} pools watched")
+
+    async def _probe_v3_for_tokens(self, tokens: list[str]):
+        """getPool(token, quote, fee) across v3 factories for known-good tokens."""
+        v3 = [f for f in self.cfg["factories"] if f["kind"] == "v3"]
+        if not v3 or not tokens:
+            return
+        calls, meta = [], []
+        for f in v3:
+            for a in tokens:
+                for q in self.quotes:
+                    for fee in self.cfg["v3_fee_tiers"]:
+                        calls.append((f["address"], evm.calldata_v3_get_pool(a, q, fee)))
+                        meta.append((a, q, f["dex"], fee))
+        results = await self._multicall(calls)
+        cands = []
+        for (a, q, dex, fee), (ok, r) in zip(meta, results):
+            if not ok:
+                continue
+            pool = evm.word_address(r, 0)
+            if pool != evm.ZERO_ADDRESS:
+                cands.append((pool, a, q, dex, "v3", fee))
+        if cands:
+            await self._probe_and_add(cands)
 
     # ── Live additions + periodic sweep ──────────────────────────────────────
 

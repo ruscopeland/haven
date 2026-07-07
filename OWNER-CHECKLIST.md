@@ -62,13 +62,15 @@ This replaces Binance as the raw data source — one account covers all four cha
    **BNB Smart Chain**, **Ethereum**, **Base**, **Solana** (Mainnet each).
 3. Copy the app's **API key** (one string works across the networks). **COLLECT #2.**
 4. Don't add a card until I give you a number off their dashboard (~24h of data).
-   **Cost commitment (re-tuned 2026-07-07): ≤ $49/month at the default settings** —
+   **Cost commitment (final shape, 2026-07-07): ≤ $49/month, breadth-first.**
    Alchemy has no mid-tier plan (free 30M units, then $0.45/million), and the bill
-   is simply how often we poll. Defaults: BSC every 4s (the money chain), Base 10s
-   and Ethereum 12s (paper-trading chains — cost over latency). The dial is yours
-   via env knobs: polling at 15/30/30 seconds fits the **free tier ($0)** with
-   slower prices; 3s BSC costs ~$10/mo more. Every option is still 4–10× cheaper
-   than the $199–499/mo vendor route, with zero licensing exposure.
+   is per POLL, not per token — so the money went into breadth: the collector
+   enumerates EVERY pair on the factories (thousands of tokens, $10k liquidity
+   floor) and polls BSC every 15s (live TP/SL fire off this price; 4 updates per
+   1-minute bar), Base 30s / Ethereum 60s (paper-only chains, bar-cadence).
+   Env knobs (`POLL_SECONDS_<CHAIN>`) move any of it. Exact bill confirmed off
+   the Alchemy dashboard after a day; still 4–10× under the $199–499/mo vendor
+   route, zero licensing exposure.
 
 ## Step 3 — UptimeRobot: your error alarm (~5 min, free)
 

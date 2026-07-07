@@ -69,23 +69,23 @@ CHAINS = {
              "address": "0x0bfbcf9fa4f9c56b0f40a671ad40e0805a091865"},
         ],
         "v3_fee_tiers": [100, 500, 2500, 10000],
-        # Poll cadence IS the Alchemy bill: each poll ≈ 100 CU (getLogs=75 is
-        # 88% of it), so monthly cost ≈ (86400/poll_s)*100*30/1M*$0.45 per
-        # chain. 4s/10s/12s across bsc/base/eth ≈ 109M CU ≈ $49/mo — the
-        # owner's budget ceiling. Override per chain with POLL_SECONDS_<CHAIN>
-        # (e.g. 15/30/30 fits the FREE 30M tier at ~15-30s price staleness;
-        # 3s BSC costs ~$10/mo more). Live-trade freshness note: worst case =
-        # poll + finality lag ≈ 10s behind tip at defaults; the engine
-        # re-quotes at execution and the impact guard rejects stale-price
-        # fires, so this is latency, not risk.
-        "poll_seconds": 4.0,
+        # Cost model (owner decision 2026-07-07: BREADTH over latency, ≤$49/mo):
+        # the Alchemy bill is per POLL, not per token — one getLogs (75 CU)
+        # covers 800 pools; thousands of pools just add one call per 800.
+        # Monthly ≈ (86400/poll_s) × (10 + 75×ceil(pools/800) + 16) × 30/1M
+        # × $0.45 per chain. At 15s/30s/60s (bsc/base/eth) with ~4–6k pools
+        # total: ≈ 100M CU ≈ $45/mo. Override with POLL_SECONDS_<CHAIN>.
+        # BSC stays the fastest because live TP/SL protection fires off this
+        # price (still 4 updates per 1m bar); strategies act on CLOSED bars
+        # and don't care. POLL_SECONDS_BSC=60 shaves ~$20/mo if wanted.
+        "poll_seconds": 15.0,
         # 8 blocks ≈ 6s: covers reorg depth AND Alchemy's load-balanced fleet
         # skew (their header nodes lag their tip nodes by a few blocks; at
         # lag=3 "block not yet available" fired every minute or two).
         "finality_lag": 8,
         "block_time": 0.75,         # avg seconds/block (timestamp interpolation)
-        "liquidity_floor_usd": 25_000.0,
-        "recent_pool_scan_days": 30,  # bootstrap factory-scan window (deep scan = M5)
+        "liquidity_floor_usd": 10_000.0,   # breadth-first (M7 rug filter gates quality)
+        "recent_pool_scan_days": 30,  # bootstrap factory-scan window (scan lane)
     },
     "ethereum": {
         "name": "Ethereum",
@@ -109,10 +109,10 @@ CHAINS = {
              "address": "0x1f98431c8ad98523631ae4a59f267346ea31f984"},
         ],
         "v3_fee_tiers": [100, 500, 3000, 10000],
-        "poll_seconds": 12.0,   # paper-only chain (AD-D8) — cost over latency
+        "poll_seconds": 60.0,   # paper-only chain (AD-D8) — bar-cadence is enough
         "finality_lag": 2,
         "block_time": 12.0,
-        "liquidity_floor_usd": 50_000.0,   # ETH gas makes small pools untradeable anyway
+        "liquidity_floor_usd": 25_000.0,   # ETH gas makes tiny pools untradeable anyway
         "recent_pool_scan_days": 30,
     },
     "base": {
@@ -137,10 +137,10 @@ CHAINS = {
             # Aerodrome uses a non-Uniswap event layout — config TODO for M5.
         ],
         "v3_fee_tiers": [100, 500, 3000, 10000],
-        "poll_seconds": 10.0,   # paper-only chain (AD-D8) — cost over latency
+        "poll_seconds": 30.0,   # paper-only chain (AD-D8) — bar-cadence is enough
         "finality_lag": 5,          # same provider-skew headroom as BSC
         "block_time": 2.0,
-        "liquidity_floor_usd": 25_000.0,
+        "liquidity_floor_usd": 10_000.0,   # breadth-first
         "recent_pool_scan_days": 30,
     },
     # Solana lands in DATA-ROADMAP M6 with its own (non-EVM) ingester module;
