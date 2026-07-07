@@ -61,9 +61,14 @@ This replaces Binance as the raw data source — one account covers all four cha
 2. **Create app** → name it `haven-data` → on the app's **Networks** setup, enable:
    **BNB Smart Chain**, **Ethereum**, **Base**, **Solana** (Mainnet each).
 3. Copy the app's **API key** (one string works across the networks). **COLLECT #2.**
-4. Don't add a card yet. My ingester logs its real usage in week one; if it exceeds
-   the free 30M compute units/month I'll tell you the exact number and the plan to
-   click (budget expectation: $0–50/mo, worst case ~$120 before tuning).
+4. Don't add a card until I give you a number off their dashboard (~24h of data).
+   **Cost commitment (re-tuned 2026-07-07): ≤ $49/month at the default settings** —
+   Alchemy has no mid-tier plan (free 30M units, then $0.45/million), and the bill
+   is simply how often we poll. Defaults: BSC every 4s (the money chain), Base 10s
+   and Ethereum 12s (paper-trading chains — cost over latency). The dial is yours
+   via env knobs: polling at 15/30/30 seconds fits the **free tier ($0)** with
+   slower prices; 3s BSC costs ~$10/mo more. Every option is still 4–10× cheaper
+   than the $199–499/mo vendor route, with zero licensing exposure.
 
 ## Step 3 — UptimeRobot: your error alarm (~5 min, free)
 

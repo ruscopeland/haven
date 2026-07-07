@@ -19,7 +19,7 @@ from database.db import SessionLocal
 from database.models import EngineSetting
 
 from . import evm
-from .chains import CHAINS, rpc_url
+from .chains import CHAINS, poll_seconds, rpc_url
 from .rpc import RpcClient, RpcError
 from .store import BucketStore, log, now_ms, write_debug_log
 from .universe import UniverseManager
@@ -135,7 +135,7 @@ class EvmIngester:
                 log(f"[{self.chain}] poll error: {e} — retrying", "ERROR")
                 write_debug_log("ERROR", f"[{self.chain}] poll error: {e}")
                 await asyncio.sleep(5)
-            await asyncio.sleep(self.cfg["poll_seconds"])
+            await asyncio.sleep(poll_seconds(self.chain))
 
     async def _process_range(self, from_block: int, to_block: int):
         total = to_block - from_block + 1

@@ -193,10 +193,18 @@ a new BSC pool live. Findings that changed the design, recorded here:
 - **publicnode gates archive getLogs** → the 30-day backscan currently skips
   (WARNING); universe = legacy Alpha seed (all 309 BSC tokens probed) +
   forward watch. Re-run the deep scan when Alchemy PAYG is enabled (M5).
-- **Credit burn**: ~3 RPC calls / 2s / chain at current cadence ≈ beyond the
-  free 30M CU/mo within days → owner adds the PAYG card when the Alchemy
-  dashboard confirms (~$50–100/mo expected; cadence knobs exist if it reads
-  high). Hourly usage lines land in debug_logs.
+- **Credit burn — RE-TUNED to the owner's ≤$49 budget (2026-07-07):** Alchemy
+  has NO mid-tier plan (free 30M CU → PAYG $0.45/M), and getLogs (75 CU) is
+  88% of every poll, so cost = poll cadence, linearly. Defaults now: BSC 4s /
+  Base 10s / ETH 12s ≈ ~109M CU/mo ≈ **$45–49/mo**; `POLL_SECONDS_<CHAIN>`
+  env overrides; 15/30/30 fits the FREE tier at ~15–30s staleness. Confirm
+  the real number from the Alchemy dashboard + hourly debug_logs after 24h.
+- **Parallel-run hazard burned in (2026-07-07):** the old collector's token
+  sync DELETED all new-format token rows — its guard patch only applies
+  after that process restarts. Restarted with the patch (verified "-0
+  removed"); bootstrap now repairs orphaned pools automatically. Until M4,
+  if the old collector window is ever relaunched from stale code, the
+  repair self-heals on the next new-collector restart.
 - v3 prices MUST come from slot0/swap sqrtPrice (balance ratios lie);
   finality lag 8 (bsc)/5 (base) absorbs load-balanced provider skew.
 

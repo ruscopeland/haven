@@ -69,7 +69,16 @@ CHAINS = {
              "address": "0x0bfbcf9fa4f9c56b0f40a671ad40e0805a091865"},
         ],
         "v3_fee_tiers": [100, 500, 2500, 10000],
-        "poll_seconds": 2.0,
+        # Poll cadence IS the Alchemy bill: each poll ≈ 100 CU (getLogs=75 is
+        # 88% of it), so monthly cost ≈ (86400/poll_s)*100*30/1M*$0.45 per
+        # chain. 4s/10s/12s across bsc/base/eth ≈ 109M CU ≈ $49/mo — the
+        # owner's budget ceiling. Override per chain with POLL_SECONDS_<CHAIN>
+        # (e.g. 15/30/30 fits the FREE 30M tier at ~15-30s price staleness;
+        # 3s BSC costs ~$10/mo more). Live-trade freshness note: worst case =
+        # poll + finality lag ≈ 10s behind tip at defaults; the engine
+        # re-quotes at execution and the impact guard rejects stale-price
+        # fires, so this is latency, not risk.
+        "poll_seconds": 4.0,
         # 8 blocks ≈ 6s: covers reorg depth AND Alchemy's load-balanced fleet
         # skew (their header nodes lag their tip nodes by a few blocks; at
         # lag=3 "block not yet available" fired every minute or two).
@@ -100,7 +109,7 @@ CHAINS = {
              "address": "0x1f98431c8ad98523631ae4a59f267346ea31f984"},
         ],
         "v3_fee_tiers": [100, 500, 3000, 10000],
-        "poll_seconds": 6.0,
+        "poll_seconds": 12.0,   # paper-only chain (AD-D8) — cost over latency
         "finality_lag": 2,
         "block_time": 12.0,
         "liquidity_floor_usd": 50_000.0,   # ETH gas makes small pools untradeable anyway
@@ -128,7 +137,7 @@ CHAINS = {
             # Aerodrome uses a non-Uniswap event layout — config TODO for M5.
         ],
         "v3_fee_tiers": [100, 500, 3000, 10000],
-        "poll_seconds": 2.0,
+        "poll_seconds": 10.0,   # paper-only chain (AD-D8) — cost over latency
         "finality_lag": 5,          # same provider-skew headroom as BSC
         "block_time": 2.0,
         "liquidity_floor_usd": 25_000.0,
@@ -147,6 +156,19 @@ CHAINS = {
 
 # Legacy Binance numeric chainId → our chain slug (remap tool, M4).
 LEGACY_CHAIN_ID_MAP = {"56": "bsc", "1": "ethereum", "8453": "base"}
+
+
+def poll_seconds(chain: str) -> float:
+    """Cadence knob: POLL_SECONDS_<CHAIN> env overrides the registry default.
+
+    This is the direct cost dial (see the bsc comment above): halving the
+    cadence halves that chain's Alchemy bill; 15/30/30 fits the free tier.
+    """
+    try:
+        return float(os.environ.get(f"POLL_SECONDS_{chain.upper()}",
+                                    CHAINS[chain]["poll_seconds"]))
+    except (TypeError, ValueError):
+        return CHAINS[chain]["poll_seconds"]
 
 
 def rpc_url(chain: str) -> str | None:

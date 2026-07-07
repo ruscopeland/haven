@@ -70,6 +70,24 @@ class UniverseManager:
     async def bootstrap(self):
         db = SessionLocal()
         try:
+            # Repair orphaned pools first: an UNPATCHED old Binance collector's
+            # token sync can delete new-format token rows (seen live 2026-07-07
+            # — its parallel-run guard only takes effect after ITS restart).
+            # A pool whose token row vanished is useless to the decode map —
+            # drop it so the candidate probe below recreates both rows fresh.
+            token_ids = {t.id for t in
+                         db.query(Token).filter(Token.chain_id == self.chain).all()}
+            orphans = [p for p in db.query(Pool).filter(Pool.chain == self.chain).all()
+                       if p.token_id not in token_ids]
+            for p in orphans:
+                db.delete(p)
+            if orphans:
+                db.commit()
+                log(f"[{self.chain}] repaired {len(orphans)} orphaned pool(s) "
+                    f"(token rows were deleted externally — re-probing)", "WARNING")
+                write_debug_log("ERROR",
+                                f"[{self.chain}] {len(orphans)} orphaned pools repaired — "
+                                f"is an unpatched old collector running?")
             # Existing new-format rows (idempotent restart) + slug reservations.
             for t in db.query(Token).filter(Token.chain_id == self.chain).all():
                 self._slugs_taken.add(t.symbol)
