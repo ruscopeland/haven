@@ -109,7 +109,7 @@ CHAINS = {
              "address": "0x1f98431c8ad98523631ae4a59f267346ea31f984"},
         ],
         "v3_fee_tiers": [100, 500, 3000, 10000],
-        "poll_seconds": 60.0,   # paper-only chain (AD-D8) — bar-cadence is enough
+        "poll_seconds": 15.0,   # equal treatment on all chains (owner order 2026-07-07)
         "finality_lag": 2,
         "block_time": 12.0,
         "liquidity_floor_usd": 25_000.0,   # ETH gas makes tiny pools untradeable anyway
@@ -137,7 +137,7 @@ CHAINS = {
             # Aerodrome uses a non-Uniswap event layout — config TODO for M5.
         ],
         "v3_fee_tiers": [100, 500, 3000, 10000],
-        "poll_seconds": 30.0,   # paper-only chain (AD-D8) — bar-cadence is enough
+        "poll_seconds": 15.0,   # equal treatment on all chains (owner order 2026-07-07)
         "finality_lag": 5,          # same provider-skew headroom as BSC
         "block_time": 2.0,
         "liquidity_floor_usd": 10_000.0,   # breadth-first
