@@ -19,16 +19,16 @@ accounts created.
 
 ## The collection list (what you're gathering — the whole point of this page)
 
-| # | From | Value(s) to paste to me |
-|---|------|------------------------|
-| 1 | Stripe | Secret key — **test mode** now (`sk_test_…`), **live mode** later (`sk_live_…`) |
-| 2 | Alchemy | 1 API key |
-| 3 | QuickNode | BSC endpoint HTTP + WSS URLs (fallback provider) |
-| 4 | Railway | 1 project token |
-| 5 | Cloudflare | 1 API token + your Account ID |
-| 6 | Clerk | Publishable key (`pk_test_…`) + Secret key (`sk_test_…`) |
-| 7 | DeepSeek | 1 API key (for the AI assistant feature) |
-| 8 | GitHub | nothing to copy — we do a 30-second approval together in a session |
+| # | From | Value(s) to paste to me | Status |
+|---|------|------------------------|--------|
+| 1 | Stripe | Secret key — **test mode** now (`sk_test_…`), **live mode** later (`sk_live_…`) | ⬜ still needed |
+| 2 | Alchemy | 1 API key | ✅ received + verified 2026-07-07 (all 4 chains answer) |
+| 3 | ~~QuickNode failover~~ → UptimeRobot | see step 3 — **owner decision 2026-07-07: no failover, alert on error instead** | ⬜ 5-min signup |
+| 4 | Railway | 1 project token | ✅ received + verified (project `haven` resolves) |
+| 5 | Cloudflare | 1 API token + your Account ID | ✅ received + verified (token active, haven.trading zone visible) |
+| 6 | Clerk | Publishable key (`pk_test_…`) + Secret key (`sk_test_…`) | ✅ received + verified |
+| 7 | DeepSeek | 1 API key (for the AI assistant feature) | ⬜ still needed |
+| 8 | GitHub | nothing to copy — we do a 30-second approval together in a session | ⬜ account + handshake |
 
 Do the steps below in order (step 1 first — it has the longest outside wait), then
 start a session and say **"here are the keys"** and paste them. Partial is fine;
@@ -65,13 +65,18 @@ This replaces Binance as the raw data source — one account covers all four cha
    the free 30M compute units/month I'll tell you the exact number and the plan to
    click (budget expectation: $0–50/mo, worst case ~$120 before tuning).
 
-## Step 3 — QuickNode: the fallback provider (~3 min, no card)
+## Step 3 — UptimeRobot: your error alarm (~5 min, free)
 
-If Alchemy hiccups, the collector fails over instead of going dark.
+**Owner decision 2026-07-07: no backup data provider — you want to be ALERTED when
+something breaks instead.** So the alarm is no longer optional; it's the safety
+system. (The design keeps failures harmless: if the data feed stops, the engine
+pauses trading automatically instead of using frozen prices, and every missed
+minute is recovered from the blockchain when the feed returns.)
 
-1. quicknode.com → Sign up (free tier).
-2. **Create endpoint** → chain **BNB Smart Chain** → Mainnet → free plan.
-3. Copy both URLs it shows (HTTP `https://…` and WSS `wss://…`). **COLLECT #3.**
+1. uptimerobot.com → Sign up (free plan, alerts to `ruscopeland@gmail.com`).
+2. That's it for now — once the cloud API is live I hand you one URL to paste into
+   **Add Monitor** (it watches the health endpoint that goes red when any part of
+   the stack stops heartbeating).
 
 ## Step 4 — Railway: card + project + token (~5 min)
 
@@ -123,12 +128,11 @@ DEPLOY.md §3, without you clicking any of it.
    create the **private** repo and push the code myself, and verify no secrets
    went up.
 
-## Step 9 — optional but recommended, can be after launch (~5 min each)
+## Step 9 — optional but recommended, can be after launch (~5 min)
 
 - **Sentry** (sentry.io, free): emails us the exact error when any user hits a bug.
   Sign up → create project (Python) → copy the **DSN** value to me.
-- **UptimeRobot** (uptimerobot.com, free): emails you if the site/API goes down.
-  Sign up and tell me — I'll give you the two URLs to paste into its "add monitor".
+  (UptimeRobot moved up to step 3 — it's your error alarm now, not an extra.)
 
 ---
 

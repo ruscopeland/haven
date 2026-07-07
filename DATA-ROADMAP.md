@@ -157,12 +157,16 @@ them). Multichain **data** is day one; multichain **live trading** is not (AD-D8
 
 ## 3. M0 — Owner prerequisites (~20 minutes, do BEFORE the M2 session)
 
-- [ ] **M0.1 (you) Node provider keys — see `OWNER-CHECKLIST.md` steps 2–3.**
-      **Alchemy** (one free account, one API key, covers BSC + Ethereum + Base +
-      **Solana** — so M6 needs no extra signup) plus a **QuickNode** free BSC
-      endpoint as the failover provider. No cards: M2 measures the real credit burn
-      and the paid-tier decision (budget $0–50/mo, worst case ~$120 before cadence
-      tuning) is made on data, not guesswork.
+- [x] **M0.1 (you) Node provider key.** ✔ Alchemy key received + verified live on
+      all four chains (BSC/Ethereum/Base/Solana) 2026-07-07; stored in
+      `crypto-data-collector/.env`. **OWNER DECISION 2026-07-07: NO failover
+      provider** ("I don't want failsafe, I want to be alerted of an error") —
+      single provider, failures must be LOUD: per-chain heartbeat → red health dot
+      → uptime-monitor email, plus the engine's stale-price guard (M3) so trading
+      pauses safely instead of running on frozen prices. Outages lose nothing —
+      the chain replays, gap backfill recovers every missed block. No cards yet:
+      M2 measures the real credit burn (budget $0–50/mo, worst case ~$120 before
+      cadence tuning) before any paid tier.
 - [ ] **M0.2 (you) Confirm launch chains.** Default per AD-D3: BSC + Ethereum + Base
       now, Arbitrum config-ready but off, Solana in M6. Say if you want different.
 - [ ] **M0.3 (you) Run `backup-db.bat`** before the M1 session (schema work) and
@@ -222,6 +226,10 @@ them). Multichain **data** is day one; multichain **live trading** is not (AD-D8
       fallback, DexScreener deleted); `RPC_URL` env'd; token map from `/tokens`
       handles slugs + `status`/chain filtering; tradeable filter per AD-D8; LIVE-arm
       validation message for non-BSC symbols.
+- [ ] **Stale-price guard** (M0.1 owner decision): the engine skips cross evaluation
+      for a marker when its token's `last_updated` is older than a threshold
+      (default 3 min, env) and logs loudly — data outage = safe pause + alert,
+      never trades against frozen prices. (Pure sizing/claim/TTL logic untouched.)
 - [ ] Engine + SDK test suites green (32 + 45, incl. both parity gates).
 - **Done when:** with the NEW collector feeding, a chart loads candles for a slug
   token via /klines, the workbench backtests it, and the engine (dry) sizes a trade
@@ -282,11 +290,14 @@ Stack DOWN for this one (engine PAUSED first, then all four windows closed).
 - [ ] Sweep `strategy-sdk/docs/*.md`, Guide panel text, and the DeepSeek assistant
       prompts for stale "Binance Alpha" wording; CLAUDE.md rewritten as-built.
 
-### M9 🔧 — Ops hardening
+### M9 🔧 — Ops hardening (alert-first, per the M0.1 owner decision)
 
-- [ ] RPC fallback failover drill (kill primary mid-run → fallback picks up, gap
-      backfill verified); credit-usage + bucket-coverage panel in Settings health;
-      optional SSE live candles replacing the 3s poll; retention knobs surfaced.
+- [ ] **Failure-ALERT drill** (replaces the old failover drill): kill the RPC feed
+      mid-run → per-chain heartbeat red within 2 min, `/health` degrades, uptime
+      monitor emails the owner, stale-price guard holds trading; restore → gap
+      backfill verified lossless. UptimeRobot monitors wired to `/health`.
+- [ ] Credit-usage + bucket-coverage panel in Settings health; optional SSE live
+      candles replacing the 3s poll; retention knobs surfaced.
 
 ---
 
@@ -295,7 +306,7 @@ Stack DOWN for this one (engine PAUSED first, then all four windows closed).
 | Thing | Cost | Notes |
 |---|---|---|
 | Alchemy (BSC+ETH+Base+Solana RPC) | $0 → ~$50 | free 30M CU/mo first; M2 measures real burn before paying |
-| QuickNode (failover, BSC) | $0 | free endpoint |
+| UptimeRobot (the error alarm) | $0 | owner decision: alerts instead of failover |
 | GoPlus security API (M7) | $0 | free tier |
 | Extra DB storage | ~$0 | 2.5–4 GB at default retention; pennies on Railway later |
 | **Total** | **$0–100** | vs. $199–499/mo vendor route; zero licensing exposure |
@@ -310,8 +321,10 @@ Stack DOWN for this one (engine PAUSED first, then all four windows closed).
    vs public screeners (M2/M4 checklists), the engine's existing impact guard
    (OpenOcean quote vs collector price) as the last line — a wrong collector price
    makes trades ABORT, not misfire.
-3. **Public-RPC flakiness** if the owner delays M0.1 — the plan assumes QuickNode
-   endpoints exist by M2. Fallbacks configured either way.
+3. **Single-provider outages** (owner decision, M0.1: no failover). An Alchemy
+   outage stops the feed until it recovers; the system's response is pause + alert
+   + lossless backfill (heartbeats red, uptime email, stale-price guard holds the
+   engine, chain replay refills every missed bucket). Accepted trade-off.
 4. **Universe noise**: an open universe admits scam tokens. Liquidity floor +
    trusted-quote pricing (AD-D5/D6) now; GoPlus gate (M7) next; the engine still
    only trades what a strategy/finder explicitly binds.
