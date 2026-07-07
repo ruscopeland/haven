@@ -97,6 +97,18 @@ def ensure_db_settings():
         # Bot-slot entitlements (2026-07-06): purchased slots beyond the plan's
         # included bots.
         _ensure_column(conn, "subscriptions", "extra_bots", "INTEGER DEFAULT 0")
+        # On-chain data migration columns (2026-07-07, DATA-ROADMAP M1).
+        _ensure_column(conn, "tokens", "display_symbol", "TEXT")
+        _ensure_column(conn, "tokens", "decimals", "INTEGER")
+        _ensure_column(conn, "tokens", "total_supply", "FLOAT")
+        _ensure_column(conn, "tokens", "liquidity_usd", "FLOAT")
+        _ensure_column(conn, "tokens", "listed_at", "BIGINT")
+        _ensure_column(conn, "tokens", "status", "TEXT DEFAULT 'active'")
+        _ensure_column(conn, "tokens", "security_json", "TEXT")
+        _ensure_column(conn, "tokens", "primary_pool", "TEXT")
+        if _existing_columns(conn, "pools"):  # table exists (create_all ran first)
+            conn.execute(text(
+                "CREATE INDEX IF NOT EXISTS ix_pools_chain_watch ON pools (chain, watch);"))
         for table in ("strategies", "chart_markers", "trade_history"):
             conn.execute(text(
                 f"CREATE INDEX IF NOT EXISTS ix_{table}_user_id ON {table} (user_id);"

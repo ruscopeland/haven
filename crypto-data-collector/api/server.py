@@ -56,6 +56,13 @@ class TokenResponse(BaseModel):
     name: str | None
     chain_id: str | None
     contract_address: str | None
+    # On-chain data migration fields (DATA-ROADMAP M1) — optional so legacy
+    # rows serialize unchanged.
+    display_symbol: str | None = None
+    decimals: int | None = None
+    status: str | None = None
+    liquidity_usd: float | None = None
+    listed_at: int | None = None
 
     class Config:
         from_attributes = True
@@ -1466,11 +1473,30 @@ def write_heartbeat(hb: HeartbeatCreate, db: Session = Depends(get_db),
 
 
 @app.get("/tokens", response_model=List[TokenResponse])
-def get_tokens(skip: int = 0, limit: int = 100, db: Session = Depends(get_db),
+def get_tokens(skip: int = 0, limit: int = 100, status: str = "active",
+               db: Session = Depends(get_db),
                identity: Identity = Depends(require_paid)):
-    """Retrieve the list of tracked Alpha tokens (shared market data)."""
-    tokens = db.query(Token).offset(skip).limit(limit).all()
+    """Retrieve the list of tracked tokens (shared market data).
+
+    `status=active` (default) hides the ingester's 'staged' rows until the M4
+    cutover flips them — during the parallel-run window the wallet scan and
+    token pages keep seeing exactly the set they always did. `status=all`
+    returns everything (workbench/debug use).
+    """
+    q = db.query(Token)
+    if status != "all":
+        # Legacy rows predate the status column; NULL counts as active.
+        q = q.filter((Token.status == status) | (Token.status.is_(None))) \
+            if status == "active" else q.filter(Token.status == status)
+    tokens = q.offset(skip).limit(limit).all()
     return tokens
+
+
+@app.get("/chains")
+def get_chains(identity: Identity = Depends(require_paid)):
+    """Chain registry for UI filters/badges (DATA-ROADMAP M1, AD-D3)."""
+    from ingest.chains import chain_public_info
+    return chain_public_info()
 
 @app.get("/signals", response_model=List[SignalResponse])
 def get_top_signals(limit: int = 400, sort_by: str = "flow_1m", db: Session = Depends(get_db),

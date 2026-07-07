@@ -2,13 +2,54 @@ from sqlalchemy import Column, Integer, String, Float, BigInteger
 from database.db import Base
 
 class Token(Base):
+    """A tracked token (DATA-ROADMAP AD-D1/AD-D2).
+
+    New-format rows (on-chain ingester): id = "{chain}:{contract_lowercase}",
+    symbol = the globally-unique SLUG "{DISPLAY}_{chain}" that every other
+    table joins on, chain_id = the chain slug ("bsc", "ethereum", ...).
+    Legacy Binance rows (id = Binance tokenId, symbol = "XXXUSDT", numeric
+    chain_id) coexist until the M4 cutover remap (tools/remap_symbols.py).
+    """
     __tablename__ = "tokens"
 
-    id = Column(String, primary_key=True, index=True) # Binance tokenId
+    id = Column(String, primary_key=True, index=True)
     symbol = Column(String, index=True, nullable=False)
     name = Column(String)
     chain_id = Column(String)
     contract_address = Column(String)
+    display_symbol = Column(String)      # clean human symbol ("CAKE"); UI adds chain badge
+    decimals = Column(Integer)
+    total_supply = Column(Float)         # human units (raw / 10**decimals)
+    liquidity_usd = Column(Float)        # primary-pool depth, refreshed by the sweep
+    listed_at = Column(BigInteger)       # unix ms first seen (pool creation)
+    # staged  = ingested but hidden from /tokens until the M4 cutover flips it
+    # active  = normal;  retired = no supported chain / delisted;  blacklisted = manual
+    status = Column(String, default="active")
+    security_json = Column(String)       # GoPlus payload (DATA-ROADMAP M7)
+    primary_pool = Column(String)        # pools.id used for pricing/liquidity
+
+
+class Pool(Base):
+    """A DEX pool the on-chain ingester watches (DATA-ROADMAP AD-D6).
+
+    Only pools quoted in a chain's trusted quote tokens are ever stored —
+    that is what makes prices unspoofable (AD-D5). `watch=1` pools are in the
+    getLogs address filter; drops use floor/2 hysteresis so pools don't flap.
+    """
+    __tablename__ = "pools"
+
+    id = Column(String, primary_key=True)        # "{chain}:{pool_address_lowercase}"
+    chain = Column(String, index=True, nullable=False)
+    dex = Column(String)                          # "pancake-v2" | "pancake-v3" | "uniswap-v2" | "uniswap-v3"
+    kind = Column(String)                         # "v2" | "v3"
+    token_id = Column(String, index=True)         # tokens.id of the non-quote side
+    quote_address = Column(String)                # quote token contract (lowercase)
+    token_is_token0 = Column(Integer)             # 1 = ranked token is token0
+    fee_tier = Column(Integer, default=0)         # v3 fee (500/2500/10000); 0 for v2
+    liquidity_usd = Column(Float, default=0.0)    # ≈ 2 × quote balance × quote USD
+    watch = Column(Integer, default=0, index=True)
+    created_at = Column(BigInteger)               # unix ms of pool creation
+    last_checked = Column(BigInteger)             # last liquidity sweep
 
 
 class OneMinBucket(Base):

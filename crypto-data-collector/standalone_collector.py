@@ -123,7 +123,11 @@ class AlphaCollector:
         try:
             log("Syncing active Alpha tokens from Binance...")
             response = await api.get_all_tokens()
-            existing = {t.id: t for t in db.query(Token).all()}
+            # Parallel-run guard (DATA-ROADMAP M2): the on-chain ingester's
+            # rows use "chain:address" ids — this Binance sync must never
+            # touch (especially never DELETE) them.
+            existing = {t.id: t for t in
+                        db.query(Token).filter(~Token.id.contains(":")).all()}
             seen_ids = set()
             added = updated = 0
             for t_data in response.get("data", []):
