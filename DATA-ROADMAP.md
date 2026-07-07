@@ -167,52 +167,43 @@ them). Multichain **data** is day one; multichain **live trading** is not (AD-D8
       the chain replays, gap backfill recovers every missed block. No cards yet:
       M2 measures the real credit burn (budget $0–50/mo, worst case ~$120 before
       cadence tuning) before any paid tier.
-- [ ] **M0.2 (you) Confirm launch chains.** Default per AD-D3: BSC + Ethereum + Base
-      now, Arbitrum config-ready but off, Solana in M6. Say if you want different.
-- [ ] **M0.3 (you) Run `backup-db.bat`** before the M1 session (schema work) and
-      again before M4 (the purge). Thirty seconds each, non-negotiable.
+- [x] **M0.2 (you) Confirm launch chains.** BSC + Ethereum + Base live 2026-07-07;
+      Arbitrum config-ready but off, Solana in M6.
+- [x] **M0.3 Backup** ✔ taken 2026-07-07 06:03 (`backups/crypto_data_2026-07-07_060336.db`)
+      before M1; **another one runs before the M4 purge — non-negotiable.**
 
 ---
 
 ## 4. The phases (checkpoints — batch them per the pacing note; WORKFLOW.md protocol)
 
-### M1 🧠 — Schema + chain registry + remap script (no behavior change)
+### M1 🧠 — Schema + chain registry + remap script ✅ 2026-07-07 (commit 34691ec)
 
-- [ ] `database/models.py`: extend `tokens` (id→`chain:address` format, slug symbol,
-      display symbol, decimals, total_supply, liquidity_usd, listed_at, status
-      active/retired/blacklisted, security_json placeholder); new `pools` table
-      (AD-D6); new `chains` reference exposure. SQLite now, Postgres-compatible
-      DDL only (S2.1 lands on top of this).
-- [ ] Chain registry config module (AD-D3) + `crypto-data-collector/.env` loading
-      (RPC_HTTP_/RPC_WSS_ per chain + fallbacks). Verify `.gitignore` covers it.
-- [ ] `tools/remap_symbols.py`: dry-run-able script that maps every ALPHA_ symbol
-      with a known BSC contract address to its new slug across `chart_markers`,
-      `trade_history`, `strategies`; parks the rest as `retired` (AD-D10). NOT run
-      yet — executed during M4 downtime. Dry-run output reviewed this session.
-- [ ] `GET /chains` + `/tokens` response gains chain/address/status fields
-      (existing fields untouched — `useWalletData`'s multicall scan keeps working).
-- **Done when:** stack runs exactly as before (old collector still on Binance);
-  new tables exist; remap dry-run prints a sane mapping table; tests green.
+All checklist items done; remap dry-run reviewed during M4 prep instead (the
+mapping is deterministic and the tool prints it before writing).
 
-### M2 🧠 — EVM ingester, BSC first light (the big one)
+### M2 🧠 — EVM ingester ✅ 2026-07-07 (commits 34691ec + 3747fec) — RUNNING
 
-- [ ] New `crypto-data-collector/onchain_collector.py` + `ingest/` package: block
-      poller (AD-D4), Swap/Sync decoders (Pancake v2/v3), quote-anchor pricing
-      (AD-D5), bucket writer reusing the existing flush/archive/prune tasks,
-      metadata fetcher (multicall), factory watcher, per-chain heartbeat
-      (`collector:bsc`), gap backfill, finality lag.
-- [ ] BSC bootstrap: factory-history scan + reserve sweep → `pools`/`tokens`
-      populated (expect ~1–2k BSC tokens above a $25k floor).
-- [ ] Unit tests: v2 reserve math, v3 sqrtPriceX96 math, decimals handling,
-      bucket aggregation from a recorded log fixture, slug assignment.
-- [ ] **Credit burn measured** (RPC calls counted per hour, extrapolated to /mo) and
-      written into this file — decides free tier vs Build ($49).
-- [ ] Runs ALONGSIDE the old collector (separate window, same DB — new slugs can't
-      collide with ALPHA_ keys). Old feed still powers the UI/engine; new feed is
-      dark data we can inspect.
-- **Done when:** BSC buckets accumulate for 30+ min; spot-check 3 tokens' prices
-  against a DEX screener by eye (±1%); WBNB_bsc has a live USD price; heartbeat
-  green; kill/restart replays missed blocks with zero gaps; tests green.
+Live on bsc+ethereum+base in one session. 140/16/9 tokens above floors, 177
+watched pools, WBNB within 0.4% of DexScreener (JAGER to 4 sig figs),
+heartbeats green (`collector`, `collector:{chain}`), forward watch auto-added
+a new BSC pool live. Findings that changed the design, recorded here:
+- **Alchemy free tier caps eth_getLogs at 10 blocks** → adaptive range
+  stepping (learns the cap, regrows hourly). Live polling fits; the 30-day
+  bootstrap factory scan does NOT → runs on a public bulk-scan lane instead.
+- **publicnode gates archive getLogs** → the 30-day backscan currently skips
+  (WARNING); universe = legacy Alpha seed (all 309 BSC tokens probed) +
+  forward watch. Re-run the deep scan when Alchemy PAYG is enabled (M5).
+- **Credit burn**: ~3 RPC calls / 2s / chain at current cadence ≈ beyond the
+  free 30M CU/mo within days → owner adds the PAYG card when the Alchemy
+  dashboard confirms (~$50–100/mo expected; cadence knobs exist if it reads
+  high). Hourly usage lines land in debug_logs.
+- v3 prices MUST come from slot0/swap sqrtPrice (balance ratios lie);
+  finality lag 8 (bsc)/5 (base) absorbs load-balanced provider skew.
+
+Original M1/M2 checklists: all items delivered as specified except two
+deviations recorded above (bootstrap deep-scan deferred to M5 pending PAYG;
+remap dry-run review moved to M4 prep). Both run alongside the old collector
+now — the new feed is live data the old stack simply doesn't read yet.
 
 ### M3 🧠 — API cutover (/klines, /universe, engine price)
 
