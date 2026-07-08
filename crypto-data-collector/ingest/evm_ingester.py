@@ -135,7 +135,7 @@ class EvmIngester:
                     await self.universe.sweep()
                 if time.time() >= report_at:
                     report_at = time.time() + 3600
-                    self._logs_step = min(self._logs_step * 2, BLOCK_CHUNK_LIVE)
+                    self._logs_step = min(self._logs_step * 4, BLOCK_CHUNK_LIVE)
                     log(f"[{self.chain}] hourly: {self.rpc.calls} RPC calls, "
                         f"{self.rpc.batch_items} batch items, "
                         f"{self._logs_processed} logs so far")
