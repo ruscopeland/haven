@@ -1855,6 +1855,23 @@ def get_klines(symbol: str, interval: str = "5m", limit: int = 500,
     grouped.update(_grouped_ohlc(db, OneMinBucket, [sym], start_group,
                                  last_group + interval_ms, interval_ms))
 
+    # Fallback: if no data in the time-based window (collector was down or
+    # data is older than the requested window), anchor to the most recent
+    # available bucket instead of leaving the chart empty. Skip when the
+    # caller gave an explicit end_ms (performance-chart jump-back).
+    if not grouped and end_ms is None:
+        latest = db.query(func.max(OneMinBucket.bucket_start)).filter(
+            OneMinBucket.symbol == sym).scalar()
+        if latest:
+            last_group = latest - (latest % interval_ms)
+            start_group = last_group - (limit - 1) * interval_ms
+            if interval_ms >= 900_000:
+                grouped.update(_grouped_ohlc(db, FifteenMinBucket, [sym],
+                                             start_group,
+                                             last_group + interval_ms, interval_ms))
+            grouped.update(_grouped_ohlc(db, OneMinBucket, [sym], start_group,
+                                         last_group + interval_ms, interval_ms))
+
     data = []
     prev_close = None
     if grouped:
