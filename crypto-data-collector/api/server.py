@@ -1530,6 +1530,16 @@ def get_tokens(skip: int = 0, limit: int = 100, status: str = "active",
     return tokens
 
 
+@app.get("/tokens/{symbol}", response_model=TokenResponse)
+def get_token(symbol: str, db: Session = Depends(get_db),
+              identity: Identity = Depends(require_paid)):
+    """One token row by slug — the chart's chain badge / explorer link lookup."""
+    tok = db.query(Token).filter(Token.symbol == symbol).first()
+    if not tok:
+        raise HTTPException(status_code=404, detail="Token not found")
+    return tok
+
+
 @app.get("/chains")
 def get_chains(identity: Identity = Depends(require_paid)):
     """Chain registry for UI filters/badges (DATA-ROADMAP M1, AD-D3)."""

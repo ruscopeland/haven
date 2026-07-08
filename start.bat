@@ -14,8 +14,8 @@ if %errorlevel% equ 0 (
     echo   [SKIP] Collector is already running.
 ) else (
     echo   [START] Opening Collector window...
-    start "Alpha Collector" cmd /k "title Alpha Collector && cd /d %~dp0crypto-data-collector && python standalone_collector.py"
-    echo          Give it a few seconds to connect to Binance...
+    start "Alpha Collector" cmd /k "title Alpha Collector && cd /d %~dp0crypto-data-collector && python onchain_collector.py"
+    echo          Give it a few seconds to connect to the chain RPCs...
 )
 echo.
 
@@ -56,7 +56,7 @@ echo ==============================================
 echo   ALL LAUNCHED
 echo ==============================================
 echo.
-echo   Collector  : "Alpha Collector" window  (Binance WS -^> buckets)
+echo   Collector  : "Alpha Collector" window  (on-chain DEX swaps -^> buckets)
 echo   Engine     : "Alpha Engine" window     (executes marker swaps on-chain)
 echo   API        : "Alpha API" window        - http://localhost:8000
 echo   Alpha Terminal : "Alpha UI" window     - http://localhost:5173 (dashboard + charts + engine controls)

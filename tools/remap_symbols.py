@@ -95,6 +95,13 @@ def apply_mapping(db, mapping, rewrites, merges, retires):
     return renamed
 
 
+def activate_staged_tokens(db):
+    """Cutover flip: 'staged' rows (hidden from /tokens during the parallel
+    run) become 'active' — the on-chain universe goes live for every consumer."""
+    return (db.query(Token).filter(Token.status == "staged")
+            .update({"status": "active"}, synchronize_session=False))
+
+
 def purge_legacy_market_data(db, mapping):
     """Delete Binance-derived rows (legacy symbols) from the market tables."""
     legacy_symbols = list(mapping.keys())
@@ -131,6 +138,8 @@ def main():
             return
         renamed = apply_mapping(db, mapping, rewrites, merges, retires)
         print(f"\nRenamed rows: {renamed}")
+        activated = activate_staged_tokens(db)
+        print(f"Activated staged tokens: {activated}")
         if purge:
             deleted, _ = purge_legacy_market_data(db, mapping)
             print(f"Purged legacy market data: {deleted}")

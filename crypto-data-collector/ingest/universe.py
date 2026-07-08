@@ -18,7 +18,7 @@ from database.db import SessionLocal
 from database.models import Token, Pool, EngineSetting
 
 from . import evm
-from .chains import CHAINS, LEGACY_CHAIN_ID_MAP, MULTICALL3, STAGED
+from .chains import CHAINS, LEGACY_CHAIN_ID_MAP, MULTICALL3
 from .rpc import RpcClient, RpcError
 from .store import log, now_ms, write_debug_log
 
@@ -369,7 +369,10 @@ class UniverseManager:
                                 display_symbol=display,
                                 decimals=self.cfg["native"]["decimals"] if is_native else m["decimals"],
                                 total_supply=None if is_native else m["supply"],
-                                liquidity_usd=liq, listed_at=now_ms(), status=STAGED)
+                                # 'staged' was the pre-M4 parallel-run hiding
+                                # mechanism; post-cutover new tokens go live
+                                # the moment they clear the floor.
+                                liquidity_usd=liq, listed_at=now_ms(), status="active")
                     db.add(row)
                     added_t += 1
                 elif (row.liquidity_usd or 0) < liq:

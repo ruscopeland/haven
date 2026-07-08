@@ -2,7 +2,17 @@ import { useEffect, useRef, useState, useCallback } from 'react';
 import { createChart, ColorType, CandlestickSeries, HistogramSeries } from 'lightweight-charts';
 
 const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:8000';
-const WS_URL = 'wss://nbstream.binance.com/w3w/wsa/stream';
+const LIVE_POLL_MS = 3000;   // forming-bar poll — replaced the Binance kline WS (M4)
+
+// Chain registry (GET /chains) — fetched once per app, drives the chain badge
+// and explorer links. Failure is harmless: the badge simply doesn't render.
+let chainsPromise = null;
+function fetchChains() {
+  if (!chainsPromise) {
+    chainsPromise = fetch(`${API_URL}/chains`).then(r => r.json()).catch(() => []);
+  }
+  return chainsPromise;
+}
 
 // Marker type → visual style mapping. Only these appear in the placement
 // popup — hand-placeable types.
@@ -64,11 +74,12 @@ export default function Chart({ token, onClose, onIntervalChange, signals = [] }
   const chartRef = useRef(null);
   const seriesRef = useRef(null);
   const volumeSeriesRef = useRef(null);
-  const wsRef = useRef(null);
   const priceLinesRef = useRef([]);       // active priceline refs for cleanup
   const markersRef = useRef([]);           // mirror markers state for use in closures
   const [loading, setLoading] = useState(false);
   const [livePrice, setLivePrice] = useState(null);
+  const [tokenInfo, setTokenInfo] = useState(null);   // /tokens/{symbol} row
+  const [chainInfo, setChainInfo] = useState(null);   // matching /chains entry
   const [cachedSignal, setCachedSignal] = useState(null);
   const [showMarkerMenu, setShowMarkerMenu] = useState(false);
   const [clickedPrice, setClickedPrice] = useState(null);
@@ -268,7 +279,7 @@ export default function Chart({ token, onClose, onIntervalChange, signals = [] }
     };
 
     loadHistory();
-    // Note: WS connection moved after this, so it's independent of klines fetch
+    // Note: live polling starts after this, independent of the history fetch
 
     // Click handler
     chart.subscribeClick((param) => {
@@ -301,42 +312,34 @@ export default function Chart({ token, onClose, onIntervalChange, signals = [] }
     };
     chartContainerRef.current?.addEventListener('contextmenu', handleContext);
 
-    // WebSocket for live candles with auto-reconnect
-    let ws = null;
-    let wsReconnectTimer = null;
-    let wsRetries = 0;
-    const connectWs = () => {
-      if (ws) try { ws.close(); } catch {}
-      ws = new WebSocket(WS_URL);
-      wsRef.current = ws;
-      ws.onopen = () => {
-        wsRetries = 0;
-        ws.send(JSON.stringify({ method: "SUBSCRIBE", params: [`${symbol.toLowerCase()}@kline_${interval}`], id: Date.now() }));
-      };
-      ws.onmessage = (event) => {
-        try {
-          const msg = JSON.parse(event.data);
-          if (!msg.data || msg.data.e !== 'kline') return;
-          const k = msg.data.k;
-          const time = k.t / 1000;
-          const open = parseFloat(k.o), high = parseFloat(k.h), low = parseFloat(k.l), close = parseFloat(k.c);
-          const volume = parseFloat(k.v), isGreen = close >= open;
-          setLivePrice(close);
-          candlestickSeries.update({ time, open, high, low, close });
-          volumeSeries.update({ time, value: volume, color: isGreen ? 'rgba(0, 255, 136, 0.4)' : 'rgba(255, 51, 102, 0.4)' });
-        } catch (err) { console.error("WS error:", err); }
-      };
-      ws.onclose = () => {
-        const delay = Math.min(1000 * Math.pow(2, wsRetries), 30000);
-        wsRetries++;
-        wsReconnectTimer = setTimeout(connectWs, delay);
-      };
+    // Live candles: poll OUR /klines forming bar every ~3s. Same feed the
+    // engine and dashboard read — the separate Binance kline WebSocket died at
+    // the M4 cutover, so a moving chart now MEANS the collector is alive.
+    let stopped = false;
+    let pollTimer = null;
+    const pollLive = async () => {
+      try {
+        const res = await fetch(`${API_URL}/klines/${symbol}?interval=${interval}&limit=2&include_open=1`);
+        const json = await res.json();
+        const rows = (json.data || []).slice(-2);   // last closed + forming bar
+        if (!stopped && rows.length > 0) {
+          for (const d of rows) {
+            const time = d[0] / 1000;
+            const open = parseFloat(d[1]), high = parseFloat(d[2]), low = parseFloat(d[3]), close = parseFloat(d[4]);
+            const volume = parseFloat(d[5]), isGreen = close >= open;
+            candlestickSeries.update({ time, open, high, low, close });
+            volumeSeries.update({ time, value: volume, color: isGreen ? 'rgba(0, 255, 136, 0.4)' : 'rgba(255, 51, 102, 0.4)' });
+          }
+          setLivePrice(parseFloat(rows[rows.length - 1][4]));
+        }
+      } catch { /* API down — the next poll retries */ }
+      if (!stopped) pollTimer = setTimeout(pollLive, LIVE_POLL_MS);
     };
-    connectWs();
+    pollLive();
 
     return () => {
-      if (wsReconnectTimer) clearTimeout(wsReconnectTimer);
-      if (ws) ws.close();
+      stopped = true;
+      if (pollTimer) clearTimeout(pollTimer);
       chartContainerRef.current?.removeEventListener('contextmenu', handleContext);
       chart.remove();
     };
@@ -347,6 +350,24 @@ export default function Chart({ token, onClose, onIntervalChange, signals = [] }
     if (!symbol) return;
     loadMarkers();
   }, [symbol, loadMarkers]);
+
+  // ── Effect 2b: token row + chain registry → chain badge / explorer link ──
+  useEffect(() => {
+    if (!symbol) return;
+    let cancelled = false;
+    (async () => {
+      try {
+        const [tok, chains] = await Promise.all([
+          fetch(`${API_URL}/tokens/${symbol}`).then(r => (r.ok ? r.json() : null)),
+          fetchChains(),
+        ]);
+        if (cancelled) return;
+        setTokenInfo(tok);
+        setChainInfo(tok ? (chains || []).find(c => c.chain === tok.chain_id) || null : null);
+      } catch { /* no badge — chart still works */ }
+    })();
+    return () => { cancelled = true; };
+  }, [symbol]);
 
   // Keep markersRef in sync for closures (right-click handler)
   markersRef.current = markers;
@@ -394,7 +415,27 @@ export default function Chart({ token, onClose, onIntervalChange, signals = [] }
     <div className="chart-container">
       <div className="chart-header">
         <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
-          <h1 style={{ fontSize: '0.6rem', margin: 0 }}>{name || (symbol ? symbol.replace('USDT', '') : 'Select a Token')}</h1>
+          <h1 style={{ fontSize: '0.6rem', margin: 0 }}>
+            {tokenInfo?.display_symbol || name || symbol || 'Select a Token'}
+          </h1>
+          {chainInfo && (
+            <a
+              href={tokenInfo?.contract_address
+                ? `${chainInfo.explorer}/token/${tokenInfo.contract_address}`
+                : chainInfo.explorer}
+              target="_blank"
+              rel="noreferrer"
+              title={`View on ${chainInfo.name} explorer`}
+              style={{
+                fontSize: '0.45rem', padding: '2px 6px', borderRadius: '4px',
+                background: '#2a2f42', color: '#22d3ee',
+                border: '1px solid #3388ff', textDecoration: 'none',
+                textTransform: 'uppercase', letterSpacing: '0.5px',
+              }}
+            >
+              {chainInfo.chain}
+            </a>
+          )}
           <select 
             value={interval}
             onChange={(e) => onIntervalChange && onIntervalChange(e.target.value)}
