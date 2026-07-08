@@ -2,7 +2,13 @@ import os
 import uvicorn
 from utils.logger import log
 from database.db import engine, Base, ensure_db_settings
+from ingest.chains import load_env_file
 from api.server import app
+
+# Load crypto-data-collector/.env so RPC_HTTP_* / chain registry env vars
+# are visible to the API process (GET /chains enabled flag, etc.). The
+# collector does this in its own startup; the API server needs it too.
+load_env_file()
 
 def init_database():
     """Create all DB tables if they don't exist; run per-dialect setup."""
