@@ -1399,12 +1399,12 @@ SHARED_PROCESSES = {"collector", "api"}
 
 
 @app.get("/health")
-def health_check(db: Session = Depends(get_db),
-                 identity: Identity = Depends(get_identity)):
-    """Live status of shared processes (collector) + THIS user's engine/runner.
+def health_check(db: Session = Depends(get_db)):
+    """Live status of shared processes (collector) + engine/runner.
 
-    Uses get_identity (not require_paid) so the health dots still render on the
-    subscribe screen; the data here is not sensitive.
+    Public (no auth) so UptimeRobot can monitor it and the subscribe screen
+    can show health dots before login. Only shared process health is exposed;
+    per-user engine health requires authentication.
     """
     from datetime import datetime, timezone
     now_ms = int(datetime.now(timezone.utc).timestamp() * 1000)
@@ -1418,10 +1418,8 @@ def health_check(db: Session = Depends(get_db),
     for row in db.query(Heartbeat).all():
         proc, _, owner = row.process.partition("@")
         if owner:                                  # a user's engine/runner
-            if owner != identity.user_id:
-                continue                           # hide other users' engines
+            continue                               # private — requires auth
         elif proc not in SHARED_PROCESSES and not SOLO_MODE:
-            # Legacy un-namespaced engine row — only surface it in solo mode.
             continue
         age_sec = (now_ms - row.last_heartbeat) / 1000
         statuses[proc] = {"status": bucket(age_sec), "last_seen_sec_ago": int(age_sec)}
