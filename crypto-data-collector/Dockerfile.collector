@@ -11,4 +11,4 @@ RUN pip install --no-cache-dir -r requirements.txt
 
 COPY . .
 
-CMD ["python", "standalone_collector.py"]
+CMD ["python", "onchain_collector.py"]
