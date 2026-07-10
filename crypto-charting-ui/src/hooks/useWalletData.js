@@ -6,17 +6,21 @@ import {
 } from '../utils/multicall';
 
 // Key-free multi-chain wallet data. Private key never enters this app.
-// Scans BSC + Ethereum + Base for ERC-20 balances via Multicall3.
+// Discovers ERC-20 balances even when our /tokens DB is empty or filtered:
+//   1) natives always (BNB/ETH)
+//   2) contracts from /tokens (full scan)
+//   3) contracts from engine trade history
+//   4) optional extra contracts in localStorage
 
 const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:8000';
 const ADDR_KEY = 'alpha_wallet_address';
+const EXTRA_CONTRACTS_KEY = 'havenWalletExtraContracts'; // JSON: { bsc: ['0x…'], … }
 const SCAN_CHAINS = ['bsc', 'ethereum', 'base'];
 
-// Native price feeds (DexScreener) for portfolio USD.
 const NATIVE_PRICE_ADDR = {
-  bsc: '0xbb4CdB9CBd36B01bD1cBaEBF2De08d9173bc095c',       // WBNB
-  ethereum: '0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2',  // WETH
-  base: '0x4200000000000000000000000000000000000006',     // WETH on Base
+  bsc: '0xbb4CdB9CBd36B01bD1cBaEBF2De08d9173bc095c',
+  ethereum: '0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2',
+  base: '0x4200000000000000000000000000000000000006',
 };
 
 export function getSavedAddress() {
@@ -27,22 +31,84 @@ async function fetchNativeUsd(chain) {
   const addr = NATIVE_PRICE_ADDR[chain];
   if (!addr) return null;
   const r = await fetch(`https://api.dexscreener.com/latest/dex/tokens/${addr}`);
+  if (!r.ok) return null;
   const j = await r.json();
   const pairs = (j.pairs || []).filter(p => p.priceUsd);
   pairs.sort((a, b) => (b.liquidity?.usd || 0) - (a.liquidity?.usd || 0));
   return pairs[0] ? parseFloat(pairs[0].priceUsd) : null;
 }
 
+function loadExtraContracts() {
+  try {
+    const raw = localStorage.getItem(EXTRA_CONTRACTS_KEY);
+    return raw ? JSON.parse(raw) : {};
+  } catch {
+    return {};
+  }
+}
+
+function normChain(c) {
+  const s = String(c || 'bsc').toLowerCase();
+  if (s === '56') return 'bsc';
+  if (s === '1') return 'ethereum';
+  if (s === '8453') return 'base';
+  return s;
+}
+
+async function fetchAllTokenRows() {
+  const tokenList = [];
+  let skip = 0;
+  const page = 500;
+  for (;;) {
+    // quality=false + min_liquidity=0 + status=all → every row for balance scan
+    const url = `${API_URL}/tokens?status=all&min_liquidity=0&quality=false&limit=${page}&skip=${skip}`;
+    const tokensRes = await fetch(url);
+    if (!tokensRes.ok) {
+      // Don't hard-fail the whole wallet if API is empty/down — natives still load
+      console.warn('wallet: /tokens failed', tokensRes.status);
+      break;
+    }
+    const batch = await tokensRes.json();
+    if (!Array.isArray(batch) || batch.length === 0) break;
+    tokenList.push(...batch);
+    if (batch.length < page) break;
+    skip += page;
+    if (skip > 20000) break;
+  }
+  return tokenList;
+}
+
+async function fetchTradeContracts() {
+  // Tokens the engine has traded — always worth scanning even if retired/blacklisted
+  try {
+    const r = await fetch(`${API_URL}/trades?limit=1000`);
+    if (!r.ok) return [];
+    const trades = await r.json();
+    const syms = [...new Set((trades || []).map(t => t.symbol).filter(Boolean))];
+    const out = [];
+    for (const sym of syms.slice(0, 200)) {
+      try {
+        const tr = await fetch(`${API_URL}/tokens/${encodeURIComponent(sym)}`);
+        if (!tr.ok) continue;
+        const t = await tr.json();
+        if (t?.contract_address) out.push(t);
+      } catch { /* skip */ }
+    }
+    return out;
+  } catch {
+    return [];
+  }
+}
+
 export default function useWalletData() {
   const [address, setAddressState] = useState(getSavedAddress);
-  // Legacy single-chain fields kept for Dashboard compatibility (BSC primary).
   const [bnb, setBnb] = useState(null);
   const [bnbPrice, setBnbPrice] = useState(null);
-  const [tokens, setTokens] = useState([]); // [{symbol, name, qty, chain, contract}]
-  const [natives, setNatives] = useState({}); // chain -> { qty, priceUsd, symbol }
+  const [tokens, setTokens] = useState([]);
+  const [natives, setNatives] = useState({});
   const [error, setError] = useState(null);
   const [loading, setLoading] = useState(false);
-  const decimalsCache = useRef({}); // `${chain}:${addr}` -> decimals
+  const decimalsCache = useRef({});
 
   const setAddress = useCallback((a) => {
     const trimmed = (a || '').trim();
@@ -58,37 +124,8 @@ export default function useWalletData() {
     const loadBalances = async () => {
       setLoading(true);
       try {
-        // Full token universe for balance discovery (wallet must see held dust).
-        const tokenList = [];
-        let skip = 0;
-        const page = 500;
-        for (;;) {
-          const tokensRes = await fetch(
-            `${API_URL}/tokens?status=all&min_liquidity=0&quality=false&limit=${page}&skip=${skip}`);
-          if (!tokensRes.ok) throw new Error('API unavailable');
-          const batch = await tokensRes.json();
-          if (!Array.isArray(batch) || batch.length === 0) break;
-          tokenList.push(...batch);
-          if (batch.length < page) break;
-          skip += page;
-          if (skip > 20000) break;
-        }
-        if (!alive) return;
-
-        const byChain = { bsc: [], ethereum: [], base: [] };
-        for (const t of tokenList) {
-          if (!/^0x[0-9a-fA-F]{40}$/.test(t.contract_address || '')) continue;
-          let chain = String(t.chain_id || 'bsc').toLowerCase();
-          if (chain === '56') chain = 'bsc';
-          if (chain === '1') chain = 'ethereum';
-          if (chain === '8453') chain = 'base';
-          if (!byChain[chain]) continue;
-          byChain[chain].push(t);
-        }
-
-        const allHeld = [];
+        // 1) Always load natives first so portfolio isn't blank if token list is empty
         const nextNatives = {};
-
         await Promise.all(SCAN_CHAINS.map(async (chain) => {
           try {
             const nativeQty = Number(await getNativeBalance(address, chain)) / 1e18;
@@ -102,11 +139,61 @@ export default function useWalletData() {
               name: meta.name,
               usd: priceUsd != null ? nativeQty * priceUsd : 0,
             };
+          } catch (e) {
+            console.warn(`wallet native ${chain}:`, e);
+          }
+        }));
+        if (!alive) return;
+        setNatives(nextNatives);
+        setBnb(nextNatives.bsc?.qty ?? null);
+        setBnbPrice(nextNatives.bsc?.priceUsd ?? null);
 
-            const list = byChain[chain] || [];
+        // 2) Build contract catalog from API + trades + extras
+        const [apiTokens, tradeTokens] = await Promise.all([
+          fetchAllTokenRows(),
+          fetchTradeContracts(),
+        ]);
+        if (!alive) return;
+
+        const byChain = { bsc: new Map(), ethereum: new Map(), base: new Map() };
+        const addRow = (t) => {
+          if (!t || !/^0x[0-9a-fA-F]{40}$/.test(t.contract_address || '')) return;
+          const chain = normChain(t.chain_id || 'bsc');
+          if (!byChain[chain]) return;
+          const addr = t.contract_address.toLowerCase();
+          if (!byChain[chain].has(addr)) {
+            byChain[chain].set(addr, {
+              symbol: t.symbol || addr,
+              name: t.name || t.display_symbol || t.symbol || addr,
+              contract_address: t.contract_address,
+              chain_id: chain,
+            });
+          }
+        };
+        for (const t of apiTokens) addRow(t);
+        for (const t of tradeTokens) addRow(t);
+
+        const extras = loadExtraContracts();
+        for (const chain of SCAN_CHAINS) {
+          for (const c of extras[chain] || []) {
+            if (/^0x[0-9a-fA-F]{40}$/.test(c)) {
+              addRow({
+                contract_address: c,
+                chain_id: chain,
+                symbol: c.slice(0, 10),
+                name: `Token ${c.slice(0, 8)}…`,
+              });
+            }
+          }
+        }
+
+        // 3) Multicall balances per chain
+        const allHeld = [];
+        await Promise.all(SCAN_CHAINS.map(async (chain) => {
+          try {
+            const list = [...(byChain[chain]?.values() || [])];
+            if (!list.length) return;
             const contracts = list.map(t => t.contract_address);
-            if (!contracts.length) return;
-
             const balances = await multicallBalanceOf(address, contracts, chain);
             const held = list.filter(t => {
               const bal = balances.get(t.contract_address.toLowerCase());
@@ -125,23 +212,18 @@ export default function useWalletData() {
               const decimals = decimalsCache.current[`${chain}:${addr}`] ?? 18;
               allHeld.push({
                 symbol: t.symbol,
-                name: t.name || t.display_symbol || t.symbol,
+                name: t.name,
                 qty: parseFloat(formatUnits(raw, decimals)),
                 chain,
                 contract: t.contract_address,
               });
             }
           } catch (e) {
-            // One chain failing shouldn't blank the whole portfolio.
             console.warn(`wallet scan ${chain}:`, e);
           }
         }));
 
         if (!alive) return;
-        setNatives(nextNatives);
-        // BSC native = legacy bnb fields for existing Dashboard cards.
-        setBnb(nextNatives.bsc?.qty ?? null);
-        setBnbPrice(nextNatives.bsc?.priceUsd ?? null);
         setTokens(allHeld);
         setError(null);
       } catch (e) {
@@ -157,9 +239,9 @@ export default function useWalletData() {
 
   return {
     address, setAddress,
-    bnb, bnbPrice,           // BSC native (dashboard compat)
-    natives,                 // { bsc, ethereum, base }
-    tokens,                  // multi-chain ERC-20s
+    bnb, bnbPrice,
+    natives,
+    tokens,
     error, loading,
   };
 }
