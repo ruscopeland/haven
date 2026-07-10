@@ -322,7 +322,22 @@ h1, h2, h3, h4, h5, h6 {
 
 .token-symbol {
   font-weight: 600;
-  font-size: 1.1rem;
+  font-size: 1.05rem;
+}
+.token-symbol-row {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  flex-wrap: wrap;
+  min-width: 0;
+}
+.token-live-price {
+  font-weight: 600;
+  font-size: 0.85rem;
+  color: var(--text-bright);
+  font-variant-numeric: tabular-nums;
+  font-family: var(--font-display);
+  white-space: nowrap;
 }
 
 .token-flow {

@@ -36,6 +36,12 @@ KEEP_SYMBOLS = {
     "ETH", "BNB", "STETH", "WBTC", "BTCB",
 }
 
+# Name/slug substrings that are always blacklisted (airdrop phishing sites, etc.)
+SCAM_NAME_SNIPPETS = (
+    "zepe.io", "zepeio", "zepe", "zape.io", "zapeio",
+    "airdrop claim", "claim airdrop", "visit zepe",
+)
+
 
 def _display(t: Token) -> str:
     return (t.display_symbol or t.name or t.symbol or "").upper()
@@ -54,10 +60,18 @@ def run(dry_run: bool = False) -> dict:
         ).all()
         for t in tokens:
             name = _display(t)
+            blob = f"{name} {(t.name or '')} {(t.symbol or '')}".lower()
             keep = any(k in name.split() or name == k for k in KEEP_SYMBOLS) or name in KEEP_SYMBOLS
             mc = t.market_cap or 0.0
             liq = t.liquidity_usd or 0.0
             has_cmc = t.cmc_id is not None and int(t.cmc_id or 0) > 0
+
+            # Known airdrop phishing brands (zepe.io etc.) — always blacklist.
+            if any(s in blob for s in SCAM_NAME_SNIPPETS):
+                if t.status != "blacklisted":
+                    t.status = "blacklisted"
+                    retired += 1  # counted in retired for summary; status is blacklisted
+                continue
 
             # Fake local ranks (assigned without CMC id) — drop them.
             if not has_cmc and t.cmc_rank is not None:

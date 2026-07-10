@@ -130,6 +130,7 @@ def _token_to_response(tok) -> TokenResponse:
 class SignalResponse(BaseModel):
     symbol: str
     name: str | None = None
+    display_symbol: str | None = None
     timestamp: int
     buy_vol_1m: float
     sell_vol_1m: float
@@ -147,6 +148,7 @@ class SignalResponse(BaseModel):
     price_change_24h: float
     volume_24h: float = 0.0
     market_cap: float = 0.0
+    last_price: float | None = None  # live collector price for screener
 
     class Config:
         from_attributes = True
@@ -1803,10 +1805,12 @@ def get_top_signals(limit: int = 400, sort_by: str = "flow_1m", db: Session = De
         buy_1h = a.buy_1h if a else 0.0
         sell_1h = a.sell_1h if a else 0.0
 
+        last_px = ticker.last_price if ticker and (ticker.last_price or 0) > 0 else None
         signals.append(
             SignalResponse(
                 symbol=symbol,
                 name=tok.name,
+                display_symbol=tok.display_symbol,
                 timestamp=current_minute,
                 buy_vol_1m=buy_1m,
                 sell_vol_1m=sell_1m,
@@ -1824,6 +1828,7 @@ def get_top_signals(limit: int = 400, sort_by: str = "flow_1m", db: Session = De
                 price_change_24h=ticker.price_change_24h if ticker else 0.0,
                 volume_24h=ticker.volume_24h if ticker else 0.0,
                 market_cap=tok.market_cap or 0.0,
+                last_price=last_px,
             )
         )
 

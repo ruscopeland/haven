@@ -1,32 +1,45 @@
 import React, { useState } from 'react';
 
+function formatMoney(val) {
+  return new Intl.NumberFormat('en-US', { style: 'currency', currency: 'USD', maximumFractionDigits: 0 }).format(val);
+}
+
+// Compact live price for the screener list (handles micro-caps and large prices).
+function formatScreenerPrice(p) {
+  if (p == null || !(p > 0) || Number.isNaN(p)) return '—';
+  if (p >= 1000) return `$${p.toLocaleString('en-US', { maximumFractionDigits: 2 })}`;
+  if (p >= 1) return `$${p.toFixed(3)}`;
+  if (p >= 0.01) return `$${p.toFixed(4)}`;
+  if (p >= 0.0001) return `$${p.toFixed(6)}`;
+  // micro: 0.0₄123 style not needed — scientific-ish compact
+  const s = p.toFixed(12).replace(/0+$/, '');
+  return `$${s}`;
+}
+
 export default function Screener({ onToggle, selectedTokens, signals = [], sortBy = "flow_1m", setSortBy }) {
   const [searchQuery, setSearchQuery] = useState("");
-
-  const formatMoney = (val) => {
-    return new Intl.NumberFormat('en-US', { style: 'currency', currency: 'USD', maximumFractionDigits: 0 }).format(val);
-  };
 
   const filteredSignals = signals.filter(sig => {
     const q = searchQuery.toLowerCase();
     const sym = sig.symbol.toLowerCase();
     const name = (sig.name || "").toLowerCase();
-    return sym.includes(q) || name.includes(q);
+    const disp = (sig.display_symbol || "").toLowerCase();
+    return sym.includes(q) || name.includes(q) || disp.includes(q);
   });
 
   return (
     <div className="screener-sidebar">
       <div className="screener-header">
         <h2>Alpha Screener</h2>
-        <input 
-          type="text" 
-          className="screener-search" 
-          placeholder="Search by name or symbol..." 
+        <input
+          type="text"
+          className="screener-search"
+          placeholder="Search by name or symbol..."
           value={searchQuery}
           onChange={(e) => setSearchQuery(e.target.value)}
         />
       </div>
-      
+
       <div className="screener-tabs" style={{ flexWrap: 'wrap' }}>
         <label style={{ display: 'flex', alignItems: 'center', gap: 8, width: '100%', fontSize: 12, color: 'var(--text-muted)' }}>
           Sort
@@ -62,6 +75,7 @@ export default function Screener({ onToggle, selectedTokens, signals = [], sortB
             const isSelected = selectedTokens.some(t => t.symbol === sig.symbol);
             const chg = sig.price_change_24h;
             const chgUp = (chg || 0) >= 0;
+            const label = sig.display_symbol || sig.name || sig.symbol.replace(/USDT$/, '');
 
             let primary = null;
             if (sortBy === 'flow_15m') {
@@ -100,14 +114,19 @@ export default function Screener({ onToggle, selectedTokens, signals = [], sortB
                 className={`token-card ${isSelected ? 'active' : ''}`}
                 onClick={() => onToggle({
                   symbol: sig.symbol,
-                  name: sig.name,
+                  name: sig.name || label,
                   priceChange24h: sig.price_change_24h
                 })}
               >
                 <div className="token-checkbox-container">
                   <input type="checkbox" className="token-checkbox" checked={isSelected} readOnly />
-                  <div>
-                    <div className="token-symbol">{sig.name || sig.symbol.replace('USDT', '')}</div>
+                  <div style={{ minWidth: 0 }}>
+                    <div className="token-symbol-row">
+                      <span className="token-symbol">{label}</span>
+                      <span className="token-live-price" title="Live collector price">
+                        {formatScreenerPrice(sig.last_price)}
+                      </span>
+                    </div>
                     {sortBy !== 'price_change_24h' && (
                       <div style={{ fontSize: 11, color: chgUp ? '#34d399' : '#fb7185', fontVariantNumeric: 'tabular-nums' }}>
                         {chg == null ? '—' : `${chgUp ? '+' : ''}${Number(chg).toFixed(2)}%`} 24h
