@@ -65,7 +65,7 @@ export const formatPriceString = (p) => {
   }
 };
 
-export default function Chart({ token, onClose, onIntervalChange, signals = [] }) {
+export default function Chart({ token, onClose, onIntervalChange, signals = [], onOpenSwap, onOpenToken }) {
   const symbol = token?.symbol;
   const name = token?.name;
   const interval = token?.interval || '5m';
@@ -472,6 +472,38 @@ export default function Chart({ token, onClose, onIntervalChange, signals = [] }
                 <span style={{ color: '#00ff88' }}>{buy1hPct.toFixed(2)}% B</span> / <span style={{ color: '#ff3366' }}>{sell1hPct.toFixed(2)}% S</span>
               </div>
             </>
+          )}
+
+          {(onOpenSwap || onOpenToken) && symbol && (
+            <div style={{ display: 'flex', alignItems: 'center', gap: 6, borderLeft: '1px solid #2a2f42', paddingLeft: 12 }}>
+              {onOpenSwap && (
+                <button
+                  type="button"
+                  title="Open portfolio swap for this token"
+                  onClick={() => onOpenSwap(symbol, name || tokenInfo?.display_symbol || symbol)}
+                  style={{
+                    fontSize: '0.55rem', padding: '3px 8px', borderRadius: 6, cursor: 'pointer',
+                    border: '1px solid rgba(139,92,246,0.5)', background: 'rgba(139,92,246,0.15)', color: '#c4b5fd',
+                    fontWeight: 700,
+                  }}
+                >
+                  Swap
+                </button>
+              )}
+              {onOpenToken && (
+                <button
+                  type="button"
+                  title="Token overview page"
+                  onClick={() => onOpenToken({ symbol, name: name || tokenInfo?.display_symbol || symbol })}
+                  style={{
+                    fontSize: '0.55rem', padding: '3px 8px', borderRadius: 6, cursor: 'pointer',
+                    border: '1px solid #2a2f42', background: '#1a1f33', color: '#a0a5b8',
+                  }}
+                >
+                  Token
+                </button>
+              )}
+            </div>
           )}
 
           <div style={{ display: 'flex', alignItems: 'center', gap: '8px', borderLeft: '1px solid #2a2f42', paddingLeft: '15px' }}>

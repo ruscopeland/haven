@@ -7,6 +7,7 @@ import DashboardView from './components/DashboardView'
 import SettingsView from './components/SettingsView'
 import TokenDetailView from './components/TokenDetailView'
 import StrategyDetailView from './components/StrategyDetailView'
+import PortfolioView from './components/PortfolioView'
 import EngineToggle from './components/EngineToggle'
 
 const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:8000';
@@ -14,6 +15,7 @@ const LAYOUT_NAMES_KEY = 'chartLayoutNames';
 
 const NAV = [
   ['dashboard', 'Dashboard'],
+  ['portfolio', 'Portfolio'],
   ['charts', 'Charts'],
   ['strategies', 'Strategies'],
   ['finder', 'Token Finder'],
@@ -49,6 +51,7 @@ function App() {
   const [selectedStrategyId, setSelectedStrategyId] = useState(null);
   const [pageToken, setPageToken] = useState(null);
   const [pageStrategyId, setPageStrategyId] = useState(null);
+  const [portfolioFocus, setPortfolioFocus] = useState(null); // symbol for swap focus
   const [tempChartActive, setTempChartActive] = useState(false);
   const savedChartsRef = useRef(null);
   const [signals, setSignals] = useState([]);
@@ -176,7 +179,15 @@ function App() {
     navigate('strategies');
   };
 
-  const openMarkerChart = (symbol, name) => {
+  // Portfolio with optional token pre-selected for manual swap (from Charts).
+  const openPortfolioSwap = (symbol, name) => {
+    setPortfolioFocus(symbol || null);
+    if (symbol) setPageToken({ symbol, name: name || symbol });
+    navigate('portfolio');
+  };
+
+  // Full Charts tab for one token (from token page / portfolio).
+  const openFullChart = (symbol, name) => {
     if (!tempChartActive) {
       savedChartsRef.current = { selectedTokens, activePreset };
       setTempChartActive(true);
@@ -184,6 +195,10 @@ function App() {
     setSelectedTokens([{ symbol, name: name || symbol, priceChange24h: 0, interval: '5m' }]);
     setActivePreset(null);
     setView('charts');
+  };
+
+  const openMarkerChart = (symbol, name) => {
+    openFullChart(symbol, name);
   };
 
   const openTopFlow = () => {
@@ -233,7 +248,9 @@ function App() {
         }}>
           <span className="logo-title" style={{ marginRight: 8 }}>⚓ Haven</span>
           {NAV.map(([key, label]) => {
-            const active = view === key || (detailActive && key === 'dashboard');
+            const active = view === key
+              || (view === 'token' && (key === 'dashboard' || key === 'portfolio'))
+              || (view === 'strategy' && key === 'dashboard');
             return (
               <button key={key} onClick={() => navigate(key)} className={`nav-tab${active ? ' active' : ''}`}>
                 {label}
@@ -243,7 +260,9 @@ function App() {
 
           {detailActive && (
             <span className="app-breadcrumb">
-              <button type="button" onClick={() => navigate('dashboard')}>Dashboard</button>
+              <button type="button" onClick={() => navigate(view === 'token' ? 'portfolio' : 'dashboard')}>
+                {view === 'token' ? 'Portfolio' : 'Dashboard'}
+              </button>
               {' › '}
               {view === 'token' && (pageToken?.name || pageToken?.symbol)}
               {view === 'strategy' && 'Strategy'}
@@ -314,12 +333,21 @@ function App() {
             onGoSettings={() => navigate('settings')}
             onGoStrategies={() => navigate('strategies')}
           />
+        ) : view === 'portfolio' ? (
+          <PortfolioView
+            signals={signals}
+            focusSymbol={portfolioFocus}
+            onOpenToken={openTokenPage}
+            onOpenChart={openFullChart}
+          />
         ) : view === 'token' && pageToken ? (
           <TokenDetailView
             symbol={pageToken.symbol}
             name={pageToken.name}
             signals={signals}
-            onBack={() => navigate('dashboard')}
+            onBack={() => navigate('portfolio')}
+            onOpenChart={openFullChart}
+            onOpenPortfolio={openPortfolioSwap}
           />
         ) : view === 'strategy' && pageStrategyId ? (
           <StrategyDetailView
@@ -368,6 +396,8 @@ function App() {
                   onClose={() => toggleToken(token)}
                   onIntervalChange={(newInterval) => updateTokenInterval(token.symbol, newInterval)}
                   signals={signals}
+                  onOpenSwap={openPortfolioSwap}
+                  onOpenToken={openTokenPage}
                 />
               ))
             )}

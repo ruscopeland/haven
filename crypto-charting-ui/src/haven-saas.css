@@ -708,3 +708,128 @@
 }
 .goplus-foot a { color: var(--primary); text-decoration: none; }
 .goplus-foot a:hover { text-decoration: underline; }
+
+/* ── Portfolio page ───────────────────────────────────────── */
+.portfolio-root { padding-bottom: 40px; }
+.portfolio-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  gap: 16px;
+  flex-wrap: wrap;
+  margin-bottom: 16px;
+}
+.portfolio-addr {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+.portfolio-stats {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(160px, 1fr));
+  gap: 12px;
+  margin-bottom: 16px;
+}
+.portfolio-stat {
+  background: var(--bg-glass);
+  border: 1px solid var(--border-glass);
+  border-radius: 14px;
+  padding: 14px 16px;
+}
+.portfolio-stat.primary {
+  border-color: rgba(139, 92, 246, 0.35);
+  grid-column: span 1;
+}
+.portfolio-stat .lbl {
+  font-size: 10px;
+  color: var(--text-muted);
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  margin-bottom: 4px;
+}
+.portfolio-stat .val {
+  font-size: 22px;
+  font-weight: 800;
+  font-family: var(--font-display);
+  color: var(--text-bright);
+  font-variant-numeric: tabular-nums;
+}
+.portfolio-stat .sub {
+  font-size: 11px;
+  color: var(--text-muted);
+  margin-top: 4px;
+}
+.portfolio-grid {
+  display: grid;
+  grid-template-columns: minmax(0, 1.6fr) minmax(300px, 0.9fr);
+  gap: 16px;
+  align-items: start;
+}
+@media (max-width: 1100px) {
+  .portfolio-grid { grid-template-columns: 1fr; }
+}
+.portfolio-panel-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+  margin-bottom: 10px;
+}
+.portfolio-controls {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+.portfolio-controls select,
+.dust-label select {
+  background: rgba(6, 9, 19, 0.5);
+  border: 1px solid var(--border-glass);
+  color: var(--text-bright);
+  border-radius: 8px;
+  padding: 4px 8px;
+  font-size: 12px;
+}
+.dust-label {
+  font-size: 11px;
+  color: var(--text-muted);
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+.portfolio-table td.num, .portfolio-table th {
+  font-variant-numeric: tabular-nums;
+}
+.portfolio-table tr.active-row {
+  background: rgba(139, 92, 246, 0.1);
+}
+.portfolio-table tr:hover { background: rgba(255, 255, 255, 0.03); }
+
+/* ── Token page split layout ──────────────────────────────── */
+.token-split {
+  display: grid;
+  grid-template-columns: minmax(0, 1.35fr) minmax(280px, 0.85fr);
+  gap: 16px;
+  align-items: stretch;
+  margin-top: 16px;
+}
+@media (max-width: 1000px) {
+  .token-split { grid-template-columns: 1fr; }
+}
+.token-split-chart { overflow: hidden; padding: 0; }
+.token-chart-embed.compact {
+  height: 320px;
+  border: none;
+  border-radius: 16px;
+}
+.token-split-trade { min-height: 320px; }
+.trade-cards.stacked {
+  grid-template-columns: 1fr;
+}
+.manual-trade.stacked .trade-cards {
+  display: grid;
+  grid-template-columns: 1fr;
+  gap: 12px;
+}

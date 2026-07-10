@@ -56,14 +56,29 @@ export default function useWalletData() {
         if (!alive) return;
         setBnb(parseInt(balHex, 16) / 1e18);
 
-        const tokensRes = await fetch(`${API_URL}/tokens?limit=500`);
-        if (!tokensRes.ok) throw new Error('API unavailable');
-        const tokenList = await tokensRes.json();
-        // Binance Alpha lists tokens across multiple chains; non-EVM ones (e.g.
-        // Sui/Move-style "0x…::module::TYPE") have contract_address values that
-        // aren't 20-byte hex addresses and would throw during ABI encoding —
-        // skip them, this scan is BSC-only.
-        const withContract = tokenList.filter(t => /^0x[0-9a-fA-F]{40}$/.test(t.contract_address || ''));
+        // Full universe for balance scan (including thin/retired rows) so held
+        // dust still appears. Product screener still uses the $100k floor.
+        // Paginate — API default limit is small; wallet scan needs breadth.
+        const tokenList = [];
+        let skip = 0;
+        const page = 500;
+        for (;;) {
+          const tokensRes = await fetch(
+            `${API_URL}/tokens?status=all&min_liquidity=0&limit=${page}&skip=${skip}`);
+          if (!tokensRes.ok) throw new Error('API unavailable');
+          const batch = await tokensRes.json();
+          if (!Array.isArray(batch) || batch.length === 0) break;
+          tokenList.push(...batch);
+          if (batch.length < page) break;
+          skip += page;
+          if (skip > 20000) break; // safety
+        }
+        // BSC-only EVM addresses (skip non-hex / other chains for this scan).
+        const withContract = tokenList.filter(t => {
+          if (!/^0x[0-9a-fA-F]{40}$/.test(t.contract_address || '')) return false;
+          const chain = String(t.chain_id || '');
+          return !chain || chain === 'bsc' || chain === '56';
+        });
         const contracts = withContract.map(t => t.contract_address);
 
         const balances = await multicallBalanceOf(address, contracts);
