@@ -100,8 +100,12 @@ export default function SettingsView() {
             <div>Queue (liquid, need scan/refresh): <b style={{ color: 'var(--text-bright)' }}>{goplus.need_scan}</b></div>
             <div>Scanned total: {goplus.scanned_total} · auto-blacklisted: {goplus.blacklisted}</div>
             <div style={{ marginTop: 6 }}>
-              Only tokens with ≥$100k liquidity are scanned. Run the <b>Haven GoPlus</b> window from start.bat
+              Only tokens with ≥$100k liquidity are bulk-scanned. Run the <b>Haven GoPlus</b> window from start.bat
               (or <code>python goplus_worker.py</code>) so usage is paced across the day.
+            </div>
+            <div style={{ marginTop: 8, color: 'var(--text-bright)' }}>
+              <b>Trade safety:</b> the engine never unlimited-approves tokens. Before any approve/swap it
+              runs a GoPlus check (honeypot, <b>airdrop scam</b>, extreme tax). Failures block the trade.
             </div>
           </div>
         )}

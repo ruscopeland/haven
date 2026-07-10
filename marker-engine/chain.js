@@ -41,12 +41,25 @@ export async function getTokenBalance(tokenAddress, owner, provider) {
   return { raw, decimals, formatted: parseFloat(ethers.formatUnits(raw, decimals)) };
 }
 
-// Approve `spender` for MaxUint256 if the current allowance is below amountRaw.
-export async function ensureAllowance(tokenAddress, spender, amountRaw, wallet) {
+// Approve `spender` only for this trade's amount — NEVER MaxUint256.
+// Infinite approvals are how airdrop/phishing routers drain wallets if the
+// spender is malicious or the token is a scam that tricks users into selling.
+// exactAmount=true (default): approve amountRaw only.
+export async function ensureAllowance(tokenAddress, spender, amountRaw, wallet, {
+  exactAmount = true,
+} = {}) {
   const c = new ethers.Contract(tokenAddress, ERC20_ABI, wallet);
   const current = await c.allowance(wallet.address, spender);
   if (current >= amountRaw) return false;
-  const tx = await c.approve(spender, ethers.MaxUint256);
+  const approveAmount = exactAmount ? amountRaw : ethers.MaxUint256;
+  // Some tokens (USDT-style) require resetting non-zero allowance to 0 first.
+  if (current > 0n && exactAmount) {
+    try {
+      const reset = await c.approve(spender, 0n);
+      await reset.wait();
+    } catch { /* best-effort; continue to exact approve */ }
+  }
+  const tx = await c.approve(spender, approveAmount);
   await tx.wait();
   return true;
 }

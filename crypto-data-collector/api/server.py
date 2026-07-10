@@ -1490,6 +1490,60 @@ def health_check(db: Session = Depends(get_db)):
     return statuses
 
 
+class SecurityCheckBody(BaseModel):
+    force: bool = False
+
+
+@app.post("/security/check/{symbol}")
+def security_check_token(symbol: str, body: SecurityCheckBody | None = None,
+                         force: int = 0,
+                         db: Session = Depends(get_db),
+                         identity: Identity = Depends(require_paid)):
+    """Pre-trade GoPlus gate — engine/UI call this BEFORE any approve/swap.
+
+    - Scans (or reuses fresh cache) the token via GoPlus.
+    - Auto-blacklists honeypots / airdrop scams / extreme tax.
+    - Returns {safe, blocked, critical, flags, ...}. Engine refuses trade if blocked.
+    """
+    from ingest.goplus import scan_one_token
+    from ingest.chains import load_env_file
+    load_env_file()
+    tok = db.query(Token).filter(Token.symbol == symbol).first()
+    if not tok:
+        raise HTTPException(status_code=404, detail="Token not found")
+    if tok.status == "blacklisted":
+        return {
+            "symbol": symbol, "safe": False, "blocked": True,
+            "critical": ["blacklisted"], "flags": ["blacklisted"],
+            "message": "Token is blacklisted — no approve, no swap.",
+        }
+    if not tok.contract_address:
+        return {
+            "symbol": symbol, "safe": False, "blocked": True,
+            "critical": ["no_contract"], "flags": [],
+            "message": "No contract address — cannot trade.",
+        }
+    do_force = bool(force) or bool(body and body.force)
+    result = scan_one_token(db, tok, force=do_force, count_budget=True)
+    # Refresh status after possible blacklist
+    db.refresh(tok)
+    result["symbol"] = symbol
+    result["status"] = tok.status
+    result["contract_address"] = tok.contract_address
+    result["chain_id"] = tok.chain_id
+    if result.get("blocked") or result.get("critical"):
+        result["message"] = (
+            "SECURITY BLOCK — no ERC-20 approve and no swap. "
+            f"Flags: {', '.join(result.get('critical') or result.get('flags') or [])}"
+        )
+    elif result.get("safe") is True:
+        result["message"] = "GoPlus clear — exact-amount approve allowed for this trade only."
+    else:
+        result["message"] = "Incomplete security data — trade blocked until a clean scan."
+        result["blocked"] = True
+    return result
+
+
 @app.get("/goplus/status")
 def goplus_status(identity: Identity = Depends(require_paid)):
     """Quota + queue state for the GoPlus scanner (visible in Settings)."""

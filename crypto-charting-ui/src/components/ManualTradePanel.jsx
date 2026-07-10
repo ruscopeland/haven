@@ -69,6 +69,24 @@ export default function ManualTradePanel({
   const send = async (dir, usdNum) => {
     setBusy(true); setMsg(null);
     try {
+      // GoPlus gate in the UI too (engine will re-check). Blocks airdrop scams
+      // / honeypots before we even queue a marker that would approve+swap.
+      const secRes = await fetch(`${API_URL}/security/check/${encodeURIComponent(symbol)}`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ force: false }),
+      });
+      const sec = secRes.ok ? await secRes.json() : null;
+      if (!secRes.ok || !sec || sec.blocked || sec.safe !== true) {
+        const why = (sec?.critical || sec?.flags || [sec?.message || `HTTP ${secRes.status}`]).join(', ');
+        setMsg({
+          kind: 'err',
+          text: `Security block — no approve/swap for ${displayName}: ${why}. `
+            + `(GoPlus checks honeypots, airdrop scams, extreme tax.)`,
+        });
+        closeConfirm(); setBusy(false); return;
+      }
+
       const s = await (await fetch(`${API_URL}/engine/settings`)).json();
       if (s.paused) {
         setMsg({ kind: 'err', text: 'Engine is PAUSED — resume it first.' });

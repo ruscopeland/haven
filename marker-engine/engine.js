@@ -248,11 +248,45 @@ export class MarkerEngine {
     return false;
   }
 
+  // GoPlus security gate — MUST pass before any approve() or swap.
+  // Blocks honeypots, airdrop scams (e.g. zepe.io-style), extreme tax, etc.
+  // Unscanned tokens are scanned on-demand (counts against daily budget).
+  async assertTokenSafeToTrade(symbol, name) {
+    const requireScan = process.env.SECURITY_REQUIRE_SCAN !== '0'; // default on
+    if (!requireScan) return;
+    let sec;
+    try {
+      sec = await this.api.checkTokenSecurity(symbol, { force: false });
+    } catch (e) {
+      throw new Error(
+        `Security check unavailable for ${name} (${e.message}). ` +
+        `Refuse to approve/swap until GoPlus is reachable.`);
+    }
+    if (sec.blocked || (sec.critical && sec.critical.length)) {
+      const why = (sec.critical || sec.flags || ['blocked']).join(', ');
+      throw new Error(
+        `SECURITY BLOCK ${name}: ${why}. No approve, no swap. ` +
+        `(GoPlus — airdrop scams / honeypots / extreme tax are auto-blocked.)`);
+    }
+    if (sec.safe === false) {
+      throw new Error(`SECURITY BLOCK ${name}: not marked safe by GoPlus.`);
+    }
+    // Unscanned / unknown: only allow if the API says scanned and safe.
+    if (sec.safe !== true) {
+      throw new Error(
+        `SECURITY BLOCK ${name}: no clean GoPlus scan yet (safe=${sec.safe}). ` +
+        `Wait for scan or check Settings → Token security.`);
+    }
+  }
+
   // Size, quote, guard, execute, and record one marker swap.
   async executeSwap(marker, currentPrice, tokenAddress, name) {
     const w = this.wallet;
     const isBuy = isBuyMarker(marker.marker_type);
     const { gasPriceGwei, slippagePct } = this.config;
+
+    // Security FIRST — never approve a token we haven't cleared.
+    await this.assertTokenSafeToTrade(marker.symbol, name);
 
     // Marker sizing intent: new markers store {usd}; legacy ones {amount} (token qty).
     // meta may also carry {tp, sl} (bracket entry) or {bracketId} (an OCO leg).
@@ -303,9 +337,15 @@ export class MarkerEngine {
     }
 
     if (!isBuy) {
+      // Exact-amount approve only (never MaxUint256) — limits blast radius if
+      // the token or router is malicious. Security gate already ran above.
       const amountRaw = ethers.parseUnits(amountInStr, decimalsIn);
-      const approved = await ensureAllowance(tokenAddress, quote.to, amountRaw, w);
-      if (approved) this.log('INFO', `Approved ${name} for the swap router.`);
+      const approved = await ensureAllowance(tokenAddress, quote.to, amountRaw, w, {
+        exactAmount: true,
+      });
+      if (approved) {
+        this.log('INFO', `Approved exact ${amountInStr} ${name} for this swap only (not unlimited).`);
+      }
     }
 
     const tx = await sendBuiltTx(quote, gasPriceGwei, w);

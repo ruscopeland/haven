@@ -123,6 +123,17 @@ def assess(result: dict) -> dict:
     # when present. Only flag when explicitly "0".
     if result.get("is_true_token") is not None and str(result.get("is_true_token")) == "0":
         flags.append("possible_copycat")
+        # Many airdrop phishing tokens also fail true-token checks.
+        critical.append("possible_copycat")
+
+    # Free-text risk notes from GoPlus often mention airdrop/phishing.
+    note = " ".join(str(result.get(k) or "") for k in (
+        "note", "other_potential_risks", "trust_list",
+    )).lower()
+    if any(w in note for w in ("airdrop scam", "airdrop phishing", "honeypot", "phishing")):
+        if "airdrop_scam" not in critical:
+            critical.append("airdrop_scam")
+            flags.append("airdrop_scam")
 
     buy_tax = _parse_tax(result.get("buy_tax"))
     sell_tax = _parse_tax(result.get("sell_tax"))
@@ -368,6 +379,54 @@ def apply_result(db, tok: Token, raw: dict | None):
         # and now safe — re-activate so it can re-enter screener.
         tok.status = "active"
     return summary
+
+
+def scan_one_token(db, tok: Token, *, force: bool = False, count_budget: bool = True) -> dict:
+    """On-demand scan for a single token (used before approve/swap).
+
+    Still respects daily budget unless count_budget=False (emergency path —
+    we keep budget on by default so free-tier stays safe).
+    """
+    from ingest.chains import load_env_file
+    load_env_file()
+    client = GoPlusClient()
+    if not client.configured:
+        return {"safe": None, "blocked": True, "critical": ["goplus_not_configured"],
+                "flags": [], "error": "GoPlus keys missing"}
+
+    cached = _parse_cached(tok)
+    fresh_ms = 24 * 3600 * 1000  # trade path: re-scan if older than 24h
+    if (not force and cached and cached.get("scanned_at")
+            and _now_ms() - int(cached["scanned_at"]) < fresh_ms
+            and cached.get("error") != "no_result"):
+        blocked = bool(cached.get("critical")) or cached.get("safe") is False
+        return {**cached, "blocked": blocked, "from_cache": True}
+
+    if count_budget and client.remaining_budget() <= 0:
+        # Prefer cached even if slightly stale over failing closed with no data
+        if cached and cached.get("scanned_at"):
+            blocked = bool(cached.get("critical")) or cached.get("safe") is False
+            return {**cached, "blocked": blocked, "from_cache": True, "budget_exhausted": True}
+        return {"safe": None, "blocked": True, "critical": ["goplus_budget_exhausted"],
+                "flags": [], "error": "daily GoPlus budget exhausted — cannot clear new tokens"}
+
+    chain = tok.chain_id or "bsc"
+    if chain == "56":
+        chain = "bsc"
+    try:
+        results = client.fetch_security(chain, [tok.contract_address])
+    except Exception as e:
+        if cached:
+            blocked = bool(cached.get("critical")) or cached.get("safe") is False
+            return {**cached, "blocked": blocked, "from_cache": True, "error": str(e)}
+        return {"safe": None, "blocked": True, "critical": ["goplus_fetch_failed"],
+                "flags": [], "error": str(e)}
+
+    raw = results.get((tok.contract_address or "").lower())
+    summary = apply_result(db, tok, raw)
+    db.commit()
+    blocked = bool(summary.get("critical")) or summary.get("safe") is False
+    return {**summary, "blocked": blocked, "from_cache": False}
 
 
 def run_scan(max_addresses: int | None = None) -> dict:

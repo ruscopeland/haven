@@ -26,8 +26,17 @@ export class ApiClient {
   getOverview() { return this.#json('/dashboard/overview'); }
   // The on-chain universe is thousands of tokens (vs ~400 Alpha ones) — the
   // limit must clear it or the engine/runner token maps silently truncate.
-  getTokens() { return this.#json('/tokens?limit=20000'); }
+  getTokens() { return this.#json('/tokens?limit=20000&min_liquidity=0&quality=false'); }
   getEngineSettings() { return this.#json('/engine/settings'); }
+  // GoPlus security gate before approve/swap. force=true re-scans if stale/missing.
+  checkTokenSecurity(symbol, { force = false } = {}) {
+    const q = force ? '?force=1' : '';
+    return this.#json(`/security/check/${encodeURIComponent(symbol)}${q}`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: '{}',
+    });
+  }
   claimMarker(id) { return this.#post(`/markers/${id}/claim`); }
   recordTrade(trade) { return this.#post('/trades', trade); }
   createMarker(marker) { return this.#post('/markers', marker); }
