@@ -67,8 +67,8 @@
   letter-spacing: 0.5px;
 }
 .wb-mode-badge.mode-off { background: var(--bg-color); color: var(--text-secondary); }
-.wb-mode-badge.mode-dry { background: rgba(51, 136, 255, 0.15); color: var(--accent-blue); }
-.wb-mode-badge.mode-live { background: rgba(0, 255, 136, 0.15); color: var(--accent-green); }
+.wb-mode-badge.mode-dry { background: rgba(245, 158, 11, 0.15); color: #fbbf24; }
+.wb-mode-badge.mode-live { background: rgba(244, 63, 94, 0.15); color: #fb7185; }
 
 .wb-err-dot { color: var(--accent-red); font-size: 0.8rem; cursor: help; }
 

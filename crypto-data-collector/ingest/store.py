@@ -297,12 +297,26 @@ class BucketStore:
                 return
             rows = {r.symbol: r for r in db.query(LatestTicker)
                     .filter(LatestTicker.symbol.in_(list(vol.keys()))).all()}
+            # Count buckets per token — a token with <4 15m bars in 24h (1 hour
+            # of data) doesn't have meaningful 24h stats. A single anomalous
+            # swap produces absurd price_change values (millions of %).
+            bucket_counts = dict(db.query(
+                FifteenMinBucket.symbol,
+                func.count(FifteenMinBucket.bucket_start)
+            ).filter(FifteenMinBucket.bucket_start >= start)
+             .group_by(FifteenMinBucket.symbol).all())
             ts = now_ms()
             for slug, v in vol.items():
+                # Skip tokens with insufficient data — their 24h stats are noise.
+                if bucket_counts.get(slug, 0) < 4:
+                    continue
                 open_24h = opens.get(slug) or 0.0
                 last = (rows[slug].last_price if slug in rows
                         else self.last_prices.get(slug, 0.0)) or 0.0
                 pct = ((last - open_24h) / open_24h * 100.0) if open_24h > 0 else 0.0
+                # Cap at 10,000% — anything higher is a micro-cap artifact
+                # (one swap at $0.0001 then one at $10 = 10 million %).
+                pct = max(-100.0, min(pct, 10_000.0))
                 row = rows.get(slug)
                 if row:
                     row.volume_24h = v

@@ -81,6 +81,18 @@ async def run_async():
                 write_debug_log("ERROR", f"[{ing.chain}] ingester crashed: {e}")
                 await asyncio.sleep(60)
 
+    def goplus_tick():
+        # Quota-safe: only active+$100k tokens, hard daily budget in goplus.py.
+        # Cap each tick so a restart never dumps the whole day at once.
+        try:
+            from ingest.goplus import run_scan
+            run_scan(max_addresses=int(os.environ.get("GOPLUS_TICK_MAX", "40")))
+        except Exception as e:
+            log(f"GoPlus tick failed: {e}", "ERROR")
+
+    # 6h between ticks + 10min initial delay (collector must finish bootstrap).
+    goplus_interval = int(os.environ.get("GOPLUS_TICK_SEC", str(6 * 3600)))
+
     tasks = [asyncio.create_task(run_chain(i)) for i in ingesters]
     tasks += [
         asyncio.create_task(periodic(store.flush_completed, 10)),
@@ -88,6 +100,8 @@ async def run_async():
         asyncio.create_task(periodic(store.archive_15m, 15 * 60, initial_delay=60)),
         asyncio.create_task(periodic(store.compute_24h_stats, 5 * 60, initial_delay=90)),
         asyncio.create_task(periodic(umbrella_heartbeat, 30, initial_delay=30)),
+        asyncio.create_task(periodic(
+            goplus_tick, goplus_interval, initial_delay=600)),
     ]
     try:
         await asyncio.gather(*tasks)

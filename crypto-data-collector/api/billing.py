@@ -1,9 +1,10 @@
-"""Haven billing — Stripe subscriptions.
+"""Haven billing — Stripe subscriptions + free paper trial.
 
 Pricing (set by the owner 2026-07-06):
   - Monthly: $10/mo, drops to $20/mo after the first 500 subscribers.
   - Annual:  $60/yr ($5/mo), drops to $120/yr after the first 500.
-  - No free tier.
+  - Free paper trial: PAPER_TRIAL_DAYS of cloud paper-trading (no LIVE),
+    started via POST /billing/start-paper-trial without a card.
 
 The "first 500" tier is enforced HERE, at checkout time: we count active
 subscriptions and pick the founding price while under the cap. Whichever price
@@ -27,7 +28,10 @@ from sqlalchemy.orm import Session
 
 from database.db import get_db
 from database.models import Subscription, Strategy
-from api.auth import get_identity, Identity, ACTIVE_STATUSES, SOLO_MODE, entitlements
+from api.auth import (
+    get_identity, Identity, ACTIVE_STATUSES, SOLO_MODE, entitlements,
+    PAPER_TRIAL_DAYS, subscription_active,
+)
 
 router = APIRouter(prefix="/billing", tags=["billing"])
 
@@ -36,8 +40,8 @@ STRIPE_WEBHOOK_SECRET = os.environ.get("STRIPE_WEBHOOK_SECRET", "")
 WEB_APP_URL = os.environ.get("HAVEN_WEB_URL", "http://localhost:5173")
 
 EARLY_LIMIT = int(os.environ.get("HAVEN_EARLY_LIMIT", "500"))
-# Optional Stripe free-trial window (days). 0 = no trial (default). While a
-# subscription is `trialing`, entitlements limit it to 1 paper-only bot.
+# Optional Stripe free-trial window (days) attached to checkout. 0 = none.
+# While a subscription is `trialing`, entitlements limit it to paper-only bots.
 TRIAL_DAYS = int(os.environ.get("HAVEN_TRIAL_DAYS", "0"))
 
 PRICES = {
@@ -57,8 +61,11 @@ def _stripe():
 
 
 def active_subscriber_count(db: Session) -> int:
+    # Count real paying/active seats only (exclude free paper trials for founding cap).
     return (db.query(Subscription)
-            .filter(Subscription.status.in_(ACTIVE_STATUSES)).count())
+            .filter(Subscription.status.in_(("active", "past_due")))
+            .filter(Subscription.plan != "paper")
+            .count())
 
 
 def _founding_available(db: Session) -> bool:
@@ -85,6 +92,8 @@ def get_pricing(db: Session = Depends(get_db)):
         "seats_left": max(0, EARLY_LIMIT - count),
         "monthly_usd": 10 if early else 20,
         "annual_usd": 60 if early else 120,
+        "paper_trial_days": PAPER_TRIAL_DAYS,
+        "paper_trial_bots": int(os.environ.get("HAVEN_TRIAL_BOTS", "1")),
     }
 
 
@@ -106,6 +115,7 @@ def billing_status(db: Session = Depends(get_db),
                         .filter(Strategy.user_id == identity.user_id).count())
     bots = {"max_bots": ent["max_bots"], "bots_running": bots_running,
             "live_allowed": ent["live_allowed"],
+            "trial": ent.get("trial", False),
             "max_strategies": ent["max_strategies"],
             "strategies_saved": strategies_saved}
     if SOLO_MODE:
@@ -121,6 +131,64 @@ def billing_status(db: Session = Depends(get_db),
         "current_period_end": sub.current_period_end,
         "extra_bots": sub.extra_bots or 0,
         **bots,
+    }
+
+
+@router.post("/start-paper-trial")
+def start_paper_trial(db: Session = Depends(get_db),
+                      identity: Identity = Depends(get_identity)):
+    """Start a free paper-only trial (no card). Idempotent if already active.
+
+    Creates/updates subscriptions row: status=trialing, plan=paper,
+    current_period_end = now + PAPER_TRIAL_DAYS. Cannot stack on a paid plan;
+    expired trials cannot be restarted (subscribe instead).
+    """
+    if SOLO_MODE:
+        return {"ok": True, "status": "active", "plan": "solo", "paid": True,
+                "message": "Solo mode — full access already"}
+    if identity.kind not in ("user",):
+        raise HTTPException(status_code=403, detail="Sign in with the web app to start a trial")
+
+    now_ms = int(time.time() * 1000)
+    end_ms = now_ms + PAPER_TRIAL_DAYS * 24 * 3600 * 1000
+    sub = db.query(Subscription).filter(Subscription.user_id == identity.user_id).first()
+
+    if sub and sub.status in ("active", "past_due") and sub.plan not in (None, "paper"):
+        raise HTTPException(status_code=400, detail="You already have a paid subscription")
+
+    if sub and subscription_active(db, identity.user_id):
+        # Already on an unexpired trial or paid access.
+        return {
+            "ok": True,
+            "status": sub.status,
+            "plan": sub.plan,
+            "paid": True,
+            "current_period_end": sub.current_period_end,
+            "message": "Already active",
+        }
+
+    if sub and sub.plan == "paper" and sub.status == "trialing":
+        # Expired paper trial — do not restart free.
+        raise HTTPException(
+            status_code=402,
+            detail="Paper trial has ended. Subscribe to keep trading.")
+
+    if not sub:
+        sub = Subscription(user_id=identity.user_id, created_at=now_ms)
+        db.add(sub)
+    sub.status = "trialing"
+    sub.plan = "paper"
+    sub.current_period_end = end_ms
+    sub.updated_at = now_ms
+    db.commit()
+    return {
+        "ok": True,
+        "status": "trialing",
+        "plan": "paper",
+        "paid": True,
+        "current_period_end": end_ms,
+        "trial_days": PAPER_TRIAL_DAYS,
+        "message": f"Paper trial started — {PAPER_TRIAL_DAYS} days, paper bots only",
     }
 
 

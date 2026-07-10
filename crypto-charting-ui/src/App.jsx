@@ -10,38 +10,60 @@ import StrategyDetailView from './components/StrategyDetailView'
 import EngineToggle from './components/EngineToggle'
 
 const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:8000';
+const LAYOUT_NAMES_KEY = 'chartLayoutNames';
 
-function HealthDot({ status }) {
-  const colors = { ok: '#00ff88', warning: '#fbbf24', down: '#ff3366', unknown: '#2a2f42' };
-  return <span style={{ display: 'inline-block', width: 10, height: 10, borderRadius: '50%', background: colors[status] || colors.unknown, marginLeft: 6 }} title={status} />;
+const NAV = [
+  ['dashboard', 'Dashboard'],
+  ['charts', 'Charts'],
+  ['strategies', 'Strategies'],
+  ['finder', 'Token Finder'],
+  ['settings', 'Settings'],
+];
+
+function HealthDot({ status, label }) {
+  const colors = { ok: '#34d399', warning: '#fbbf24', down: '#fb7185', unknown: '#2a2f42' };
+  const tip = `${label}: ${status || 'unknown'}`;
+  return (
+    <span className="health-label" title={tip}>
+      {label}
+      <span style={{
+        display: 'inline-block', width: 8, height: 8, borderRadius: '50%',
+        background: colors[status] || colors.unknown, marginLeft: 4,
+      }} />
+    </span>
+  );
+}
+
+function loadLayoutNames() {
+  try {
+    const raw = localStorage.getItem(LAYOUT_NAMES_KEY);
+    if (raw) return { 1: 'Layout 1', 2: 'Layout 2', 3: 'Layout 3', 4: 'Layout 4', 5: 'Layout 5', ...JSON.parse(raw) };
+  } catch { /* */ }
+  return { 1: 'Layout 1', 2: 'Layout 2', 3: 'Layout 3', 4: 'Layout 4', 5: 'Layout 5' };
 }
 
 function App() {
   const [selectedTokens, setSelectedTokens] = useState([]);
   const [activePreset, setActivePreset] = useState(null);
-  const [view, setView] = useState('dashboard');   // 'dashboard' | 'token' | 'strategy' | 'charts' | 'strategies' | 'finder' | 'settings'
+  const [view, setView] = useState('dashboard');
   const [selectedStrategyId, setSelectedStrategyId] = useState(null);
-  const [pageToken, setPageToken] = useState(null); // {symbol, name} for the token detail page
-  const [pageStrategyId, setPageStrategyId] = useState(null); // for the strategy performance page
-  // Marker-deep-link: a one-off chart view that isn't part of any saved
-  // preset. `savedChartsRef` holds whatever was on the Charts page before we
-  // jumped there, so leaving the temp view restores it exactly.
+  const [pageToken, setPageToken] = useState(null);
+  const [pageStrategyId, setPageStrategyId] = useState(null);
   const [tempChartActive, setTempChartActive] = useState(false);
   const savedChartsRef = useRef(null);
   const [signals, setSignals] = useState([]);
   const [sortBy, setSortBy] = useState("flow_15m");
   const [health, setHealth] = useState({ collector: 'unknown', execution_engine: 'unknown' });
   const [signalError, setSignalError] = useState(false);
+  const [layoutNames, setLayoutNames] = useState(loadLayoutNames);
+  const [gridMode, setGridMode] = useState(null); // null = auto, or 1/2/4/6
 
-  // Load presets from local storage
   const [presets, setPresets] = useState(() => {
     const saved = localStorage.getItem('chartPresets');
     if (saved) return JSON.parse(saved);
     return { 1: [], 2: [], 3: [], 4: [], 5: [] };
   });
 
-  // Health check polling
-  // Accept token from wallet app via URL param
   useEffect(() => {
     const params = new URLSearchParams(window.location.search);
     const tokenParam = params.get('token');
@@ -119,8 +141,15 @@ function App() {
     }
   };
 
-  // All navigation goes through here so leaving Charts while a marker's
-  // one-off chart is showing restores whatever was there before it opened.
+  const renameLayout = (num) => {
+    const current = layoutNames[num] || `Layout ${num}`;
+    const name = window.prompt('Layout name', current);
+    if (!name || !name.trim()) return;
+    const next = { ...layoutNames, [num]: name.trim().slice(0, 24) };
+    setLayoutNames(next);
+    localStorage.setItem(LAYOUT_NAMES_KEY, JSON.stringify(next));
+  };
+
   const navigate = (key) => {
     if (tempChartActive && key !== 'charts') {
       const saved = savedChartsRef.current;
@@ -132,27 +161,21 @@ function App() {
     setView(key);
   };
 
-  // Token detail page (from a Dashboard holdings row) — an in-app page, not
-  // a separate browser tab like the old wallet app used to open.
   const openTokenPage = (t) => {
     setPageToken(t);
     navigate('token');
   };
 
-  // Strategy performance page (from a Dashboard bot card or the workbench).
   const openStrategyPage = (id) => {
     setPageStrategyId(id);
     navigate('strategy');
   };
 
-  // Jump from the performance page into the workbench with the bot loaded.
   const openStrategyEditor = (id) => {
     setSelectedStrategyId(id);
     navigate('strategies');
   };
 
-  // Marker deep-link: show only that marker's token on the Charts page,
-  // without disturbing the preset/tokens the user had open there.
   const openMarkerChart = (symbol, name) => {
     if (!tempChartActive) {
       savedChartsRef.current = { selectedTokens, activePreset };
@@ -163,14 +186,32 @@ function App() {
     setView('charts');
   };
 
+  const openTopFlow = () => {
+    const top = signals.slice(0, 4).map(s => ({
+      symbol: s.symbol,
+      name: s.name || s.symbol,
+      priceChange24h: s.price_change_24h,
+      interval: '5m',
+    }));
+    if (top.length) {
+      setSelectedTokens(top);
+      setActivePreset(null);
+    }
+  };
+
   const count = selectedTokens.length;
   let cols = 1;
   let rows = 1;
-
-  if (count > 0) {
-    cols = Math.ceil(Math.sqrt(count * 1.5)); 
+  if (gridMode === 1) { cols = 1; rows = Math.max(1, count); }
+  else if (gridMode === 2) { cols = 2; rows = Math.ceil(Math.max(1, count) / 2); }
+  else if (gridMode === 4) { cols = 2; rows = 2; }
+  else if (gridMode === 6) { cols = 3; rows = 2; }
+  else if (count > 0) {
+    cols = Math.ceil(Math.sqrt(count * 1.5));
     rows = Math.ceil(count / cols);
   }
+
+  const detailActive = view === 'token' || view === 'strategy';
 
   return (
     <div className="app-container">
@@ -185,10 +226,14 @@ function App() {
       )}
 
       <div className="main-content" style={{ display: 'flex', flexDirection: 'column', flex: 1, overflow: 'hidden' }}>
-        <div className="preset-toolbar" style={{ display: 'flex', gap: '10px', padding: '10px 16px', background: 'rgba(13, 20, 38, 0.75)', backdropFilter: 'blur(12px)', borderBottom: '1px solid var(--border-glass)', alignItems: 'center' }}>
+        <div className="preset-toolbar" style={{
+          display: 'flex', gap: '8px', padding: '10px 16px',
+          background: 'rgba(13, 20, 38, 0.75)', backdropFilter: 'blur(12px)',
+          borderBottom: '1px solid var(--border-glass)', alignItems: 'center', flexWrap: 'wrap',
+        }}>
           <span className="logo-title" style={{ marginRight: 8 }}>⚓ Haven</span>
-          {[['dashboard', '🏠 Dashboard'], ['charts', '📊 Charts'], ['strategies', '⚡ Strategies'], ['finder', '🔍 Token Finder'], ['settings', '⚙ Settings']].map(([key, label]) => {
-            const active = view === key || ((view === 'token' || view === 'strategy') && key === 'dashboard');
+          {NAV.map(([key, label]) => {
+            const active = view === key || (detailActive && key === 'dashboard');
             return (
               <button key={key} onClick={() => navigate(key)} className={`nav-tab${active ? ' active' : ''}`}>
                 {label}
@@ -196,54 +241,68 @@ function App() {
             );
           })}
 
-          {view === 'charts' && (
-            <>
-              <span style={{ color: 'var(--text-muted)', fontWeight: 'bold', marginLeft: '16px', fontSize: 12 }}>Layouts:</span>
-              {[1, 2, 3, 4, 5].map(num => (
-                <button
-                  key={num}
-                  onClick={() => loadPreset(num)}
-                  className={`nav-tab${activePreset === num ? ' active' : ''}`}
-                  style={{ padding: '7px 12px' }}
-                >
-                  {num}
-                </button>
-              ))}
-            </>
+          {detailActive && (
+            <span className="app-breadcrumb">
+              <button type="button" onClick={() => navigate('dashboard')}>Dashboard</button>
+              {' › '}
+              {view === 'token' && (pageToken?.name || pageToken?.symbol)}
+              {view === 'strategy' && 'Strategy'}
+            </span>
           )}
-          <div style={{ flex: 1 }}></div>
 
-          {/* Health indicators */}
-          <div style={{ display: 'flex', alignItems: 'center', gap: '4px', marginRight: '12px', fontSize: '10px', color: 'var(--text-muted)' }}>
-            <span>API</span><HealthDot status={signalError ? 'down' : 'ok'} />
-            <span style={{ marginLeft: 8 }}>Collector</span><HealthDot status={health.collector || 'unknown'} />
-            <span style={{ marginLeft: 8 }}>Engine</span><HealthDot status={health.execution_engine || 'unknown'} />
+          <div style={{ flex: 1 }} />
+
+          <div style={{ display: 'flex', alignItems: 'center', gap: '10px', marginRight: 8 }}>
+            <HealthDot label="API" status={signalError ? 'down' : 'ok'} />
+            <HealthDot label="Collector" status={health.collector || 'unknown'} />
+            <HealthDot label="Engine" status={health.execution_engine || 'unknown'} />
           </div>
 
           <EngineToggle />
-
-          {view === 'charts' && (
-            <button
-              onClick={() => activePreset && savePreset(activePreset)}
-              style={{
-                background: 'var(--success-gradient)',
-                color: '#04120c',
-                border: 'none',
-                padding: '7px 16px',
-                borderRadius: '9999px',
-                cursor: activePreset ? 'pointer' : 'not-allowed',
-                opacity: activePreset ? 1 : 0.3,
-                fontWeight: 'bold',
-                fontSize: 13,
-                fontFamily: 'var(--font-display)',
-                transition: 'opacity 0.2s'
-              }}
-              disabled={!activePreset}
-            >
-              Save to Preset {activePreset ? activePreset : ''}
-            </button>
-          )}
         </div>
+
+        {view === 'charts' && (
+          <div className="charts-toolbar">
+            <span style={{ color: 'var(--text-muted)', fontWeight: 600, fontSize: 11 }}>Layouts</span>
+            {[1, 2, 3, 4, 5].map(num => (
+              <button
+                key={num}
+                onClick={() => loadPreset(num)}
+                onDoubleClick={() => renameLayout(num)}
+                className={`nav-tab${activePreset === num ? ' active' : ''}`}
+                style={{ padding: '5px 10px', fontSize: 12 }}
+                title={`${layoutNames[num]} — double-click to rename · ${presets[num]?.length || 0} charts`}
+              >
+                {layoutNames[num]}
+              </button>
+            ))}
+            <button
+              className="btn-secondary"
+              style={{ padding: '5px 12px', fontSize: 12 }}
+              disabled={!activePreset}
+              onClick={() => activePreset && savePreset(activePreset)}
+              title={activePreset ? `Save current charts to ${layoutNames[activePreset]}` : 'Select a layout slot first'}
+            >
+              Save layout
+            </button>
+            <span style={{ color: 'var(--text-muted)', fontSize: 11, marginLeft: 8 }}>Grid</span>
+            {[null, 1, 2, 4, 6].map(g => (
+              <button
+                key={String(g)}
+                className={`nav-tab${gridMode === g ? ' active' : ''}`}
+                style={{ padding: '5px 10px', fontSize: 12 }}
+                onClick={() => setGridMode(g)}
+              >
+                {g == null ? 'Auto' : g}
+              </button>
+            ))}
+            {count > 0 && (
+              <span style={{ color: 'var(--text-muted)', fontSize: 11, marginLeft: 'auto' }}>
+                {count} chart{count === 1 ? '' : 's'} open
+              </span>
+            )}
+          </div>
+        )}
 
         {view === 'dashboard' ? (
           <DashboardView
@@ -252,6 +311,8 @@ function App() {
             onOpenStrategyEditor={openStrategyEditor}
             onOpenMarkerChart={openMarkerChart}
             onSelectToken={openTokenPage}
+            onGoSettings={() => navigate('settings')}
+            onGoStrategies={() => navigate('strategies')}
           />
         ) : view === 'token' && pageToken ? (
           <TokenDetailView
@@ -285,8 +346,19 @@ function App() {
             }}
           >
             {count === 0 ? (
-              <div style={{ margin: 'auto', color: '#a0a5b8', fontSize: '1.2rem' }}>
-                Select a token from the screener or load a preset
+              <div className="charts-empty">
+                <h3>No charts open</h3>
+                <p>Select tokens from the screener, load a saved layout, or open the top flow names.</p>
+                <div className="charts-empty-actions">
+                  <button className="btn-primary" style={{ padding: '8px 14px', fontSize: 13 }}
+                    onClick={() => loadPreset(1)} disabled={!presets[1]?.length}>
+                    Load {layoutNames[1]}
+                  </button>
+                  <button className="btn-secondary" style={{ padding: '8px 14px', fontSize: 13 }}
+                    onClick={openTopFlow} disabled={!signals.length}>
+                    Open top 15m flow
+                  </button>
+                </div>
               </div>
             ) : (
               selectedTokens.map(token => (

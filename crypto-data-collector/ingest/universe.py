@@ -1,8 +1,9 @@
 """Per-chain universe manager (DATA-ROADMAP AD-D6).
 
 Owns the pools/tokens tables for one chain: bootstrap seeding, new-pool
-probation, metadata fetch, the liquidity sweep with floor/2 hysteresis, and
-the in-memory pool-context map the ingester decodes against.
+probation, metadata fetch, the liquidity sweep (enter at floor, drop at
+0.9×floor), token retire when no watched pool remains, and the in-memory
+pool-context map the ingester decodes against.
 
 Bootstrap sources (cheap-first, in order):
 1. quote + native tokens from the chain registry (hardcoded metadata),
@@ -117,6 +118,9 @@ class UniverseManager:
 
         if candidates:
             await self._probe_and_add(list(candidates))
+        # Apply current floor to anything already in the DB (e.g. floor was
+        # raised from $10k → $100k). Unwatch thin pools, retire orphan tokens.
+        self.enforce_liquidity_floor(reason="bootstrap")
         # Load every stored watch=1 pool into the decode map (restart path).
         self._load_ctx_from_db()
         log(f"[{self.chain}] universe ready: {len(self.pool_ctx)} watched pools, "
@@ -580,18 +584,22 @@ class UniverseManager:
                 self._load_ctx_from_db()
             except Exception as e:
                 log(f"[{self.chain}] candidate sweep failed: {e}", "ERROR")
-        # Liquidity re-check with floor/2 hysteresis.
+        # Liquidity re-check. Enter at floor; drop when below floor * 0.9
+        # (mild hysteresis so a $100k pool doesn't thrash at $99.9k).
         db = SessionLocal()
         try:
             pools = db.query(Pool).filter_by(chain=self.chain, watch=1).all()
             stale = [p for p in pools
                      if now_ms() - (p.last_checked or 0) > 3_600_000]
             if not stale:
+                # Still re-apply status/retire rules from last known liq.
+                self.enforce_liquidity_floor(reason="periodic")
                 return
             bals = await self._multicall(
                 [(p.quote_address, evm.calldata_balance_of(p.id.split(":", 1)[1]))
                  for p in stale])
             floor = self.cfg["liquidity_floor_usd"]
+            drop_at = floor * 0.9
             dropped = 0
             for p, (ok, r) in zip(stale, bals):
                 p.last_checked = now_ms()
@@ -600,7 +608,8 @@ class UniverseManager:
                 dec = self.quotes[p.quote_address][1]
                 liq = 2 * (evm.uint(r, 0) / 10 ** dec) * self.quote_usd(p.quote_address)
                 p.liquidity_usd = liq
-                if liq < floor / 2 and p.id.split(":", 1)[1] != (self.anchor_pool or "").lower():
+                is_anchor = p.id.split(":", 1)[1] == (self.anchor_pool or "").lower()
+                if liq < drop_at and not is_anchor:
                     p.watch = 0
                     dropped += 1
                 tok = db.query(Token).filter_by(id=p.token_id).first()
@@ -609,10 +618,79 @@ class UniverseManager:
             db.commit()
             if dropped:
                 log(f"[{self.chain}] sweep dropped {dropped} pool(s) below "
-                    f"${floor / 2:,.0f}")
-                self._load_ctx_from_db()
+                    f"${drop_at:,.0f} (floor ${floor:,.0f})")
+            # Retire tokens that no longer have any watched pool.
+            self.enforce_liquidity_floor(reason="sweep")
+            self._load_ctx_from_db()
         except Exception as e:
             db.rollback()
             log(f"[{self.chain}] liquidity sweep failed: {e}", "ERROR")
+        finally:
+            db.close()
+
+    def enforce_liquidity_floor(self, reason: str = ""):
+        """Unwatch pools below floor; retire tokens with no watched pool.
+
+        Uses stored liquidity_usd (last sweep / probe). Does not delete rows —
+        history stays, but status='retired' hides them from /tokens and
+        /signals. Tokens with a watched pool and status retired are reactivated.
+        """
+        floor = float(self.cfg["liquidity_floor_usd"])
+        drop_at = floor * 0.9
+        db = SessionLocal()
+        try:
+            pools = db.query(Pool).filter(Pool.chain == self.chain).all()
+            unwatched = 0
+            for p in pools:
+                is_anchor = p.id.split(":", 1)[1] == (self.anchor_pool or "").lower()
+                liq = p.liquidity_usd or 0.0
+                if p.watch and liq < drop_at and not is_anchor:
+                    p.watch = 0
+                    unwatched += 1
+                # Re-arm pools that recovered above the full floor.
+                if (not p.watch) and liq >= floor and not is_anchor:
+                    p.watch = 1
+
+            max_liq_by_token: dict[str, float] = {}
+            for p in pools:
+                if p.watch == 1 and p.token_id:
+                    liq = p.liquidity_usd or 0.0
+                    if liq > max_liq_by_token.get(p.token_id, 0.0):
+                        max_liq_by_token[p.token_id] = liq
+            watched_token_ids = set(max_liq_by_token)
+            tokens = db.query(Token).filter(Token.chain_id == self.chain).all()
+            retired = 0
+            revived = 0
+            for t in tokens:
+                # Never retire quote/native rows used as system anchors.
+                if (t.contract_address or "").lower() in self.quotes:
+                    if t.status != "active":
+                        t.status = "active"
+                    continue
+                if t.id in watched_token_ids:
+                    t.liquidity_usd = max_liq_by_token[t.id]
+                    if t.status == "retired":
+                        t.status = "active"
+                        revived += 1
+                    elif t.status is None:
+                        t.status = "active"
+                else:
+                    # No watched pool → hide from product surfaces.
+                    if t.status != "retired" and t.status != "blacklisted":
+                        t.status = "retired"
+                        retired += 1
+            db.commit()
+            if unwatched or retired or revived:
+                log(f"[{self.chain}] liquidity policy ({reason}): "
+                    f"unwatch={unwatched}, retire={retired}, revive={revived}, "
+                    f"floor=${floor:,.0f}")
+                write_debug_log(
+                    "INFO",
+                    f"[{self.chain}] liquidity policy ({reason}): "
+                    f"unwatch={unwatched} retire={retired} revive={revived} "
+                    f"floor=${floor:,.0f}")
+        except Exception as e:
+            db.rollback()
+            log(f"[{self.chain}] enforce_liquidity_floor failed: {e}", "ERROR")
         finally:
             db.close()

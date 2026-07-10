@@ -4,7 +4,7 @@ from sqlalchemy import desc, func, case
 from database.db import get_db, engine, Base, ensure_db_settings
 from database.models import (
     Token, OneMinBucket, LatestTicker, Heartbeat, ChartMarker, TradeHistory,
-    DebugLog, EngineSetting, Strategy, Finder, FifteenMinBucket,
+    DebugLog, EngineSetting, Strategy, Finder, FifteenMinBucket, DailyBucket,
     MARKER_TYPES, STRATEGY_MODES, FINDER_INTERVALS,
 )
 from api.auth import (
@@ -29,7 +29,35 @@ async def lifespan(app: FastAPI):
     Base.metadata.create_all(bind=engine)
     ensure_db_settings()  # pragmas/indexes + idempotent column upgrades
     print(f"Database tables ensured on startup. SOLO_MODE={SOLO_MODE}")
+
+    # Periodic CMC rank refresh for landing movers/ticker (real market caps).
+    # Runs in a worker thread so it never blocks request handling.
+    stop = asyncio.Event()
+
+    async def _cmc_loop():
+        interval = int(os.environ.get("CMC_RANK_INTERVAL_SEC", str(6 * 3600)))
+        # First run after a short delay so boot isn't blocked on CMC.
+        await asyncio.sleep(15)
+        while not stop.is_set():
+            try:
+                from cmc_ranking import run_ranking
+                result = await asyncio.to_thread(run_ranking, 2000, False, False)
+                print(f"CMC ranking refresh: {result}")
+            except Exception as e:
+                print(f"CMC ranking refresh failed: {e}")
+            try:
+                await asyncio.wait_for(stop.wait(), timeout=interval)
+            except asyncio.TimeoutError:
+                pass
+
+    task = asyncio.create_task(_cmc_loop())
     yield
+    stop.set()
+    task.cancel()
+    try:
+        await task
+    except asyncio.CancelledError:
+        pass
 
 
 app = FastAPI(title="Haven API", lifespan=lifespan)
@@ -49,6 +77,9 @@ app.add_middleware(
 # Stripe billing endpoints (dormant in solo mode; router still mounts).
 from api.billing import router as billing_router  # noqa: E402
 app.include_router(billing_router)
+# Public landing-page market data (unauthenticated, rate-limited, real DB).
+from api.public_market import router as public_router  # noqa: E402
+app.include_router(public_router)
 
 class TokenResponse(BaseModel):
     id: str
@@ -62,10 +93,39 @@ class TokenResponse(BaseModel):
     decimals: int | None = None
     status: str | None = None
     liquidity_usd: float | None = None
+    market_cap: float | None = None
     listed_at: int | None = None
+    # GoPlus Security summary (parsed from security_json). None until scanned.
+    security: dict | None = None
 
     class Config:
         from_attributes = True
+
+
+def _token_to_response(tok) -> TokenResponse:
+    sec = None
+    if tok.security_json:
+        try:
+            sec = json.loads(tok.security_json)
+            # Don't ship huge raw_subset to the browser if present — keep UI fields.
+            if isinstance(sec, dict) and "raw_subset" in sec:
+                sec = {k: v for k, v in sec.items() if k != "raw_keys"}
+        except Exception:
+            sec = None
+    return TokenResponse(
+        id=tok.id,
+        symbol=tok.symbol,
+        name=tok.name,
+        chain_id=tok.chain_id,
+        contract_address=tok.contract_address,
+        display_symbol=tok.display_symbol,
+        decimals=tok.decimals,
+        status=tok.status,
+        liquidity_usd=tok.liquidity_usd,
+        market_cap=tok.market_cap,
+        listed_at=tok.listed_at,
+        security=sec,
+    )
 
 class SignalResponse(BaseModel):
     symbol: str
@@ -86,6 +146,7 @@ class SignalResponse(BaseModel):
     trade_count: int
     price_change_24h: float
     volume_24h: float = 0.0
+    market_cap: float = 0.0
 
     class Config:
         from_attributes = True
@@ -1235,6 +1296,8 @@ def get_dashboard_overview(db: Session = Depends(get_db),
 NOISY_PATHS = {
     "/", "/health", "/heartbeat", "/signals", "/tokens",
     "/dashboard/overview", "/debug/logs", "/engine/settings", "/favicon.ico",
+    "/public/movers", "/public/ticker", "/public/ticker-universe",
+    "/public/ticker-defaults", "/billing/pricing",
 }
 
 
@@ -1508,24 +1571,36 @@ def write_heartbeat(hb: HeartbeatCreate, db: Session = Depends(get_db),
     return {"ok": True, "process": proc, "last_heartbeat": now_ms}
 
 
+# Product-facing quality bar (matches chain liquidity floors after 2026-07-10).
+# Tokens below this are retired by the collector; this is a hard API belt-and-
+# suspenders filter so /signals and /tokens never re-surface thin junk.
+MIN_TOKEN_LIQUIDITY_USD = float(os.environ.get("HAVEN_MIN_TOKEN_LIQUIDITY_USD", "100000"))
+
+
 @app.get("/tokens", response_model=List[TokenResponse])
 def get_tokens(skip: int = 0, limit: int = 100, status: str = "active",
+               min_liquidity: float | None = None,
                db: Session = Depends(get_db),
                identity: Identity = Depends(require_paid)):
     """Retrieve the list of tracked tokens (shared market data).
 
-    `status=active` (default) hides the ingester's 'staged' rows until the M4
-    cutover flips them — during the parallel-run window the wallet scan and
-    token pages keep seeing exactly the set they always did. `status=all`
-    returns everything (workbench/debug use).
+    `status=active` (default) hides staged/retired rows. By default also
+    requires liquidity_usd >= $100k (HAVEN_MIN_TOKEN_LIQUIDITY_USD). Pass
+    min_liquidity=0 to disable the liquidity gate (debug only).
     """
     q = db.query(Token)
     if status != "all":
         # Legacy rows predate the status column; NULL counts as active.
         q = q.filter((Token.status == status) | (Token.status.is_(None))) \
             if status == "active" else q.filter(Token.status == status)
+    floor = MIN_TOKEN_LIQUIDITY_USD if min_liquidity is None else float(min_liquidity)
+    if floor > 0:
+        q = q.filter(Token.liquidity_usd.isnot(None)).filter(Token.liquidity_usd >= floor)
+    # Never list blacklisted (honeypot / extreme tax) on the product surface.
+    if status == "active":
+        q = q.filter((Token.status != "blacklisted") | (Token.status.is_(None)))
     tokens = q.offset(skip).limit(limit).all()
-    return tokens
+    return [_token_to_response(t) for t in tokens]
 
 
 @app.get("/tokens/{symbol}", response_model=TokenResponse)
@@ -1535,7 +1610,7 @@ def get_token(symbol: str, db: Session = Depends(get_db),
     tok = db.query(Token).filter(Token.symbol == symbol).first()
     if not tok:
         raise HTTPException(status_code=404, detail="Token not found")
-    return tok
+    return _token_to_response(tok)
 
 
 @app.get("/chains")
@@ -1589,12 +1664,20 @@ def get_top_signals(limit: int = 400, sort_by: str = "flow_1m", db: Session = De
     )
     agg_map = {r.symbol: r for r in agg_rows}
 
-    # Tickers + names (both small tables)
+    # Tickers + names + market caps. Only quality tokens: active + min liquidity
+    # (retired/thin pools are excluded so the screener stays usable).
     ticker_rows = {t.symbol: t for t in db.query(LatestTicker).all()}
-    token_map = {t.symbol: t.name for t in db.query(Token).all()}
+    token_q = (
+        db.query(Token)
+        .filter((Token.status == "active") | (Token.status.is_(None)))
+        .filter(Token.liquidity_usd.isnot(None))
+        .filter(Token.liquidity_usd >= MIN_TOKEN_LIQUIDITY_USD)
+    )
+    token_rows = token_q.all()
+    token_map = {t.symbol: t for t in token_rows}
 
     signals = []
-    for symbol, name in token_map.items():
+    for symbol, tok in token_map.items():
         a = agg_map.get(symbol)
         ticker = ticker_rows.get(symbol)
         buy_1m = a.buy_1m if a else 0.0
@@ -1609,7 +1692,7 @@ def get_top_signals(limit: int = 400, sort_by: str = "flow_1m", db: Session = De
         signals.append(
             SignalResponse(
                 symbol=symbol,
-                name=name,
+                name=tok.name,
                 timestamp=current_minute,
                 buy_vol_1m=buy_1m,
                 sell_vol_1m=sell_1m,
@@ -1626,6 +1709,7 @@ def get_top_signals(limit: int = 400, sort_by: str = "flow_1m", db: Session = De
                 trade_count=a.trade_count if a else 0,
                 price_change_24h=ticker.price_change_24h if ticker else 0.0,
                 volume_24h=ticker.volume_24h if ticker else 0.0,
+                market_cap=tok.market_cap or 0.0,
             )
         )
 
@@ -1643,6 +1727,17 @@ def get_top_signals(limit: int = 400, sort_by: str = "flow_1m", db: Session = De
         signals.sort(key=lambda s: s.volume_24h, reverse=True)
     elif sort_by == "price_change_24h":
         signals.sort(key=lambda s: s.price_change_24h, reverse=True)
+    elif sort_by == "market_cap":
+        signals.sort(key=lambda s: s.market_cap or 0.0, reverse=True)
+    elif sort_by == "mcap_vol":
+        # Composite score: log(market_cap) + log(volume_24h) — rewards tokens
+        # that are both large and actively traded.
+        import math
+        signals.sort(
+            key=lambda s: (math.log10(s.market_cap + 1) + math.log10(s.volume_24h + 1)
+                           if s.market_cap and s.market_cap > 0 else 0.0),
+            reverse=True,
+        )
     elif sort_by == "flow_15m":
         signals.sort(key=lambda s: s.net_flow_15m, reverse=True)
     else:
@@ -1847,6 +1942,9 @@ def get_klines(symbol: str, interval: str = "5m", limit: int = 500,
 
     sym = _resolve_bucket_symbol(db, symbol)
     grouped = {}
+    if interval_ms >= 86_400_000:
+        grouped.update(_grouped_ohlc(db, DailyBucket, [sym], start_group,
+                                     last_group + interval_ms, interval_ms))
     if interval_ms >= 900_000:
         grouped.update(_grouped_ohlc(db, FifteenMinBucket, [sym], start_group,
                                      last_group + interval_ms, interval_ms))
@@ -1863,6 +1961,10 @@ def get_klines(symbol: str, interval: str = "5m", limit: int = 500,
         if latest:
             last_group = latest - (latest % interval_ms)
             start_group = last_group - (limit - 1) * interval_ms
+            if interval_ms >= 86_400_000:
+                grouped.update(_grouped_ohlc(db, DailyBucket, [sym],
+                                             start_group,
+                                             last_group + interval_ms, interval_ms))
             if interval_ms >= 900_000:
                 grouped.update(_grouped_ohlc(db, FifteenMinBucket, [sym],
                                              start_group,

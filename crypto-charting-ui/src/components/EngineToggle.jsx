@@ -25,6 +25,12 @@ export default function EngineToggle() {
 
   const togglePause = async () => {
     if (!settings || busy) return;
+    // Resuming can fire armed markers — confirm when leaving paused state.
+    if (settings.paused) {
+      const ok = window.confirm(
+        'Resume the engine? Armed markers and live strategies will execute when their rules fire.');
+      if (!ok) return;
+    }
     setBusy(true);
     try {
       const r = await fetch(`${API_URL}/engine/settings`, {

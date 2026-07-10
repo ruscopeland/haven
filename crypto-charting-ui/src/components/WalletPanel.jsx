@@ -52,9 +52,14 @@ export default function WalletPanel({ wallet, prices, tokenMap, signals, pnlBySy
               onClick={() => { setAddress(draft); setEditing(false); }}>Save</button>
           </div>
         ) : (
-          <span className="wallet-addr" style={{ cursor: 'pointer' }} title="Click to change address"
-            onClick={() => { setDraft(address); setEditing(true); }}>
-            {address ? `${address.slice(0, 8)}…${address.slice(-6)} ✎` : 'No address set — click to add one ✎'}
+          <span style={{ display: 'inline-flex', alignItems: 'center', gap: 8 }}>
+            <span className="wallet-addr" title={address || 'No address'}>
+              {address ? `${address.slice(0, 8)}…${address.slice(-6)}` : 'No address set'}
+            </span>
+            <button type="button" className="strat-edit-btn" style={{ fontSize: 11 }}
+              onClick={() => { setDraft(address); setEditing(true); }}>
+              {address ? 'Change' : 'Add wallet'}
+            </button>
           </span>
         )}
       </div>

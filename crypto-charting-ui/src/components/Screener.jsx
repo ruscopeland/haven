@@ -27,72 +27,104 @@ export default function Screener({ onToggle, selectedTokens, signals = [], sortB
         />
       </div>
       
-      <div className="screener-tabs">
-        <button className={`screener-tab ${sortBy === 'flow_15m' ? 'active' : ''}`} onClick={() => setSortBy('flow_15m')}>15m Flow</button>
-        <button className={`screener-tab ${sortBy === 'vol_spike' ? 'active' : ''}`} onClick={() => setSortBy('vol_spike')}>Vol Spikes</button>
-        <button className={`screener-tab ${sortBy === 'vol_24h' ? 'active' : ''}`} onClick={() => setSortBy('vol_24h')}>24h Vol</button>
-        <button className={`screener-tab ${sortBy === 'price_change_24h' ? 'active' : ''}`} onClick={() => setSortBy('price_change_24h')}>24h Perf</button>
+      <div className="screener-tabs" style={{ flexWrap: 'wrap' }}>
+        <label style={{ display: 'flex', alignItems: 'center', gap: 8, width: '100%', fontSize: 12, color: 'var(--text-muted)' }}>
+          Sort
+          <select
+            className="input-control"
+            style={{ flex: 1, padding: '6px 10px' }}
+            value={sortBy}
+            onChange={e => setSortBy(e.target.value)}
+          >
+            <option value="flow_15m">15m Flow</option>
+            <option value="market_cap">Market Cap</option>
+            <option value="mcap_vol">Mkt Cap + Vol</option>
+            <option value="vol_spike">Vol Spikes</option>
+            <option value="vol_24h">24h Volume</option>
+            <option value="price_change_24h">24h Performance</option>
+          </select>
+        </label>
+      </div>
+      <div style={{ padding: '4px 15px 8px', fontSize: 11, color: 'var(--text-muted)' }}>
+        {selectedTokens.length} selected · {filteredSignals.length} shown
       </div>
       <div className="screener-list">
         {signals.length === 0 ? (
-          <div style={{ padding: 20, textAlign: 'center', color: '#a0a5b8' }}>Loading Scanner...</div>
+          <div style={{ padding: 20, textAlign: 'center', color: 'var(--text-muted)' }}>
+            <div className="mkt-ticker-empty">Loading scanner…</div>
+            <div style={{ fontSize: 11, marginTop: 8 }}>Waiting for live signal feed</div>
+          </div>
+        ) : filteredSignals.length === 0 ? (
+          <div style={{ padding: 20, textAlign: 'center', color: 'var(--text-muted)' }}>No tokens match your search</div>
         ) : (
           filteredSignals.map((sig) => {
             const isPositive = sig.net_flow_15m >= 0;
             const isSelected = selectedTokens.some(t => t.symbol === sig.symbol);
-            
+            const chg = sig.price_change_24h;
+            const chgUp = (chg || 0) >= 0;
+
+            let primary = null;
+            if (sortBy === 'flow_15m') {
+              primary = (
+                <span className={isPositive ? 'flow-positive' : 'flow-negative'}>
+                  {isPositive ? '+' : ''}{formatMoney(sig.net_flow_15m)}
+                </span>
+              );
+            } else if (sortBy === 'market_cap') {
+              primary = <span style={{ color: '#fff' }}>{sig.market_cap > 0 ? formatMoney(sig.market_cap) : '—'}</span>;
+            } else if (sortBy === 'mcap_vol') {
+              primary = (
+                <span style={{ color: '#34d399', fontWeight: 'bold' }}>
+                  {sig.market_cap > 0 ? (Math.log10(sig.market_cap + 1) + Math.log10(sig.volume_24h + 1)).toFixed(1) : '0.0'}
+                </span>
+              );
+            } else if (sortBy === 'vol_spike') {
+              primary = (
+                <span style={{ color: '#34d399', fontWeight: 'bold' }}>
+                  {sig.volume_24h > 0 ? (((sig.buy_vol_1h + sig.sell_vol_1h) / (sig.volume_24h / 24)).toFixed(1)) : '0.0'}x
+                </span>
+              );
+            } else if (sortBy === 'vol_24h') {
+              primary = <span style={{ color: '#fff' }}>{formatMoney(sig.volume_24h)}</span>;
+            } else {
+              primary = (
+                <span className={chgUp ? 'flow-positive' : 'flow-negative'}>
+                  {chgUp ? '+' : ''}{chg?.toFixed(2)}%
+                </span>
+              );
+            }
+
             return (
-              <div 
-                key={sig.symbol} 
+              <div
+                key={sig.symbol}
                 className={`token-card ${isSelected ? 'active' : ''}`}
-                onClick={() => onToggle({ 
-                  symbol: sig.symbol, 
+                onClick={() => onToggle({
+                  symbol: sig.symbol,
                   name: sig.name,
                   priceChange24h: sig.price_change_24h
                 })}
               >
                 <div className="token-checkbox-container">
-                  <input 
-                    type="checkbox" 
-                    className="token-checkbox"
-                    checked={isSelected}
-                    readOnly
-                  />
-                  <div className="token-symbol">{sig.name || sig.symbol.replace('USDT', '')}</div>
+                  <input type="checkbox" className="token-checkbox" checked={isSelected} readOnly />
+                  <div>
+                    <div className="token-symbol">{sig.name || sig.symbol.replace('USDT', '')}</div>
+                    {sortBy !== 'price_change_24h' && (
+                      <div style={{ fontSize: 11, color: chgUp ? '#34d399' : '#fb7185', fontVariantNumeric: 'tabular-nums' }}>
+                        {chg == null ? '—' : `${chgUp ? '+' : ''}${Number(chg).toFixed(2)}%`} 24h
+                      </div>
+                    )}
+                  </div>
                 </div>
                 <div className="token-flow">
-                  {sortBy === 'flow_15m' && (
-                    <>
-                      <span className={isPositive ? 'flow-positive' : 'flow-negative'}>
-                        {isPositive ? '+' : ''}{formatMoney(sig.net_flow_15m)}
-                      </span>
-                      <span className="flow-label">15m Flow</span>
-                    </>
-                  )}
-                  {sortBy === 'vol_spike' && (
-                    <>
-                      <span style={{ color: '#00ff88', fontWeight: 'bold' }}>
-                        {sig.volume_24h > 0 ? (((sig.buy_vol_1h + sig.sell_vol_1h) / (sig.volume_24h / 24)).toFixed(1)) : '0.0'}x
-                      </span>
-                      <span className="flow-label">Avg 1h Vol</span>
-                    </>
-                  )}
-                  {sortBy === 'vol_24h' && (
-                    <>
-                      <span style={{ color: '#fff' }}>
-                        {formatMoney(sig.volume_24h)}
-                      </span>
-                      <span className="flow-label">24h Vol</span>
-                    </>
-                  )}
-                  {sortBy === 'price_change_24h' && (
-                    <>
-                      <span className={sig.price_change_24h >= 0 ? 'flow-positive' : 'flow-negative'}>
-                        {sig.price_change_24h >= 0 ? '+' : ''}{sig.price_change_24h?.toFixed(2)}%
-                      </span>
-                      <span className="flow-label">24h Change</span>
-                    </>
-                  )}
+                  {primary}
+                  <span className="flow-label">
+                    {sortBy === 'flow_15m' ? '15m Flow'
+                      : sortBy === 'market_cap' ? 'Market Cap'
+                      : sortBy === 'mcap_vol' ? 'Mkt+Vol'
+                      : sortBy === 'vol_spike' ? 'Vol spike'
+                      : sortBy === 'vol_24h' ? '24h Vol'
+                      : '24h Change'}
+                  </span>
                 </div>
               </div>
             );

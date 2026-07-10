@@ -4,6 +4,7 @@ import Chart from './Chart';
 import { getSavedAddress } from '../hooks/useWalletData';
 import { fmtUsd, fmtQty, fmtPrice, fmtTime, tokenColor } from '../utils/format';
 import { fetchSwapPreview, fetchBnbPriceUsd, ENGINE_SLIPPAGE_PCT } from '../utils/quote';
+import GoPlusSecurity from './GoPlusSecurity';
 import '../dashboard.css';
 
 const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:8000';
@@ -45,10 +46,9 @@ export default function TokenDetailView({ symbol, name, signals, onBack }) {
     let alive = true;
     const loadMeta = async () => {
       try {
-        const r = await fetch(`${API_URL}/tokens?limit=500`);
+        const r = await fetch(`${API_URL}/tokens/${encodeURIComponent(symbol)}`);
         if (!r.ok || !alive) return;
-        const t = (await r.json()).find(t => t.symbol === symbol);
-        if (t) setMeta(t);
+        setMeta(await r.json());
       } catch { /* header falls back to the symbol */ }
     };
     const loadPrice = async () => {
@@ -237,6 +237,15 @@ export default function TokenDetailView({ symbol, name, signals, onBack }) {
             )}
           </div>
         </div>
+      </div>
+
+      <div className="glass-panel" style={{ padding: '16px 20px', marginBottom: 20 }}>
+        <GoPlusSecurity
+          security={meta?.security}
+          chain={meta?.chain_id}
+          address={contract}
+          symbol={displayName}
+        />
       </div>
 
       {/* Embedded chart — same component as the Charts tab, sized to this page */}

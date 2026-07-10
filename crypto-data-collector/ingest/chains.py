@@ -84,7 +84,10 @@ CHAINS = {
         # lag=3 "block not yet available" fired every minute or two).
         "finality_lag": 8,
         "block_time": 0.75,         # avg seconds/block (timestamp interpolation)
-        "liquidity_floor_usd": 10_000.0,   # breadth-first (M7 rug filter gates quality)
+        # Quality floor (owner 2026-07-10): $100k primary-pool depth. Pools
+        # below this are not watched; tokens with no watched pool are retired
+        # from /tokens and /signals. (Security/honeypot scoring is separate.)
+        "liquidity_floor_usd": 100_000.0,
         "recent_pool_scan_days": 30,  # bootstrap factory-scan window (scan lane)
     },
     "ethereum": {
@@ -112,7 +115,7 @@ CHAINS = {
         "poll_seconds": 15.0,   # equal treatment on all chains (owner order 2026-07-07)
         "finality_lag": 2,
         "block_time": 12.0,
-        "liquidity_floor_usd": 25_000.0,   # ETH gas makes tiny pools untradeable anyway
+        "liquidity_floor_usd": 100_000.0,  # same quality bar as BSC (owner 2026-07-10)
         "recent_pool_scan_days": 30,
     },
     "base": {
@@ -140,7 +143,7 @@ CHAINS = {
         "poll_seconds": 15.0,   # equal treatment on all chains (owner order 2026-07-07)
         "finality_lag": 5,          # same provider-skew headroom as BSC
         "block_time": 2.0,
-        "liquidity_floor_usd": 10_000.0,   # breadth-first
+        "liquidity_floor_usd": 100_000.0,  # same quality bar as BSC (owner 2026-07-10)
         "recent_pool_scan_days": 30,
     },
     # Solana lands in DATA-ROADMAP M6 with its own (non-EVM) ingester module;

@@ -46,12 +46,23 @@ start "Alpha API" cmd /k "title Alpha API && cd /d %~dp0crypto-data-collector &&
 timeout /t 3 /nobreak >nul
 echo.
 
-REM --- 5. Frontend (Chart) ---
-echo   [START] Opening Chart UI window (port 5173)...
-start "Alpha UI" cmd /k "title Alpha UI && cd /d %~dp0crypto-charting-ui && npx vite --port 5173"
+REM --- 5. CMC rank refresh (background, does not block startup) ---
+echo   [RANK] Refreshing CMC market caps in background...
+start "Haven CMC Rank" cmd /c "cd /d %~dp0crypto-data-collector && python cmc_ranking.py --limit 500 --cmc-only"
 echo.
 
-REM --- 6. Done ---
+REM --- 6. Frontend (Chart) ---
+echo   [START] Opening Chart UI window (port 5173)...
+start "Alpha UI" cmd /k "title Alpha UI && cd /d %~dp0crypto-charting-ui && npx vite --port 5173"
+timeout /t 3 /nobreak >nul
+echo.
+
+REM --- 7. Open browser ---
+echo   [OPEN] http://localhost:5173
+start http://localhost:5173
+echo.
+
+REM --- 8. Done ---
 echo ==============================================
 echo   ALL LAUNCHED
 echo ==============================================
@@ -60,6 +71,7 @@ echo   Collector  : "Alpha Collector" window  (on-chain DEX swaps -^> buckets)
 echo   Engine     : "Alpha Engine" window     (executes marker swaps on-chain)
 echo   API        : "Alpha API" window        - http://localhost:8000
 echo   Alpha Terminal : "Alpha UI" window     - http://localhost:5173 (dashboard + charts + engine controls)
+echo   Rank job   : "Haven CMC Rank"          (market caps + logo ids)
 echo.
 echo   Close each window individually to stop that component.
 echo   Run this batch file again anytime - it won't duplicate

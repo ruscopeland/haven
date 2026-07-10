@@ -21,6 +21,10 @@ class Token(Base):
     decimals = Column(Integer)
     total_supply = Column(Float)         # human units (raw / 10**decimals)
     liquidity_usd = Column(Float)        # primary-pool depth, refreshed by the sweep
+    market_cap = Column(Float)           # USD market cap (from CMC ranking)
+    cmc_rank = Column(Integer)           # global CoinMarketCap rank (1 = largest)
+    cmc_slug = Column(String)            # CMC slug for identity
+    cmc_id = Column(Integer)             # CMC numeric id — logo CDN uses this
     listed_at = Column(BigInteger)       # unix ms first seen (pool creation)
     # staged  = ingested but hidden from /tokens until the M4 cutover flips it
     # active  = normal;  retired = no supported chain / delisted;  blacklisted = manual
@@ -234,6 +238,27 @@ class FifteenMinBucket(Base):
     close_price = Column(Float)
     buy_volume = Column(Float)
     sell_volume = Column(Float)
+    trade_count = Column(Integer)
+
+
+class DailyBucket(Base):
+    """Daily OHLCV archive for long-term chart history (backfilled from CMC k-line).
+
+    Written by the backfill script (cmc k-line keyless endpoint) and by the
+    collector's daily archive task. Retained indefinitely (or a very long
+    retention). /klines reads it for intervals >= 1d so charts can show
+    1+ year of history instead of the 7-day/90-day limits of the finer tables.
+    """
+    __tablename__ = "daily_buckets"
+
+    symbol = Column(String, primary_key=True, index=True)
+    bucket_start = Column(BigInteger, primary_key=True, index=True)  # unix ms of UTC midnight
+    open_price = Column(Float)
+    high_price = Column(Float)
+    low_price = Column(Float)
+    close_price = Column(Float)
+    buy_volume = Column(Float)   # total USD volume (k-line doesn't split buy/sell)
+    sell_volume = Column(Float)  # 0 (no split available from k-line)
     trade_count = Column(Integer)
 
 

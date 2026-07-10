@@ -64,6 +64,11 @@ export default function StrategyWorkbench({ signals = [], initialSelectId = null
   const [pfUniverse, setPfUniverse] = useState(null);   // normalized universe of the last portfolio run
   const [showGuide, setShowGuide] = useState(false);
   const [showSlots, setShowSlots] = useState(false);    // "bot slots full" dialog (deploy hit a 409)
+  // Simple = templates + params + actions; Code = full editor (default for power users
+  // who already have a draft with custom code).
+  const [editorMode, setEditorMode] = useState(() => {
+    try { return localStorage.getItem('strategyEditorMode') || 'simple'; } catch { return 'simple'; }
+  });
   const dataCache = useRef(new Map());   // `${symbol}|${interval}` → { bars, flowRows, at }
   const universeCache = useRef(new Map()); // `${interval}` → { normalized, at }
   const finderCache = useRef(new Map());   // finderId → { code, params, updatedAt }
@@ -417,6 +422,16 @@ export default function StrategyWorkbench({ signals = [], initialSelectId = null
       <div className="wb-left">
         <div className="wb-list-header">
           <span className="wb-title">Strategies</span>
+          <div className="wb-mode-toggle" title="Simple hides the code editor; Code shows full JS">
+            <button type="button" className={editorMode === 'simple' ? 'active' : ''}
+              onClick={() => { setEditorMode('simple'); try { localStorage.setItem('strategyEditorMode', 'simple'); } catch {} }}>
+              Simple
+            </button>
+            <button type="button" className={editorMode === 'code' ? 'active' : ''}
+              onClick={() => { setEditorMode('code'); try { localStorage.setItem('strategyEditorMode', 'code'); } catch {} }}>
+              Code
+            </button>
+          </div>
           <select
             className="wb-select"
             value=""
@@ -532,16 +547,32 @@ export default function StrategyWorkbench({ signals = [], initialSelectId = null
           )}
         </div>
 
-        <div className="wb-editor">
-          <CodeMirror
-            value={draft.code}
-            height="100%"
-            theme="dark"
-            extensions={[javascript()]}
-            onChange={(val) => patchDraft({ code: val })}
-            basicSetup={{ lineNumbers: true, foldGutter: false }}
-          />
-        </div>
+        {editorMode === 'code' ? (
+          <div className="wb-editor">
+            <CodeMirror
+              value={draft.code}
+              height="100%"
+              theme="dark"
+              extensions={[javascript()]}
+              onChange={(val) => patchDraft({ code: val })}
+              basicSetup={{ lineNumbers: true, foldGutter: false }}
+            />
+          </div>
+        ) : (
+          <div className="wb-editor" style={{
+            display: 'flex', alignItems: 'center', justifyContent: 'center',
+            padding: 16, color: 'var(--text-muted)', fontSize: 12, textAlign: 'center', lineHeight: 1.5,
+          }}>
+            <div>
+              <div style={{ fontWeight: 600, color: 'var(--text-bright)', marginBottom: 6 }}>Simple mode</div>
+              Pick a template, set params, backtest, then deploy paper.
+              Switch to <b>Code</b> to edit the strategy JS.
+              <div style={{ marginTop: 8, fontSize: 11 }}>
+                LIVE is only armed from the Performance page — not here.
+              </div>
+            </div>
+          </div>
+        )}
         {codeError && <div className="bt-error wb-code-error">⚠ {codeError}</div>}
 
         <div className="wb-actions">
@@ -555,11 +586,11 @@ export default function StrategyWorkbench({ signals = [], initialSelectId = null
             </button>
           )}
           {draft.id && <button className="wb-btn wb-delete" onClick={deleteStrategy}>Delete</button>}
-          <button className="wb-btn wb-guide" onClick={() => setShowGuide(true)}>📖 Guide</button>
+          <button className="wb-btn wb-guide" onClick={() => setShowGuide(true)}>Guide</button>
           {draft.id && onOpenStrategyPage && (
             <button className="wb-btn wb-guide" title="How is this bot doing? Stats, equity, every fill on a chart — and the LIVE switch."
               onClick={() => onOpenStrategyPage(draft.id)}>
-              📊 Performance
+              Performance
             </button>
           )}
           <span className="wb-save-msg">{saveMsg}</span>

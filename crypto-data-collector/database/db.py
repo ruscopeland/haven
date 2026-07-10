@@ -106,6 +106,25 @@ def ensure_db_settings():
         _ensure_column(conn, "tokens", "status", "TEXT DEFAULT 'active'")
         _ensure_column(conn, "tokens", "security_json", "TEXT")
         _ensure_column(conn, "tokens", "primary_pool", "TEXT")
+        _ensure_column(conn, "tokens", "market_cap", "FLOAT")
+        _ensure_column(conn, "tokens", "cmc_rank", "INTEGER")
+        _ensure_column(conn, "tokens", "cmc_slug", "TEXT")
+        _ensure_column(conn, "tokens", "cmc_id", "INTEGER")
+        conn.execute(text(
+            "CREATE INDEX IF NOT EXISTS ix_tokens_cmc_rank ON tokens (cmc_rank);"
+        ))
+        conn.execute(text(
+            "CREATE TABLE IF NOT EXISTS daily_buckets ("
+            "symbol TEXT NOT NULL, "
+            "bucket_start BIGINT NOT NULL, "
+            "open_price FLOAT, high_price FLOAT, low_price FLOAT, close_price FLOAT, "
+            "buy_volume FLOAT, sell_volume FLOAT, trade_count INTEGER, "
+            "PRIMARY KEY (symbol, bucket_start));"
+        ))
+        conn.execute(text(
+            "CREATE INDEX IF NOT EXISTS ix_daily_buckets_bucket_start "
+            "ON daily_buckets (bucket_start);"
+        ))
         if _existing_columns(conn, "pools"):  # table exists (create_all ran first)
             conn.execute(text(
                 "CREATE INDEX IF NOT EXISTS ix_pools_chain_watch ON pools (chain, watch);"))

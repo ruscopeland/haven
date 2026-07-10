@@ -16,10 +16,8 @@ const FIELDS = [
     help: 'Failed marker fires re-arm this many times, then the marker is disabled.' },
 ];
 
-// E2: engine risk limits editor — the merged-app replacement for the wallet
-// app's ConfigPanel engine section. Same PATCH /engine/settings contract.
 export default function SettingsView() {
-  const [saved, setSaved] = useState(null);   // last server state
+  const [saved, setSaved] = useState(null);
   const [draft, setDraft] = useState({});
   const [msg, setMsg] = useState(null);
   const [busy, setBusy] = useState(false);
@@ -56,30 +54,52 @@ export default function SettingsView() {
   };
 
   return (
-    <div>
-    <SubscriptionPanel />
-    <EngineConnect />
-    <div className="settings-root">
-      <h2 style={{ color: '#e5e9f0', marginTop: 0 }}>⚙ Engine risk limits</h2>
-      <p className="dash-muted" style={{ fontSize: 12, marginBottom: 20 }}>
-        These guards apply to EVERY trade the engine executes — manual quick trades,
-        marker fires and live strategies alike. Pause/resume lives on the 🏠 Dashboard.
-      </p>
-
-      {FIELDS.map(f => (
-        <div className="settings-field" key={f.key}>
-          <label>{f.label}</label>
-          <input type="number" step={f.step} min={f.min}
-            value={draft[f.key] ?? ''}
-            onChange={e => { setDraft({ ...draft, [f.key]: e.target.value }); setMsg(null); }} />
-          <div className="dash-muted" style={{ fontSize: 11, marginTop: 3 }}>{f.help}</div>
+    <div className="settings-sections">
+      {dirty && (
+        <div className="settings-unsaved">
+          You have unsaved risk limit changes.
+          <button className="settings-save" style={{ marginLeft: 12, padding: '6px 14px' }}
+            disabled={busy} onClick={save}>{busy ? 'Saving…' : 'Save now'}</button>
         </div>
-      ))}
+      )}
 
-      <button className="settings-save" disabled={!dirty || busy} style={{ opacity: dirty ? 1 : 0.4 }}
-        onClick={save}>{busy ? 'Saving…' : 'Save changes'}</button>
-      {msg && <div className={msg.kind === 'ok' ? 'dash-green' : 'dash-error'} style={{ marginTop: 10, fontSize: 12 }}>{msg.text}</div>}
-    </div>
+      <section className="settings-section" id="settings-billing">
+        <SubscriptionPanel />
+      </section>
+
+      <section className="settings-section" id="settings-engine">
+        <h2>Desktop engine</h2>
+        <p className="dash-muted" style={{ fontSize: 12, marginBottom: 12 }}>
+          Live trading runs on your machine. Download the engine and connect an API key here.
+        </p>
+        <EngineConnect />
+      </section>
+
+      <section className="settings-section" id="settings-risk">
+        <h2>Engine risk limits</h2>
+        <p className="dash-muted" style={{ fontSize: 12, marginBottom: 16 }}>
+          These guards apply to every trade the engine executes — manual quick trades,
+          marker fires and live strategies alike. Pause/resume lives on the top toolbar.
+        </p>
+
+        {FIELDS.map(f => (
+          <div className="settings-field" key={f.key}>
+            <label>{f.label}</label>
+            <input type="number" step={f.step} min={f.min}
+              value={draft[f.key] ?? ''}
+              onChange={e => { setDraft({ ...draft, [f.key]: e.target.value }); setMsg(null); }} />
+            <div className="dash-muted" style={{ fontSize: 11, marginTop: 3 }}>{f.help}</div>
+          </div>
+        ))}
+
+        <button className="settings-save" disabled={!dirty || busy} style={{ opacity: dirty ? 1 : 0.4 }}
+          onClick={save}>{busy ? 'Saving…' : 'Save changes'}</button>
+        {msg && (
+          <div className={msg.kind === 'ok' ? 'dash-green' : 'dash-error'} style={{ marginTop: 10, fontSize: 12 }}>
+            {msg.text}
+          </div>
+        )}
+      </section>
     </div>
   );
 }
