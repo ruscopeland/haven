@@ -8,6 +8,7 @@ import { API_URL } from '../authFetch.js';
 import MarketTicker from './MarketTicker.jsx';
 import LandingMovers from './LandingMovers.jsx';
 import { GoPlusBadge } from './GoPlusSecurity.jsx';
+import HavenLogo from './HavenLogo.jsx';
 
 const FEATURES = [
   ['Automate your BNB-chain trades', 'Draw price levels and strategies; Haven executes the swaps for you, on-chain, the moment your rules trigger.'],
@@ -41,7 +42,7 @@ export default function Landing() {
 
       <div className="landing">
         <header className="landing-nav">
-          <div className="landing-brand">⚓ Haven</div>
+          <div className="landing-brand"><HavenLogo size={32} /></div>
           <div className="landing-nav-actions">
             <SignInButton mode="modal"><button className="btn-ghost">Sign in</button></SignInButton>
             <SignUpButton mode="modal"><button className="btn-primary">Get started free</button></SignUpButton>

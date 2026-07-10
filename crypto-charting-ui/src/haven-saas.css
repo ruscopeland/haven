@@ -61,14 +61,17 @@
   padding: 20px 0;
 }
 .landing-brand {
+  display: inline-flex;
+  align-items: center;
+}
+.landing-brand .haven-wordmark {
   font-size: 22px;
-  font-weight: 800;
-  font-family: var(--font-display);
-  letter-spacing: -0.3px;
-  background: linear-gradient(135deg, #fff 30%, var(--primary) 100%);
-  -webkit-background-clip: text;
-  background-clip: text;
-  -webkit-text-fill-color: transparent;
+  letter-spacing: 0.06em;
+}
+.gate-skeleton-logo {
+  display: flex;
+  justify-content: center;
+  margin-bottom: 16px;
 }
 .landing-nav-actions { display: flex; gap: 10px; }
 .landing-hero { text-align: center; padding: 48px 0 36px; }
@@ -243,6 +246,17 @@
   background: rgba(6, 9, 19, 0.92);
   backdrop-filter: blur(12px);
   border-bottom: 1px solid var(--border-glass);
+}
+/* In-app ticker (signed-in terminal) — not sticky over scroll, full width bar */
+.app-ticker-bar {
+  flex-shrink: 0;
+  width: 100%;
+  z-index: 40;
+  border-bottom: 1px solid var(--border-glass);
+}
+.app-ticker-bar .mkt-ticker-wrap {
+  position: relative;
+  top: auto;
 }
 .mkt-ticker-bar {
   display: flex;

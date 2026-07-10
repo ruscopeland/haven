@@ -9,6 +9,8 @@ import TokenDetailView from './components/TokenDetailView'
 import StrategyDetailView from './components/StrategyDetailView'
 import PortfolioView from './components/PortfolioView'
 import EngineToggle from './components/EngineToggle'
+import MarketTicker from './components/MarketTicker'
+import HavenLogo from './components/HavenLogo'
 
 const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:8000';
 const LAYOUT_NAMES_KEY = 'chartLayoutNames';
@@ -229,7 +231,12 @@ function App() {
   const detailActive = view === 'token' || view === 'strategy';
 
   return (
-    <div className="app-container">
+    <div className="app-container" style={{ flexDirection: 'column' }}>
+      {/* App-wide market ticker (same real /public feed as landing) */}
+      <div className="app-ticker-bar">
+        <MarketTicker />
+      </div>
+      <div style={{ display: 'flex', flex: 1, minHeight: 0, overflow: 'hidden' }}>
       {view === 'charts' && (
         <Screener
           onToggle={toggleToken}
@@ -246,7 +253,7 @@ function App() {
           background: 'rgba(13, 20, 38, 0.75)', backdropFilter: 'blur(12px)',
           borderBottom: '1px solid var(--border-glass)', alignItems: 'center', flexWrap: 'wrap',
         }}>
-          <span className="logo-title" style={{ marginRight: 8 }}>⚓ Haven</span>
+          <HavenLogo size={26} />
           {NAV.map(([key, label]) => {
             const active = view === key
               || (view === 'token' && (key === 'dashboard' || key === 'portfolio'))
@@ -403,6 +410,7 @@ function App() {
             )}
           </div>
         )}
+      </div>
       </div>
     </div>
   )

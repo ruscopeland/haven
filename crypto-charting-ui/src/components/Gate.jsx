@@ -5,6 +5,7 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import App from '../App.jsx';
 import Subscribe from './Subscribe.jsx';
 import { API_URL } from '../authFetch.js';
+import HavenLogo from './HavenLogo.jsx';
 
 export default function Gate() {
   const [state, setState] = useState({ loading: true, paid: false, message: '' });
@@ -70,7 +71,7 @@ export default function Gate() {
   if (state.loading) {
     return (
       <div className="gate-loading">
-        <div className="gate-skeleton-logo">⚓ Haven</div>
+        <div className="gate-skeleton-logo"><HavenLogo size={36} /></div>
         <div>{state.message || 'Loading your account…'}</div>
       </div>
     );

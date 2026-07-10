@@ -165,6 +165,24 @@ h1, h2, h3, h4, h5, h6 {
   white-space: nowrap;
 }
 
+/* Futuristic Haven brand mark */
+.haven-logo { flex-shrink: 0; user-select: none; }
+.haven-wordmark {
+  font-family: var(--font-display);
+  font-size: 18px;
+  font-weight: 800;
+  letter-spacing: 0.04em;
+  text-transform: none;
+  background: linear-gradient(115deg, #e0f2fe 0%, #c4b5fd 40%, #a78bfa 70%, #67e8f9 100%);
+  -webkit-background-clip: text;
+  background-clip: text;
+  -webkit-text-fill-color: transparent;
+  filter: drop-shadow(0 0 12px rgba(103, 232, 249, 0.25));
+}
+.haven-logo svg {
+  filter: drop-shadow(0 0 8px rgba(139, 92, 246, 0.45));
+}
+
 /* ── Top navigation ───────────────────────────────────────────────────── */
 .nav-tab {
   background: rgba(255, 255, 255, 0.05);

@@ -3,6 +3,7 @@
 import { useEffect, useState } from 'react';
 import { UserButton } from '@clerk/clerk-react';
 import { API_URL } from '../authFetch.js';
+import HavenLogo from './HavenLogo.jsx';
 
 export default function Subscribe({ onActivated }) {
   const [pricing, setPricing] = useState(null);
@@ -51,7 +52,7 @@ export default function Subscribe({ onActivated }) {
   return (
     <div className="subscribe-root">
       <div className="subscribe-topbar">
-        <div className="landing-brand">⚓ Haven</div>
+        <div className="landing-brand"><HavenLogo size={28} /></div>
         <UserButton afterSignOutUrl="/" />
       </div>
       <div className="subscribe-card">

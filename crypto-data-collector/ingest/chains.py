@@ -78,7 +78,8 @@ CHAINS = {
         # BSC stays the fastest because live TP/SL protection fires off this
         # price (still 4 updates per 1m bar); strategies act on CLOSED bars
         # and don't care. POLL_SECONDS_BSC=60 shaves ~$20/mo if wanted.
-        "poll_seconds": 15.0,
+        # Free-tier Alchemy default: 60s (was 15s). Override POLL_SECONDS_BSC.
+        "poll_seconds": 60.0,
         # 8 blocks ≈ 6s: covers reorg depth AND Alchemy's load-balanced fleet
         # skew (their header nodes lag their tip nodes by a few blocks; at
         # lag=3 "block not yet available" fired every minute or two).
@@ -93,7 +94,8 @@ CHAINS = {
     "ethereum": {
         "name": "Ethereum",
         "family": "evm",
-        "enabled": True,
+        # Off by default on free Alchemy — set ENABLE_CHAIN_ETHEREUM=1 + RPC to enable.
+        "enabled": False,
         "rpc_env": "RPC_HTTP_ETHEREUM",
         "explorer": "https://etherscan.io",
         "native": {
@@ -112,7 +114,7 @@ CHAINS = {
              "address": "0x1f98431c8ad98523631ae4a59f267346ea31f984"},
         ],
         "v3_fee_tiers": [100, 500, 3000, 10000],
-        "poll_seconds": 15.0,   # equal treatment on all chains (owner order 2026-07-07)
+        "poll_seconds": 120.0,  # free-tier friendly
         "finality_lag": 2,
         "block_time": 12.0,
         "liquidity_floor_usd": 100_000.0,  # same quality bar as BSC (owner 2026-07-10)
@@ -121,7 +123,8 @@ CHAINS = {
     "base": {
         "name": "Base",
         "family": "evm",
-        "enabled": True,
+        # Off by default on free Alchemy — set ENABLE_CHAIN_BASE=1 + RPC to enable.
+        "enabled": False,
         "rpc_env": "RPC_HTTP_BASE",
         "explorer": "https://basescan.org",
         "native": {
@@ -140,7 +143,7 @@ CHAINS = {
             # Aerodrome uses a non-Uniswap event layout — config TODO for M5.
         ],
         "v3_fee_tiers": [100, 500, 3000, 10000],
-        "poll_seconds": 15.0,   # equal treatment on all chains (owner order 2026-07-07)
+        "poll_seconds": 120.0,  # free-tier friendly
         "finality_lag": 5,          # same provider-skew headroom as BSC
         "block_time": 2.0,
         "liquidity_floor_usd": 100_000.0,  # same quality bar as BSC (owner 2026-07-10)
@@ -184,8 +187,26 @@ def scan_rpc_url(chain: str) -> str | None:
 
 
 def enabled_evm_chains() -> list[str]:
-    return [slug for slug, c in CHAINS.items()
-            if c.get("enabled") and c.get("family") == "evm" and rpc_url(slug)]
+    """Chains that have RPC + registry enabled, with optional free-tier gates.
+
+    ENABLE_CHAIN_ETHEREUM=1 / ENABLE_CHAIN_BASE=1 re-enable extra chains when
+    you leave free Alchemy (BSC-only by default to keep CU low).
+    """
+    out = []
+    for slug, c in CHAINS.items():
+        if c.get("family") != "evm":
+            continue
+        if not rpc_url(slug):
+            continue
+        # Explicit env override wins over registry "enabled" flag.
+        env_key = f"ENABLE_CHAIN_{slug.upper()}"
+        if env_key in os.environ:
+            if os.environ.get(env_key, "0") != "1":
+                continue
+        elif not c.get("enabled"):
+            continue
+        out.append(slug)
+    return out
 
 
 def chain_public_info() -> list[dict]:
