@@ -104,10 +104,19 @@ def _passes_quality(tok: Token, ticker: LatestTicker | None, *,
                     min_liq: float = MIN_LIQ_USD) -> bool:
     if tok.status not in ("active", None):
         return False
+    if tok.status == "blacklisted":
+        return False
     if _is_stable(tok):
         return False
     mc = tok.market_cap or 0.0
-    if mc < MIN_MCAP:
+    # Prefer real CMC mcaps on the public landing; skip junk without CMC id
+    # when they claim a huge mcap (or no mcap at all for movers band).
+    has_cmc = tok.cmc_id is not None
+    if mc > 0 and not has_cmc:
+        return False
+    if mc > 0 and mc < MIN_MCAP:
+        return False
+    if mc > 50_000_000_000:  # $50B ceiling for our Alpha surface
         return False
     liq = tok.liquidity_usd or 0.0
     vol = (ticker.volume_24h if ticker else 0.0) or 0.0

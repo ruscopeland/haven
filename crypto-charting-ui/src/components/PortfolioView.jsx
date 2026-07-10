@@ -139,7 +139,27 @@ export default function PortfolioView({
 
   const holdings = useMemo(() => {
     const rows = [];
-    if (bnb != null) {
+    // Multi-chain natives
+    const nat = wallet.natives || {};
+    if (Object.keys(nat).length) {
+      for (const [chain, n] of Object.entries(nat)) {
+        if (n?.qty == null) continue;
+        rows.push({
+          key: `native:${chain}`,
+          symbol: n.symbol || chain.toUpperCase(),
+          name: n.name || n.symbol,
+          qty: n.qty,
+          price: n.priceUsd,
+          usd: n.usd || ((n.qty || 0) * (n.priceUsd || 0)),
+          chg: null,
+          pnl: null,
+          isBnb: true,
+          isNative: true,
+          chain,
+          contract: null,
+        });
+      }
+    } else if (bnb != null) {
       const usd = bnbPrice != null ? bnb * bnbPrice : 0;
       rows.push({
         key: 'BNB',
@@ -151,6 +171,8 @@ export default function PortfolioView({
         chg: null,
         pnl: null,
         isBnb: true,
+        isNative: true,
+        chain: 'bsc',
         contract: null,
       });
     }
@@ -160,7 +182,7 @@ export default function PortfolioView({
       const pnlRow = pnlBySymbol[t.symbol];
       const u = unrealizedFor(pnlRow, price);
       rows.push({
-        key: t.symbol,
+        key: `${t.chain || 'bsc'}:${t.symbol}`,
         symbol: t.symbol,
         name: t.name || t.symbol,
         qty: t.qty,
@@ -171,7 +193,9 @@ export default function PortfolioView({
         realized: pnlRow?.realized ?? null,
         basis: pnlRow?.basis ?? null,
         isBnb: false,
-        contract: tokenMap[t.symbol]?.contract_address,
+        isNative: false,
+        chain: t.chain || 'bsc',
+        contract: t.contract || tokenMap[t.symbol]?.contract_address,
         meta: tokenMap[t.symbol],
       });
     }
@@ -184,7 +208,7 @@ export default function PortfolioView({
       return (b.usd || 0) - (a.usd || 0);
     });
     return { rows: sorted, hidden, total: rows.length };
-  }, [bnb, bnbPrice, tokens, prices, pnlBySymbol, change24h, dustUsd, sortKey, tokenMap]);
+  }, [bnb, bnbPrice, tokens, prices, pnlBySymbol, change24h, dustUsd, sortKey, tokenMap, wallet.natives]);
 
   // Focus token meta for trade panel
   const focus = useMemo(() => {
@@ -363,6 +387,7 @@ export default function PortfolioView({
                   <thead>
                     <tr>
                       <th>Asset</th>
+                      <th>Chain</th>
                       <th>Price</th>
                       <th>24h</th>
                       <th>Qty</th>
@@ -387,7 +412,7 @@ export default function PortfolioView({
                             <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
                               <span className="token-icon-placeholder" style={{
                                 width: 28, height: 28, fontSize: 10,
-                                background: `linear-gradient(135deg, ${tokenColor(r.contract || r.symbol, r.isBnb)} 0%, #1e1e2d 100%)`,
+                                background: `linear-gradient(135deg, ${tokenColor(r.contract || r.symbol, r.isNative)} 0%, #1e1e2d 100%)`,
                               }}>
                                 {(r.name || r.symbol).replace(/[^A-Za-z0-9]/g, '').slice(0, 3).toUpperCase()}
                               </span>
@@ -397,6 +422,7 @@ export default function PortfolioView({
                               </div>
                             </div>
                           </td>
+                          <td className="dash-muted" style={{ textTransform: 'uppercase', fontSize: 10 }}>{r.chain || '—'}</td>
                           <td className="num">{r.price != null ? `$${fmtPrice(r.price)}` : '—'}</td>
                           <td className={r.chg == null ? '' : chgUp ? 'dash-green' : 'dash-red'}>
                             {r.chg == null ? '—' : `${chgUp ? '+' : ''}${r.chg.toFixed(2)}%`}
@@ -410,12 +436,15 @@ export default function PortfolioView({
                             {r.realized == null ? '—' : `${r.realized >= 0 ? '+' : ''}${fmtUsd(r.realized)}`}
                           </td>
                           <td onClick={e => e.stopPropagation()}>
-                            {!r.isBnb && (
+                            {!r.isNative && r.chain === 'bsc' && (
                               <div style={{ display: 'flex', gap: 4 }}>
                                 <button type="button" className="strat-edit-btn" onClick={() => setSelected(r.symbol)}>Swap</button>
                                 <button type="button" className="strat-edit-btn" onClick={() => onOpenToken?.({ symbol: r.symbol, name: r.name })}>Page</button>
                                 <button type="button" className="strat-edit-btn" onClick={() => onOpenChart?.(r.symbol, r.name)}>Chart</button>
                               </div>
+                            )}
+                            {!r.isNative && r.chain !== 'bsc' && (
+                              <span className="dash-muted" style={{ fontSize: 10 }}>view only</span>
                             )}
                           </td>
                         </tr>

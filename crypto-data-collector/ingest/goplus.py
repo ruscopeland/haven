@@ -193,7 +193,8 @@ class GoPlusClient:
         self._access: str | None = None
         self._access_expires = 0.0
         self._last_call = 0.0
-        self.min_interval = _cfg_float("GOPLUS_MIN_INTERVAL_SEC", 3.0)
+        # Free tier is strict (4029 too many requests at 3s); default 5s.
+        self.min_interval = _cfg_float("GOPLUS_MIN_INTERVAL_SEC", 5.0)
         self.batch_size = max(1, min(_cfg_int("GOPLUS_BATCH_SIZE", 5), 20))
         self.daily_budget = max(1, _cfg_int("GOPLUS_DAILY_BUDGET", 300))
         self.refresh_days = max(1, _cfg_int("GOPLUS_REFRESH_DAYS", 14))

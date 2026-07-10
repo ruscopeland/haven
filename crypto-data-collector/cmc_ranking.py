@@ -152,10 +152,15 @@ def update_from_cmc(db, cmc_data: dict) -> int:
 
 
 def compute_market_cap(db) -> int:
-    """For tokens without CMC data, compute market_cap = last_price × total_supply."""
+    """Optional computed mcap ONLY for tokens already CMC-matched that lack mcap.
+
+    Never invent market caps for random liquid scams (price × garbage supply
+    produced $843T 'Little Pepe'). Prefer CMC listings exclusively.
+    """
     updated = 0
     tokens = (db.query(Token)
               .filter(Token.status == "active")
+              .filter(Token.cmc_id.isnot(None))
               .filter(Token.market_cap == None)
               .filter(Token.total_supply != None)
               .filter(Token.total_supply > 0)
@@ -167,10 +172,7 @@ def compute_market_cap(db) -> int:
         if not ticker or not ticker.last_price or ticker.last_price <= 0:
             continue
         mc = ticker.last_price * (token.total_supply or 0)
-        # Sanity guard: computed market caps above $1T are almost certainly
-        # bogus (bad supply data or spoofed price). CMC values are trusted
-        # even above that threshold because they're validated upstream.
-        if mc > 1e12:
+        if mc > 1e12 or mc < 10_000:
             continue
         token.market_cap = mc
         updated += 1
@@ -180,31 +182,13 @@ def compute_market_cap(db) -> int:
 
 
 def assign_local_ranks(db) -> int:
-    """Fill cmc_rank for tokens missing it, by market_cap order among unranked.
+    """No longer assign fake ranks.
 
-    Uses ranks starting after max existing CMC rank so global ranks stay
-    authoritative where present. Only assigns where cmc_rank is NULL.
+    Local ranks made 'Little Pepe' look like CMC #2002 with a trillion-dollar
+    computed market cap. Rank and market_cap for product surfaces must come
+    from real CMC matches (cmc_id set). Returns 0 always.
     """
-    max_rank = db.query(Token).filter(Token.cmc_rank.isnot(None)).count()
-    # Prefer max of actual ranks if present
-    from sqlalchemy import func
-    mr = db.query(func.max(Token.cmc_rank)).scalar()
-    next_rank = (mr or 0) + 1 if mr else max_rank + 1
-    unranked = (db.query(Token)
-                .filter(Token.status == "active")
-                .filter(Token.market_cap.isnot(None))
-                .filter(Token.market_cap > 0)
-                .filter(Token.cmc_rank.is_(None))
-                .order_by(Token.market_cap.desc())
-                .all())
-    n = 0
-    for t in unranked:
-        t.cmc_rank = next_rank
-        next_rank += 1
-        n += 1
-    if n:
-        db.commit()
-    return n
+    return 0
 
 
 def run_ranking(limit: int = 5000, cmc_only: bool = False, no_cmc: bool = False) -> dict:

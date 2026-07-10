@@ -90,8 +90,10 @@ async def run_async():
         except Exception as e:
             log(f"GoPlus tick failed: {e}", "ERROR")
 
-    # 6h between ticks + 10min initial delay (collector must finish bootstrap).
-    goplus_interval = int(os.environ.get("GOPLUS_TICK_SEC", str(6 * 3600)))
+    # Prefer the dedicated goplus_worker.py window (start.bat). Collector still
+    # runs a light backup tick so solo deploys without the worker still scan.
+    goplus_interval = int(os.environ.get("GOPLUS_TICK_SEC", str(2 * 3600)))
+    goplus_enabled = os.environ.get("GOPLUS_IN_COLLECTOR", "0") == "1"
 
     tasks = [asyncio.create_task(run_chain(i)) for i in ingesters]
     tasks += [
@@ -100,9 +102,10 @@ async def run_async():
         asyncio.create_task(periodic(store.archive_15m, 15 * 60, initial_delay=60)),
         asyncio.create_task(periodic(store.compute_24h_stats, 5 * 60, initial_delay=90)),
         asyncio.create_task(periodic(umbrella_heartbeat, 30, initial_delay=30)),
-        asyncio.create_task(periodic(
-            goplus_tick, goplus_interval, initial_delay=600)),
     ]
+    if goplus_enabled:
+        tasks.append(asyncio.create_task(periodic(
+            goplus_tick, goplus_interval, initial_delay=120)))
     try:
         await asyncio.gather(*tasks)
     finally:

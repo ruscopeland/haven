@@ -51,6 +51,21 @@ echo   [RANK] Refreshing CMC market caps in background...
 start "Haven CMC Rank" cmd /c "cd /d %~dp0crypto-data-collector && python cmc_ranking.py --limit 500 --cmc-only"
 echo.
 
+REM --- 5. CMC rank refresh + quality purge (background) ---
+echo   [RANK] Refreshing CMC ranks + purging fake market caps...
+start "Haven CMC Rank" cmd /c "cd /d %~dp0crypto-data-collector && python cmc_ranking.py --limit 500 --cmc-only && python apply_quality_filter.py"
+echo.
+
+REM --- 5b. GoPlus Security worker (liquid only, daily budget) ---
+tasklist /FI "WINDOWTITLE eq Haven GoPlus" 2>nul | findstr "cmd.exe" >nul
+if %errorlevel% equ 0 (
+    echo   [SKIP] GoPlus worker is already running.
+) else (
+    echo   [START] Opening GoPlus Security worker...
+    start "Haven GoPlus" cmd /k "title Haven GoPlus && cd /d %~dp0crypto-data-collector && python goplus_worker.py"
+)
+echo.
+
 REM --- 6. Frontend (Chart) ---
 echo   [START] Opening Chart UI window (port 5173)...
 start "Alpha UI" cmd /k "title Alpha UI && cd /d %~dp0crypto-charting-ui && npx vite --port 5173"
@@ -71,7 +86,8 @@ echo   Collector  : "Alpha Collector" window  (on-chain DEX swaps -^> buckets)
 echo   Engine     : "Alpha Engine" window     (executes marker swaps on-chain)
 echo   API        : "Alpha API" window        - http://localhost:8000
 echo   Alpha Terminal : "Alpha UI" window     - http://localhost:5173 (dashboard + charts + engine controls)
-echo   Rank job   : "Haven CMC Rank"          (market caps + logo ids)
+echo   Rank job   : "Haven CMC Rank"          (market caps + quality purge)
+echo   GoPlus     : "Haven GoPlus"            (security scan, daily budget)
 echo.
 echo   Close each window individually to stop that component.
 echo   Run this batch file again anytime - it won't duplicate

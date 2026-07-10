@@ -1489,6 +1489,39 @@ def health_check(db: Session = Depends(get_db)):
 
     return statuses
 
+
+@app.get("/goplus/status")
+def goplus_status(identity: Identity = Depends(require_paid)):
+    """Quota + queue state for the GoPlus scanner (visible in Settings)."""
+    from ingest.chains import load_env_file
+    from ingest.goplus import GoPlusClient, eligible_tokens
+    from database.db import SessionLocal as _SL
+    load_env_file()
+    client = GoPlusClient()
+    usage = client._load_usage()
+    db = _SL()
+    try:
+        need = len(eligible_tokens(db))
+        scanned = db.query(Token).filter(Token.security_json.isnot(None)).count()
+        blacklisted = db.query(Token).filter(Token.status == "blacklisted").count()
+    finally:
+        db.close()
+    return {
+        "configured": client.configured,
+        "daily_budget": client.daily_budget,
+        "day_used": int(usage.get("addresses") or 0),
+        "remaining": client.remaining_budget(),
+        "batch_size": client.batch_size,
+        "min_interval_sec": client.min_interval,
+        "refresh_days": client.refresh_days,
+        "need_scan": need,
+        "scanned_total": scanned,
+        "blacklisted": blacklisted,
+        "provider": "GoPlus Security",
+        "docs": "https://gopluslabs.io/",
+    }
+
+
 # ── Engine settings (pause flag + risk limits for the execution daemon) ────
 
 ENGINE_SETTING_DEFAULTS = {
@@ -1575,18 +1608,48 @@ def write_heartbeat(hb: HeartbeatCreate, db: Session = Depends(get_db),
 # Tokens below this are retired by the collector; this is a hard API belt-and-
 # suspenders filter so /signals and /tokens never re-surface thin junk.
 MIN_TOKEN_LIQUIDITY_USD = float(os.environ.get("HAVEN_MIN_TOKEN_LIQUIDITY_USD", "100000"))
+# Reject absurd market caps on the product surface (fake supply × price scams).
+MAX_PRODUCT_MARKET_CAP = float(os.environ.get("HAVEN_MAX_PRODUCT_MCAP", str(50_000_000_000)))
+# Prefer CMC-identified tokens; non-CMC allowed only with sane/unknown mcap.
+REQUIRE_CMC_OR_SANE_MCAP = os.environ.get("HAVEN_REQUIRE_CMC_OR_SANE", "1") == "1"
+
+
+def _product_token_filters(q, *, floor: float, enforce_quality: bool = True):
+    """Shared WHERE clauses for screener/product token lists."""
+    if floor > 0:
+        q = q.filter(Token.liquidity_usd.isnot(None)).filter(Token.liquidity_usd >= floor)
+    if not enforce_quality:
+        return q
+    # Drop blacklisted honeypots always.
+    q = q.filter((Token.status.is_(None)) | (Token.status != "blacklisted"))
+    # Cap displayed mcap (NULL ok — sorts last on mcap sort).
+    q = q.filter(
+        (Token.market_cap.is_(None)) | (Token.market_cap <= MAX_PRODUCT_MARKET_CAP)
+    )
+    if REQUIRE_CMC_OR_SANE_MCAP:
+        # Market-cap figures without cmc_id are untrusted — force NULL at write
+        # time (apply_quality_filter). Here we also hide rows that still claim
+        # an absurd mcap (belt and suspenders).
+        from sqlalchemy import or_
+        q = q.filter(or_(
+            Token.market_cap.is_(None),
+            Token.cmc_id.isnot(None),
+            Token.market_cap <= 1_000_000_000,
+        ))
+    return q
 
 
 @app.get("/tokens", response_model=List[TokenResponse])
 def get_tokens(skip: int = 0, limit: int = 100, status: str = "active",
                min_liquidity: float | None = None,
+               quality: bool = True,
                db: Session = Depends(get_db),
                identity: Identity = Depends(require_paid)):
     """Retrieve the list of tracked tokens (shared market data).
 
     `status=active` (default) hides staged/retired rows. By default also
-    requires liquidity_usd >= $100k (HAVEN_MIN_TOKEN_LIQUIDITY_USD). Pass
-    min_liquidity=0 to disable the liquidity gate (debug only).
+    requires liquidity_usd >= $100k and blocks absurd/fake market caps.
+    Pass min_liquidity=0&quality=false for wallet balance scans.
     """
     q = db.query(Token)
     if status != "all":
@@ -1594,11 +1657,9 @@ def get_tokens(skip: int = 0, limit: int = 100, status: str = "active",
         q = q.filter((Token.status == status) | (Token.status.is_(None))) \
             if status == "active" else q.filter(Token.status == status)
     floor = MIN_TOKEN_LIQUIDITY_USD if min_liquidity is None else float(min_liquidity)
-    if floor > 0:
-        q = q.filter(Token.liquidity_usd.isnot(None)).filter(Token.liquidity_usd >= floor)
-    # Never list blacklisted (honeypot / extreme tax) on the product surface.
-    if status == "active":
-        q = q.filter((Token.status != "blacklisted") | (Token.status.is_(None)))
+    # Wallet scans need every contract; product lists need quality.
+    enforce = quality and floor > 0
+    q = _product_token_filters(q, floor=floor, enforce_quality=enforce)
     tokens = q.offset(skip).limit(limit).all()
     return [_token_to_response(t) for t in tokens]
 
@@ -1665,14 +1726,13 @@ def get_top_signals(limit: int = 400, sort_by: str = "flow_1m", db: Session = De
     agg_map = {r.symbol: r for r in agg_rows}
 
     # Tickers + names + market caps. Only quality tokens: active + min liquidity
-    # (retired/thin pools are excluded so the screener stays usable).
+    # + no absurd fake mcap (retired/thin/scam rows stay out of the screener).
     ticker_rows = {t.symbol: t for t in db.query(LatestTicker).all()}
-    token_q = (
-        db.query(Token)
-        .filter((Token.status == "active") | (Token.status.is_(None)))
-        .filter(Token.liquidity_usd.isnot(None))
-        .filter(Token.liquidity_usd >= MIN_TOKEN_LIQUIDITY_USD)
+    token_q = db.query(Token).filter(
+        (Token.status == "active") | (Token.status.is_(None))
     )
+    token_q = _product_token_filters(
+        token_q, floor=MIN_TOKEN_LIQUIDITY_USD, enforce_quality=True)
     token_rows = token_q.all()
     token_map = {t.symbol: t for t in token_rows}
 
@@ -1728,7 +1788,12 @@ def get_top_signals(limit: int = 400, sort_by: str = "flow_1m", db: Session = De
     elif sort_by == "price_change_24h":
         signals.sort(key=lambda s: s.price_change_24h, reverse=True)
     elif sort_by == "market_cap":
-        signals.sort(key=lambda s: s.market_cap or 0.0, reverse=True)
+        # Tokens with no trusted mcap sink to the bottom (not the top as zeros
+        # would if we reverse-sorted missing as 0 — we put missing last).
+        signals.sort(
+            key=lambda s: (s.market_cap is not None and s.market_cap > 0, s.market_cap or 0.0),
+            reverse=True,
+        )
     elif sort_by == "mcap_vol":
         # Composite score: log(market_cap) + log(volume_24h) — rewards tokens
         # that are both large and actively traded.

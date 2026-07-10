@@ -1,13 +1,20 @@
 import { Interface, isAddress } from 'ethers';
 
-// Multicall3 is deployed at this exact address on nearly every EVM chain,
-// including BSC — same contract the old wallet app used (blockchain.js
-// scanTokenBalances). Batches many read calls into ONE on-chain call/RPC
-// round trip instead of one eth_call per token. Read-only: no signing, no
-// private key, no Provider/Wallet — just ABI encode/decode + raw eth_call
-// (matches the rest of this app's key-free RPC style).
+// Multicall3 is deployed at this exact address on nearly every EVM chain
+// (BSC, Ethereum, Base). Read-only: no signing, no private key.
 const MULTICALL3_ADDRESS = '0xcA11bde05977b3631167028862bE2a173976CA11';
-const BSC_RPC = 'https://bsc-dataseed.binance.org/';
+
+export const CHAIN_RPC = {
+  bsc: 'https://bsc-dataseed.binance.org/',
+  ethereum: 'https://ethereum.publicnode.com',
+  base: 'https://base.publicnode.com',
+};
+
+export const CHAIN_NATIVE = {
+  bsc: { symbol: 'BNB', name: 'BNB', decimals: 18 },
+  ethereum: { symbol: 'ETH', name: 'Ether', decimals: 18 },
+  base: { symbol: 'ETH', name: 'Ether (Base)', decimals: 18 },
+};
 
 const multicallIface = new Interface([
   'function aggregate3(tuple(address target, bool allowFailure, bytes callData)[] calls) returns (tuple(bool success, bytes returnData)[] returnData)',
@@ -17,8 +24,8 @@ const erc20Iface = new Interface([
   'function decimals() view returns (uint8)',
 ]);
 
-async function ethCall(to, data) {
-  const r = await fetch(BSC_RPC, {
+async function ethCall(rpcUrl, to, data) {
+  const r = await fetch(rpcUrl, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ jsonrpc: '2.0', id: 1, method: 'eth_call', params: [{ to, data }, 'latest'] }),
@@ -28,64 +35,83 @@ async function ethCall(to, data) {
   return j.result;
 }
 
-async function aggregate3(calls) {
-  const data = multicallIface.encodeFunctionData('aggregate3', [calls]);
-  const resultHex = await ethCall(MULTICALL3_ADDRESS, data);
-  const [results] = multicallIface.decodeFunctionResult('aggregate3', resultHex);
-  return results; // [{success, returnData}, ...] in call order
+async function ethGetBalance(rpcUrl, address) {
+  const r = await fetch(rpcUrl, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ jsonrpc: '2.0', id: 1, method: 'eth_getBalance', params: [address, 'latest'] }),
+  });
+  const j = await r.json();
+  if (j.error) throw new Error(j.error.message);
+  return BigInt(j.result);
 }
 
-// Binance Alpha lists tokens on non-EVM chains too (e.g. Sui/Move-style
-// addresses like "0x9c7…::xmn::XMN" — a 32-byte object id, not a truncated
-// BSC address; stripping the "::…" suffix would NOT turn it into a valid
-// 20-byte address). ethers throws if asked to ABI-encode a non-address as an
-// `address` field, which would otherwise take down the entire batched call —
-// so every call site here re-validates with the same guard `isAddress` uses,
-// regardless of what the caller already filtered.
+async function aggregate3(rpcUrl, calls) {
+  const data = multicallIface.encodeFunctionData('aggregate3', [calls]);
+  const resultHex = await ethCall(rpcUrl, MULTICALL3_ADDRESS, data);
+  const [results] = multicallIface.decodeFunctionResult('aggregate3', resultHex);
+  return results;
+}
+
 function keepValid(contracts) {
   return contracts.filter(isAddress);
 }
 
-// Batch balanceOf(owner) across every contract in `contracts` in one call.
-// Returns Map<lowercaseAddress, bigint> — only entries that decoded
-// successfully (allowFailure=true silently skips reverts/non-contracts, the
-// same tolerance the old wallet's Multicall3 scan used).
-export async function multicallBalanceOf(owner, contracts) {
+// Batch balanceOf(owner). Returns Map<lowercaseAddress, bigint>.
+export async function multicallBalanceOf(owner, contracts, chain = 'bsc') {
   const out = new Map();
+  const rpcUrl = CHAIN_RPC[chain] || CHAIN_RPC.bsc;
   const valid = keepValid(contracts);
   if (valid.length === 0) return out;
-  const calls = valid.map(addr => ({
-    target: addr, allowFailure: true,
-    callData: erc20Iface.encodeFunctionData('balanceOf', [owner]),
-  }));
-  const results = await aggregate3(calls);
-  results.forEach((r, i) => {
-    if (!r.success || !r.returnData || r.returnData === '0x') return;
-    try {
-      const [bal] = erc20Iface.decodeFunctionResult('balanceOf', r.returnData);
-      out.set(valid[i].toLowerCase(), bal);
-    } catch { /* non-standard token return shape; skip */ }
-  });
+  // Chunk large universes to avoid RPC payload limits.
+  const CHUNK = 400;
+  for (let i = 0; i < valid.length; i += CHUNK) {
+    const slice = valid.slice(i, i + CHUNK);
+    const calls = slice.map(addr => ({
+      target: addr, allowFailure: true,
+      callData: erc20Iface.encodeFunctionData('balanceOf', [owner]),
+    }));
+    const results = await aggregate3(rpcUrl, calls);
+    results.forEach((r, j) => {
+      if (!r.success || !r.returnData || r.returnData === '0x') return;
+      try {
+        const [bal] = erc20Iface.decodeFunctionResult('balanceOf', r.returnData);
+        out.set(slice[j].toLowerCase(), bal);
+      } catch { /* skip */ }
+    });
+  }
   return out;
 }
 
-// Batch decimals() across every contract in `contracts`. Defaults to 18 on
-// any per-token failure (same fallback the rest of the app already uses).
-export async function multicallDecimals(contracts) {
+export async function multicallDecimals(contracts, chain = 'bsc') {
   const out = new Map();
+  const rpcUrl = CHAIN_RPC[chain] || CHAIN_RPC.bsc;
   const valid = keepValid(contracts);
   if (valid.length === 0) return out;
-  const calls = valid.map(addr => ({
-    target: addr, allowFailure: true, callData: erc20Iface.encodeFunctionData('decimals', []),
-  }));
-  const results = await aggregate3(calls);
-  results.forEach((r, i) => {
-    const addr = valid[i].toLowerCase();
-    if (!r.success || !r.returnData || r.returnData === '0x') { out.set(addr, 18); return; }
-    try {
-      const [d] = erc20Iface.decodeFunctionResult('decimals', r.returnData);
-      out.set(addr, Number(d));
-    } catch { out.set(addr, 18); }
-  });
+  const CHUNK = 400;
+  for (let i = 0; i < valid.length; i += CHUNK) {
+    const slice = valid.slice(i, i + CHUNK);
+    const calls = slice.map(addr => ({
+      target: addr, allowFailure: true, callData: erc20Iface.encodeFunctionData('decimals', []),
+    }));
+    const results = await aggregate3(rpcUrl, calls);
+    results.forEach((r, j) => {
+      if (!r.success || !r.returnData || r.returnData === '0x') {
+        out.set(slice[j].toLowerCase(), 18);
+        return;
+      }
+      try {
+        const [d] = erc20Iface.decodeFunctionResult('decimals', r.returnData);
+        out.set(slice[j].toLowerCase(), Number(d));
+      } catch {
+        out.set(slice[j].toLowerCase(), 18);
+      }
+    });
+  }
   return out;
+}
+
+export async function getNativeBalance(address, chain = 'bsc') {
+  const rpcUrl = CHAIN_RPC[chain] || CHAIN_RPC.bsc;
+  return ethGetBalance(rpcUrl, address);
 }

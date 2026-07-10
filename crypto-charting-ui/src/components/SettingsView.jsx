@@ -2,6 +2,7 @@ import { useState, useEffect } from 'react';
 import '../dashboard.css';
 import SubscriptionPanel from './SubscriptionPanel.jsx';
 import EngineConnect from './EngineConnect.jsx';
+import { GoPlusBadge } from './GoPlusSecurity.jsx';
 
 const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:8000';
 
@@ -21,6 +22,7 @@ export default function SettingsView() {
   const [draft, setDraft] = useState({});
   const [msg, setMsg] = useState(null);
   const [busy, setBusy] = useState(false);
+  const [goplus, setGoplus] = useState(null);
 
   const load = async () => {
     try {
@@ -34,6 +36,19 @@ export default function SettingsView() {
   };
 
   useEffect(() => { load(); }, []);
+
+  useEffect(() => {
+    let alive = true;
+    const tick = async () => {
+      try {
+        const r = await fetch(`${API_URL}/goplus/status`);
+        if (r.ok && alive) setGoplus(await r.json());
+      } catch { /* */ }
+    };
+    tick();
+    const iv = setInterval(tick, 15_000);
+    return () => { alive = false; clearInterval(iv); };
+  }, []);
 
   const dirty = saved && FIELDS.some(f => Number(draft[f.key]) !== Number(saved[f.key]));
 
@@ -65,6 +80,31 @@ export default function SettingsView() {
 
       <section className="settings-section" id="settings-billing">
         <SubscriptionPanel />
+      </section>
+
+      <section className="settings-section" id="settings-goplus">
+        <div style={{ display: 'flex', alignItems: 'center', gap: 12, marginBottom: 8, flexWrap: 'wrap' }}>
+          <h2 style={{ margin: 0 }}>Token security</h2>
+          <GoPlusBadge compact />
+        </div>
+        {!goplus ? (
+          <p className="dash-muted" style={{ fontSize: 12 }}>Loading GoPlus status…</p>
+        ) : !goplus.configured ? (
+          <p className="dash-error" style={{ fontSize: 12 }}>
+            GoPlus keys not configured in crypto-data-collector/.env (GOPLUS_APP_KEY / SECRET).
+          </p>
+        ) : (
+          <div className="dash-muted" style={{ fontSize: 12, lineHeight: 1.6 }}>
+            <div>Status: <b className="dash-green">configured</b> · daily budget {goplus.day_used}/{goplus.daily_budget} addresses</div>
+            <div>Remaining today: <b style={{ color: 'var(--text-bright)' }}>{goplus.remaining}</b></div>
+            <div>Queue (liquid, need scan/refresh): <b style={{ color: 'var(--text-bright)' }}>{goplus.need_scan}</b></div>
+            <div>Scanned total: {goplus.scanned_total} · auto-blacklisted: {goplus.blacklisted}</div>
+            <div style={{ marginTop: 6 }}>
+              Only tokens with ≥$100k liquidity are scanned. Run the <b>Haven GoPlus</b> window from start.bat
+              (or <code>python goplus_worker.py</code>) so usage is paced across the day.
+            </div>
+          </div>
+        )}
       </section>
 
       <section className="settings-section" id="settings-engine">
