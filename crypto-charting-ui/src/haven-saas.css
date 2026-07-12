@@ -272,6 +272,14 @@
   flex-wrap: wrap;
   gap: 10px;
 }
+.clerk-pricing-wrap {
+  max-width: 920px;
+  margin: 0 auto;
+  padding: 8px 0 24px;
+}
+.clerk-pricing-wrap .cl-rootBox {
+  width: 100%;
+}
 
 .gate-loading {
   color: var(--text-muted);

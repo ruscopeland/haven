@@ -31,6 +31,7 @@ from sqlalchemy.orm import Session
 
 from database.db import get_db
 from database.models import ApiKey, Subscription
+from api.clerk_billing import clerk_billing_configured, get_clerk_entitlements
 
 CLERK_JWKS_URL = os.environ.get("CLERK_JWKS_URL", "")
 CLERK_ISSUER = os.environ.get("CLERK_ISSUER", "")
@@ -95,6 +96,11 @@ def hash_key(raw: str) -> str:
 
 
 def subscription_active(db: Session, user_id: str) -> bool:
+    # Clerk Billing: any signed-in user has app access (free paper + paid).
+    if clerk_billing_configured():
+        ent = get_clerk_entitlements(user_id)
+        return bool(ent.get("app_access", True))
+
     sub = db.query(Subscription).filter(Subscription.user_id == user_id).first()
     if not sub or sub.status not in ACTIVE_STATUSES:
         return False
@@ -189,6 +195,20 @@ def entitlements(db: Session, identity: Identity) -> dict:
     if SOLO_MODE or identity.is_service:
         return {"max_bots": None, "live_allowed": True, "trial": False,
                 "max_strategies": None, "plan": "solo"}
+
+    # Preferred path: Clerk Billing owns free vs paid.
+    if clerk_billing_configured() and identity.kind in ("user", "engine"):
+        ent = get_clerk_entitlements(identity.user_id)
+        return {
+            "max_bots": ent.get("max_bots", TRIAL_BOTS),
+            "live_allowed": bool(ent.get("live_allowed")),
+            "trial": bool(ent.get("trial")),
+            "max_strategies": ent.get("max_strategies", MAX_STRATEGIES),
+            "plan": ent.get("plan"),
+            "status": ent.get("status"),
+            "source": ent.get("source"),
+        }
+
     sub = db.query(Subscription).filter(Subscription.user_id == identity.user_id).first()
     if sub and sub.status == "trialing" and subscription_active(db, identity.user_id):
         return {"max_bots": TRIAL_BOTS, "live_allowed": False, "trial": True,

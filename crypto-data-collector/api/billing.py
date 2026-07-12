@@ -120,6 +120,23 @@ def billing_status(db: Session = Depends(get_db),
             "strategies_saved": strategies_saved}
     if SOLO_MODE:
         return {"status": "active", "plan": "solo", "early": True, "paid": True, **bots}
+
+    # Clerk Billing path: status from Clerk, not local Stripe rows.
+    from api.clerk_billing import clerk_billing_configured, get_clerk_entitlements
+    if clerk_billing_configured() and identity.kind == "user":
+        ce = get_clerk_entitlements(identity.user_id)
+        return {
+            "status": ce.get("status") or ("active" if ce.get("live_allowed") else "free"),
+            "plan": ce.get("plan") or "free",
+            "early": False,
+            "paid": True,  # app access for any signed-in user
+            "live_allowed": bool(ce.get("live_allowed")),
+            "trial": bool(ce.get("trial")),
+            "source": "clerk",
+            "extra_bots": 0,
+            **bots,
+        }
+
     sub = db.query(Subscription).filter(Subscription.user_id == identity.user_id).first()
     if not sub:
         return {"status": "none", "plan": None, "early": False, "paid": False, **bots}

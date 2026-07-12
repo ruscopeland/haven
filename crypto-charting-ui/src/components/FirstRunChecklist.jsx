@@ -34,14 +34,14 @@ export default function FirstRunChecklist({ wallet, onGoSettings, onGoStrategies
   const engineOk = engine != null; // settings reachable
   const engineLive = engine && !engine.paused;
   const botsRunning = (billing?.bots_running || 0) > 0;
-  const isTrial = billing?.trial || billing?.plan === 'paper';
+  const isTrial = billing?.trial || billing?.plan === 'paper' || billing?.live_allowed === false;
 
   const items = [
     { done: botsRunning, label: isTrial ? 'Try a paper (DRY) bot' : 'Deploy a paper or live bot', action: onGoStrategies },
     ...(isTrial
       ? [{
           done: false,
-          label: 'Upgrade to a paid plan (banner above, or Settings → Subscription)',
+          label: 'Upgrade (banner or Settings → Subscription — Clerk plans)',
           action: onGoSettings,
         }]
       : [
