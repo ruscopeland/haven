@@ -13,6 +13,7 @@ import MarketTicker from './components/MarketTicker'
 import HavenLogo from './components/HavenLogo'
 import LegalDocView from './components/LegalDoc'
 import LegalFooter from './components/LegalFooter'
+import UpgradeBanner from './components/UpgradeBanner'
 import { RISK_SUMMARY_SHORT } from './legal/content.js'
 
 const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:8000';
@@ -289,6 +290,8 @@ function App() {
 
         <EngineToggle />
       </div>
+
+      <UpgradeBanner onOpenSettings={() => navigate('settings')} />
 
       {/* Below tabs: screener (charts only) sits beside page content, top-aligned with layouts row */}
       <div style={{ display: 'flex', flex: 1, minHeight: 0, overflow: 'hidden' }}>

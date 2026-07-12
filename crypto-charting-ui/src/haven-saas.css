@@ -221,6 +221,58 @@
 .subscribe-sub { color: var(--text-muted); max-width: 520px; margin: 0 auto 20px; }
 .subscribe-early { color: var(--warning); font-weight: 600; margin-bottom: 22px; }
 .subscribe-error { color: #ff6b6b; margin-top: 14px; font-size: 13px; }
+
+/* Paper trial → paid upgrade (always visible) */
+.upgrade-banner {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 12px 16px;
+  padding: 10px 16px;
+  background: linear-gradient(90deg, rgba(56, 189, 248, 0.12), rgba(99, 102, 241, 0.14));
+  border-bottom: 1px solid var(--border-glass, rgba(255, 255, 255, 0.08));
+  flex-shrink: 0;
+}
+.upgrade-banner-copy {
+  flex: 1 1 220px;
+  font-size: 13px;
+  color: var(--text-bright, #e5e9f0);
+  line-height: 1.4;
+}
+.upgrade-banner-sub { color: var(--text-muted, #94a3b8); font-weight: 400; }
+.upgrade-banner-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  align-items: center;
+}
+.upgrade-banner-actions .btn-primary,
+.upgrade-banner-actions .btn-secondary {
+  padding: 8px 14px;
+  font-size: 13px;
+}
+.upgrade-banner-err {
+  width: 100%;
+  font-size: 12px;
+  color: #fb7185;
+}
+.upgrade-panel {
+  padding: 16px;
+  border-radius: 12px;
+  border: 1px solid rgba(56, 189, 248, 0.25);
+  background: rgba(13, 20, 38, 0.55);
+}
+.upgrade-panel-title {
+  margin: 0 0 8px;
+  font-size: 16px;
+  color: var(--text-bright);
+}
+.upgrade-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+}
+
 .gate-loading {
   color: var(--text-muted);
   text-align: center;

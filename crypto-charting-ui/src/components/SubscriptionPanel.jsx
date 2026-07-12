@@ -1,5 +1,5 @@
-// Settings → Subscription. Shows the user's plan/status and opens the Stripe
-// billing portal (update card / cancel). Hidden in solo mode (no billing).
+// Settings → Subscription. Paper trial: clear Stripe checkout upgrade.
+// Paid: manage billing portal.
 import { useEffect, useState } from 'react';
 import { API_URL } from '../authFetch.js';
 
@@ -14,30 +14,58 @@ const LABELS = {
 
 export default function SubscriptionPanel() {
   const [status, setStatus] = useState(null);
-  const [busy, setBusy] = useState(false);
+  const [pricing, setPricing] = useState(null);
+  const [busy, setBusy] = useState('');
   const [err, setErr] = useState('');
 
   useEffect(() => {
     fetch(`${API_URL}/billing/status`).then(r => r.json()).then(setStatus).catch(() => {});
+    fetch(`${API_URL}/billing/pricing`).then(r => r.json()).then(setPricing).catch(() => {});
   }, []);
 
   if (!status) return null;
-  if (status.plan === 'solo') return null;   // owner's own stack — nothing to bill
+  if (status.plan === 'solo') return null;
+
+  const isPaper = status.plan === 'paper' || status.trial || status.status === 'trialing';
+  const isPaidPlan = status.paid && !isPaper && status.status === 'active';
+  const [label, cls] = LABELS[status.status] || LABELS.none;
+  const trialEnds = status.current_period_end
+    ? new Date(status.current_period_end).toLocaleDateString()
+    : null;
+  const monthly = pricing?.monthly_usd ?? 10;
+  const annual = pricing?.annual_usd ?? 60;
+  const early = pricing?.early_available;
+
+  const checkout = async (plan) => {
+    setBusy(plan);
+    setErr('');
+    try {
+      const r = await fetch(`${API_URL}/billing/checkout`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ plan }),
+      });
+      if (!r.ok) throw new Error((await r.json()).detail || `HTTP ${r.status}`);
+      const { url } = await r.json();
+      window.location.href = url;
+    } catch (e) {
+      setErr(e.message || 'Checkout failed');
+      setBusy('');
+    }
+  };
 
   const openPortal = async () => {
-    setBusy(true); setErr('');
+    setBusy('portal');
+    setErr('');
     try {
       const r = await fetch(`${API_URL}/billing/portal`, { method: 'POST' });
       if (!r.ok) throw new Error((await r.json()).detail || `HTTP ${r.status}`);
       window.location.href = (await r.json()).url;
-    } catch (e) { setErr(e.message); setBusy(false); }
+    } catch (e) {
+      setErr(e.message || 'Could not open billing portal');
+      setBusy('');
+    }
   };
-
-  const [label, cls] = LABELS[status.status] || LABELS.none;
-  const isPaper = status.plan === 'paper' || status.trial;
-  const trialEnds = status.current_period_end
-    ? new Date(status.current_period_end).toLocaleDateString()
-    : null;
 
   return (
     <div style={{ marginBottom: 8 }}>
@@ -50,25 +78,65 @@ export default function SubscriptionPanel() {
           <span className="dash-muted" style={{ fontSize: 12 }}>ends {trialEnds}</span>
         )}
       </div>
+
       {status.max_bots != null && (
         <div className="dash-muted" style={{ fontSize: 12, marginBottom: 12 }}>
-          Bots: <b style={{ color: 'var(--text-bright)' }}>{status.bots_running ?? 0} of {status.max_bots}</b> running
-          (a bot is a strategy armed DRY or LIVE{status.extra_bots ? `; includes ${status.extra_bots} extra slot${status.extra_bots > 1 ? 's' : ''}` : ''}).
-          {status.live_allowed === false && ' Paper trial is paper-only — subscribe to unlock LIVE trading.'}
+          Bots: <b style={{ color: 'var(--text-bright)' }}>{status.bots_running ?? 0} of {status.max_bots}</b> running.
+          {status.live_allowed === false && ' Paper trial is paper-only.'}
         </div>
       )}
-      {status.stripe_customer_id !== undefined || status.plan !== 'paper' ? (
-        <button className="settings-save" disabled={busy || isPaper && !status.paid} onClick={openPortal}
-          style={{ opacity: isPaper && status.status === 'trialing' ? 0.9 : 1 }}>
-          {busy ? 'Opening…' : isPaper ? 'Upgrade / manage billing' : 'Manage billing / cancel'}
-        </button>
-      ) : null}
+
       {isPaper && (
-        <p className="dash-muted" style={{ fontSize: 11, marginTop: 10 }}>
-          Upgrade from the subscribe screen or billing portal when you are ready for live trading.
-        </p>
+        <div className="upgrade-panel">
+          <h3 className="upgrade-panel-title">Upgrade to subscribe</h3>
+          <p className="dash-muted" style={{ fontSize: 13, margin: '0 0 14px', lineHeight: 1.5 }}>
+            Unlock live trading, full bot slots, and the desktop engine download.
+            Checkout is one click — card via Stripe.
+          </p>
+          {early && pricing && (
+            <div className="subscribe-early" style={{ marginBottom: 12, fontSize: 13 }}>
+              Founding price — {pricing.seats_left} of {pricing.early_limit} seats left
+            </div>
+          )}
+          <div className="upgrade-actions">
+            <button
+              type="button"
+              className="btn-primary"
+              disabled={!!busy}
+              onClick={() => checkout('monthly')}
+            >
+              {busy === 'monthly' ? 'Redirecting…' : `Subscribe monthly · $${monthly}/mo`}
+            </button>
+            <button
+              type="button"
+              className="btn-primary"
+              disabled={!!busy}
+              onClick={() => checkout('annual')}
+            >
+              {busy === 'annual' ? 'Redirecting…' : `Subscribe annually · $${annual}/yr`}
+            </button>
+          </div>
+        </div>
       )}
-      {err && <div className="dash-error" style={{ marginTop: 10, fontSize: 12 }}>Could not open billing portal: {err}</div>}
+
+      {isPaidPlan && (
+        <button className="settings-save" disabled={!!busy} onClick={openPortal}>
+          {busy === 'portal' ? 'Opening…' : 'Manage billing / cancel'}
+        </button>
+      )}
+
+      {!isPaper && !isPaidPlan && status.paid === false && (
+        <div className="upgrade-actions">
+          <button type="button" className="btn-primary" disabled={!!busy} onClick={() => checkout('monthly')}>
+            {busy === 'monthly' ? 'Redirecting…' : `Subscribe monthly · $${monthly}/mo`}
+          </button>
+          <button type="button" className="btn-primary" disabled={!!busy} onClick={() => checkout('annual')}>
+            {busy === 'annual' ? 'Redirecting…' : `Subscribe annually · $${annual}/yr`}
+          </button>
+        </div>
+      )}
+
+      {err && <div className="dash-error" style={{ marginTop: 10, fontSize: 12 }}>{err}</div>}
     </div>
   );
 }

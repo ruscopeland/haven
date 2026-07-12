@@ -37,10 +37,22 @@ export default function FirstRunChecklist({ wallet, onGoSettings, onGoStrategies
   const isTrial = billing?.trial || billing?.plan === 'paper';
 
   const items = [
-    { done: walletOk, label: 'Set wallet address (Dashboard → Token Assets)', action: null },
-    { done: engineOk, label: 'Connect desktop engine (Settings → Engine)', action: onGoSettings },
-    { done: engineLive, label: engine?.paused ? 'Engine is paused — resume when ready' : 'Engine running (not paused)', action: null },
-    { done: botsRunning, label: isTrial ? 'Deploy a paper (DRY) bot' : 'Deploy a paper or live bot', action: onGoStrategies },
+    { done: botsRunning, label: isTrial ? 'Try a paper (DRY) bot' : 'Deploy a paper or live bot', action: onGoStrategies },
+    ...(isTrial
+      ? [{
+          done: false,
+          label: 'Upgrade to a paid plan (banner above, or Settings → Subscription)',
+          action: onGoSettings,
+        }]
+      : [
+          { done: walletOk, label: 'Set wallet address for portfolio display', action: null },
+          { done: engineOk, label: 'Download & connect desktop engine (Settings)', action: onGoSettings },
+          {
+            done: engineLive,
+            label: engine?.paused ? 'Engine is paused — resume when ready' : 'Engine running (not paused)',
+            action: null,
+          },
+        ]),
   ];
 
   const allDone = items.every(i => i.done);
