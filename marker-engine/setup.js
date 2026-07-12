@@ -16,7 +16,7 @@ import { fileURLToPath } from 'node:url';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const ENV_PATH = path.join(__dirname, '.env');
-const DEFAULT_API = 'https://api.haven.trade';   // overwritten by DEPLOY.md value
+const DEFAULT_API = 'https://api-production-0dc54.up.railway.app';
 
 const rl = readline.createInterface({ input: process.stdin, output: process.stdout });
 const ask = (q, def) => new Promise((res) => {
