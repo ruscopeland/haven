@@ -23,31 +23,31 @@ OUT_ZIP = os.path.join(OUT_DIR, "haven-engine.zip")
 # marker-engine files that ship (everything the daemon needs at runtime).
 ENGINE_FILES = [
     "index.js", "engine.js", "pure.js", "chain.js", "api-client.js",
-    "strategy-runner.js", "finder-runner.js",
+    "strategy-runner.js", "finder-runner.js", "create-wallet.js",
     "package.json", "setup.js", "setup.bat", "run.bat", ".env.example",
 ]
 
 README = """Haven Engine
 ============
 
-This program runs on YOUR computer and executes your Haven trades. Your wallet
-private key stays on this machine and is never sent to Haven.
+Runs on your computer and executes your Haven live trades.
 
 FIRST TIME
   1. Install Node.js (LTS) from https://nodejs.org if you don't have it.
   2. Double-click  setup.bat  and follow the prompts:
        - paste your connection key (Haven website -> Settings ->
          "Connect your engine")
-       - paste your trading wallet's private key
-  3. Double-click  run.bat  to start trading. Leave the window open.
+       - choose [1] Create a new wallet (default)
+       - copy the seed phrase offline, then confirm two words
+  3. Double-click  run.bat  to start. Leave the window open.
 
 EVERY TIME AFTER
-  Just double-click  run.bat.  Close the window to stop trading.
+  Just double-click  run.bat.  Close the window to stop.
 
 IMPORTANT
   - Live trades only run while this program is open and your computer is on.
-  - Keep a safe backup of your private key. Haven cannot recover it.
-  - Use a dedicated trading wallet holding only the funds you intend to trade.
+  - Save your seed phrase. If you lose it, the wallet cannot be recovered.
+  - Fund the wallet address printed at the end of setup before live trades.
 """
 
 

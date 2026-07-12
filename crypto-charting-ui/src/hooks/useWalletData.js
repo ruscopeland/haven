@@ -24,7 +24,16 @@ const NATIVE_PRICE_ADDR = {
 };
 
 export function getSavedAddress() {
-  return localStorage.getItem(ADDR_KEY) || import.meta.env.VITE_WALLET_ADDRESS || '';
+  // Multi-tenant rule: never default every account to a shared wallet.
+  // Only this browser's localStorage address applies for signed-in users.
+  // VITE_WALLET_ADDRESS is solo/local-dev only (import.meta.env.DEV) so a
+  // production build cannot bake the operator's test address into the bundle.
+  const saved = localStorage.getItem(ADDR_KEY);
+  if (saved) return saved;
+  if (import.meta.env.DEV) {
+    return import.meta.env.VITE_WALLET_ADDRESS || '';
+  }
+  return '';
 }
 
 async function fetchNativeUsd(chain) {

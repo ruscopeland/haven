@@ -50,10 +50,8 @@ export default function EngineConnect() {
     <div className="settings-root" style={{ marginBottom: 24 }}>
       <h2 style={{ color: '#e5e9f0', marginTop: 0 }}>🖥️ Connect your engine</h2>
       <p className="dash-muted" style={{ fontSize: 12, marginBottom: 16 }}>
-        Live trading runs from a small app on your own computer, so your wallet key
-        never leaves your machine. Download it, generate a connection key, and paste
-        the key into the app&apos;s setup. Haven does not give trading advice — you
-        control keys, tokens, and size.
+        Live trading runs on your computer. Download the engine, generate a connection
+        key, then run setup — it creates your wallet there and asks you to save the seed phrase.
       </p>
 
       <ol className="engine-steps">
@@ -64,6 +62,9 @@ export default function EngineConnect() {
           <button className="settings-save" disabled={busy} onClick={generate}>
             {busy ? 'Generating…' : '🔑 Generate a connection key'}
           </button>
+        </li>
+        <li className="dash-muted" style={{ fontSize: 12 }}>
+          On your PC: run <code>setup.bat</code> → create wallet → save seed phrase → start engine.
         </li>
       </ol>
 

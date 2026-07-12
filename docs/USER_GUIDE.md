@@ -42,7 +42,8 @@ The subscription helps cover **shared market data**, development, hosting, and u
 
 ## Desktop engine
 
-Settings → download engine → generate connection key (once) → configure on your PC:
+Settings → download engine → generate connection key (once) → run setup on your PC
+(creates a local wallet + seed phrase; save the seed offline) → start engine:
 
 - API URL  
 - Connection key  

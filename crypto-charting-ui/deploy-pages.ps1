@@ -21,6 +21,9 @@ if (-not $clerkKey) { Write-Error "Missing CLERK_PUBLISHABLE_KEY"; exit 1 }
 # currently serves a *.up.railway.app cert (name mismatch) — do not use until TLS is fixed.
 $env:VITE_API_URL = "https://api-production-0dc54.up.railway.app"
 $env:VITE_CLERK_PUBLISHABLE_KEY = $clerkKey
+# CRITICAL: do not bake the operator's local .env wallet into production.
+# An empty value overrides crypto-charting-ui/.env VITE_WALLET_ADDRESS at build time.
+$env:VITE_WALLET_ADDRESS = ""
 $env:CLOUDFLARE_API_TOKEN = $cfToken
 $env:CLOUDFLARE_ACCOUNT_ID = $cfAccount
 
