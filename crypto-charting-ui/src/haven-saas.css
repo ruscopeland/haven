@@ -723,6 +723,234 @@
 .goplus-foot a { color: var(--primary); text-decoration: none; }
 .goplus-foot a:hover { text-decoration: underline; }
 
+/* ── Legal / docs / manifesto ─────────────────────────────── */
+.landing-risk-line {
+  max-width: 640px;
+  margin: 0 auto 18px;
+  font-size: 13px;
+  line-height: 1.45;
+  color: #fbbf24;
+  opacity: 0.95;
+}
+.landing-manifesto-wrap {
+  margin: 28px auto;
+  max-width: 820px;
+  padding: 24px 28px;
+}
+.landing-pricing-lead {
+  max-width: 640px;
+  margin: 0 auto 20px;
+  text-align: center;
+  font-size: 14px;
+  color: var(--text-muted);
+  line-height: 1.5;
+}
+.legal-manifesto h2 {
+  margin: 0 0 12px;
+  font-size: 1.35rem;
+  color: var(--text-bright);
+}
+.legal-manifesto p {
+  margin: 0 0 10px;
+  font-size: 14px;
+  line-height: 1.55;
+  color: var(--text-secondary);
+}
+.legal-manifesto.compact h2 { font-size: 1.1rem; }
+.legal-manifesto.compact p { font-size: 13px; }
+
+.legal-footer {
+  margin-top: 40px;
+  padding: 24px 16px 32px;
+  text-align: center;
+  border-top: 1px solid var(--border-glass);
+}
+.legal-footer-strip {
+  max-width: 720px;
+  margin: 0 auto 12px;
+  font-size: 12px;
+  color: var(--text-muted);
+  line-height: 1.45;
+}
+.legal-footer-nav {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px 16px;
+  justify-content: center;
+  margin-bottom: 10px;
+}
+.legal-footer-link,
+.legal-inline-link {
+  background: none;
+  border: none;
+  padding: 0;
+  color: var(--primary);
+  font-size: 12px;
+  cursor: pointer;
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+.legal-footer-link:hover,
+.legal-inline-link:hover { color: var(--text-bright); }
+.legal-footer-copy {
+  margin: 0;
+  font-size: 11px;
+  color: var(--text-muted);
+}
+
+.legal-page {
+  flex: 1;
+  overflow: auto;
+  padding: 20px 16px 40px;
+}
+.legal-page-inner {
+  max-width: 820px;
+  margin: 0 auto;
+  padding: 24px 28px 40px;
+}
+.legal-page-actions { margin-bottom: 16px; }
+.legal-doc h1 {
+  margin: 0 0 8px;
+  font-size: 1.6rem;
+  color: var(--text-bright);
+}
+.legal-meta {
+  font-size: 12px;
+  color: var(--text-muted);
+  margin: 0 0 24px;
+}
+.legal-section {
+  margin-bottom: 22px;
+}
+.legal-section h2 {
+  font-size: 1.05rem;
+  margin: 0 0 8px;
+  color: var(--text-bright);
+}
+.legal-section p {
+  margin: 0 0 10px;
+  font-size: 13px;
+  line-height: 1.55;
+  color: var(--text-secondary);
+}
+
+.app-legal-bar {
+  flex-shrink: 0;
+  border-top: 1px solid var(--border-glass);
+  background: rgba(6, 9, 19, 0.6);
+  padding: 8px 16px 12px;
+}
+.app-legal-bar .legal-footer {
+  margin: 0;
+  padding: 4px 0 0;
+  border: none;
+}
+.app-legal-strip {
+  display: block;
+  font-size: 11px;
+  color: var(--text-muted);
+  text-align: center;
+  margin-bottom: 4px;
+}
+
+/* ── Elevated risk (warn + still chart) ───────────────────── */
+.risk-trade-banner {
+  border: 1px solid rgba(251, 191, 36, 0.45);
+  background: linear-gradient(135deg, rgba(251, 191, 36, 0.12), rgba(244, 63, 94, 0.08));
+  border-radius: 14px;
+  padding: 14px 16px;
+  margin: 0 0 12px;
+}
+.risk-trade-banner-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 10px;
+  margin-bottom: 8px;
+}
+.risk-trade-banner-tag {
+  font-size: 10px;
+  font-weight: 800;
+  letter-spacing: 0.06em;
+  padding: 3px 8px;
+  border-radius: 9999px;
+  background: rgba(251, 191, 36, 0.2);
+  color: #fbbf24;
+}
+.risk-trade-banner-title {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text-bright);
+}
+.risk-trade-banner-flags {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-bottom: 8px;
+}
+.risk-flag {
+  font-size: 10px;
+  padding: 2px 8px;
+  border-radius: 9999px;
+  background: rgba(255, 255, 255, 0.06);
+  color: var(--text-muted);
+}
+.risk-flag.crit {
+  background: rgba(244, 63, 94, 0.18);
+  color: #fb7185;
+}
+.risk-trade-banner-list {
+  margin: 0;
+  padding-left: 18px;
+  font-size: 12px;
+  color: var(--text-secondary);
+  line-height: 1.45;
+}
+.risk-trade-banner-list li { margin-bottom: 6px; }
+.risk-contract {
+  font-size: 11px;
+  word-break: break-all;
+  color: var(--text-bright);
+}
+.risk-trade-banner-foot {
+  margin-top: 10px;
+  font-size: 11px;
+  color: var(--text-muted);
+}
+
+.manual-risk-box {
+  border: 1px solid rgba(251, 191, 36, 0.4);
+  background: rgba(251, 191, 36, 0.08);
+  border-radius: 12px;
+  padding: 12px;
+  margin-bottom: 12px;
+  font-size: 12px;
+  color: var(--text-secondary);
+  line-height: 1.4;
+}
+.manual-risk-box b {
+  display: block;
+  color: #fbbf24;
+  margin-bottom: 6px;
+  font-size: 12px;
+}
+.manual-risk-box ul {
+  margin: 0 0 8px;
+  padding-left: 16px;
+}
+.manual-risk-box li { margin-bottom: 4px; }
+.manual-risk-check {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  margin-top: 8px;
+  font-size: 12px;
+  color: var(--text-bright);
+  cursor: pointer;
+}
+.manual-risk-check input { margin-top: 2px; flex-shrink: 0; }
+.manual-risk-check.warn { color: #fb7185; }
+
 /* ── Portfolio page ───────────────────────────────────────── */
 .portfolio-root { padding-bottom: 40px; }
 .portfolio-head {

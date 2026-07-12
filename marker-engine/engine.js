@@ -249,11 +249,12 @@ export class MarkerEngine {
   }
 
   // GoPlus security gate — MUST pass before any approve() or swap.
-  // Blocks honeypots, airdrop scams (e.g. zepe.io-style), extreme tax, etc.
-  // Unscanned tokens are scanned on-demand (counts against daily budget).
-  async assertTokenSafeToTrade(symbol, name) {
+  // Chart is always allowed (API). Strategy/auto markers are blocked on risk.
+  // Manual markers may carry an explicit risk acknowledgment (user warned +
+  // verified contract) so research trades can still probe carefully.
+  async assertTokenSafeToTrade(symbol, name, meta = {}) {
     const requireScan = process.env.SECURITY_REQUIRE_SCAN !== '0'; // default on
-    if (!requireScan) return;
+    if (!requireScan) return { override: false };
     let sec;
     try {
       sec = await this.api.checkTokenSecurity(symbol, { force: false });
@@ -262,21 +263,28 @@ export class MarkerEngine {
         `Security check unavailable for ${name} (${e.message}). ` +
         `Refuse to approve/swap until GoPlus is reachable.`);
     }
-    if (sec.blocked || (sec.critical && sec.critical.length)) {
-      const why = (sec.critical || sec.flags || ['blocked']).join(', ');
+
+    const elevated = !!(sec.blocked || (sec.critical && sec.critical.length)
+      || sec.safe === false || sec.safe !== true);
+    const manualOverride = meta.tag === 'manual'
+      && meta.risk_ack === true
+      && meta.contract_verified === true
+      && meta.risk_warned === true;
+
+    if (elevated && !manualOverride) {
+      const why = (sec.critical || sec.flags || [sec.message || 'blocked']).join(', ');
       throw new Error(
-        `SECURITY BLOCK ${name}: ${why}. No approve, no swap. ` +
-        `(GoPlus — airdrop scams / honeypots / extreme tax are auto-blocked.)`);
+        `SECURITY BLOCK ${name}: ${why}. No approve, no swap for auto/strategy. ` +
+        `Manual trade requires contract verification + risk acknowledgment in the UI.`);
     }
-    if (sec.safe === false) {
-      throw new Error(`SECURITY BLOCK ${name}: not marked safe by GoPlus.`);
+    if (elevated && manualOverride) {
+      const why = (sec.critical || sec.flags || ['elevated_risk']).join(', ');
+      this.log('WARNING',
+        `MANUAL RISK OVERRIDE ${name}: ${why}. User verified contract and accepted warnings. `
+        + `Probe recommended; creator can still blacklist wallet after small buy.`);
+      return { override: true, security: sec };
     }
-    // Unscanned / unknown: only allow if the API says scanned and safe.
-    if (sec.safe !== true) {
-      throw new Error(
-        `SECURITY BLOCK ${name}: no clean GoPlus scan yet (safe=${sec.safe}). ` +
-        `Wait for scan or check Settings → Token security.`);
-    }
+    return { override: false, security: sec };
   }
 
   // Size, quote, guard, execute, and record one marker swap.
@@ -285,15 +293,24 @@ export class MarkerEngine {
     const isBuy = isBuyMarker(marker.marker_type);
     const { gasPriceGwei, slippagePct } = this.config;
 
-    // Security FIRST — never approve a token we haven't cleared.
-    await this.assertTokenSafeToTrade(marker.symbol, name);
-
     // Marker sizing intent: new markers store {usd}; legacy ones {amount} (token qty).
     // meta may also carry {tp, sl} (bracket entry) or {bracketId} (an OCO leg).
     let meta = {};
     try { meta = marker.metadata_json ? JSON.parse(marker.metadata_json) : {}; } catch { /* unsized */ }
     const metaUsd = parseFloat(meta.usd) || 0;
     const metaAmount = parseFloat(meta.amount) || 0;
+
+    // Security FIRST — never approve a token we haven't cleared (or user risk-acked).
+    const secGate = await this.assertTokenSafeToTrade(marker.symbol, name, meta);
+    if (secGate?.override) {
+      const probeMax = parseFloat(process.env.HAVEN_RISK_PROBE_USD || '1');
+      // Larger-than-probe on elevated risk requires extra ack flag from the UI.
+      if (metaUsd > probeMax && meta.risk_ack_large !== true) {
+        throw new Error(
+          `Risky token — first trades should stay near $${probeMax} probe size. `
+          + `Confirm the larger-size warning in the UI if you insist.`);
+      }
+    }
 
     const bnbPrice = await getBnbPriceUsd(this.provider, this.apiBnbPrice);
 

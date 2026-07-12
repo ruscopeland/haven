@@ -11,6 +11,9 @@ import PortfolioView from './components/PortfolioView'
 import EngineToggle from './components/EngineToggle'
 import MarketTicker from './components/MarketTicker'
 import HavenLogo from './components/HavenLogo'
+import LegalDocView from './components/LegalDoc'
+import LegalFooter from './components/LegalFooter'
+import { RISK_SUMMARY_SHORT } from './legal/content.js'
 
 const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:8000';
 const LAYOUT_NAMES_KEY = 'chartLayoutNames';
@@ -21,6 +24,7 @@ const NAV = [
   ['charts', 'Charts'],
   ['strategies', 'Strategies'],
   ['finder', 'Token Finder'],
+  ['docs', 'Docs'],
   ['settings', 'Settings'],
 ];
 
@@ -62,6 +66,7 @@ function App() {
   const [signalError, setSignalError] = useState(false);
   const [layoutNames, setLayoutNames] = useState(loadLayoutNames);
   const [gridMode, setGridMode] = useState(null); // null = auto, or 1/2/4/6
+  const [legalDoc, setLegalDoc] = useState(null); // terms | privacy | risk | null (docs is a main view)
 
   const [presets, setPresets] = useState(() => {
     const saved = localStorage.getItem('chartPresets');
@@ -163,7 +168,14 @@ function App() {
       setSelectedTokens(saved?.selectedTokens || []);
       setActivePreset(saved?.activePreset ?? null);
     }
+    // Nav always resets nested legal docs; openLegalPage uses setView only.
+    setLegalDoc(null);
     setView(key);
+  };
+
+  const openLegalPage = (k) => {
+    setLegalDoc(k === 'docs' ? null : k);
+    setView('docs');
   };
 
   const openTokenPage = (t) => {
@@ -236,6 +248,49 @@ function App() {
       <div className="app-ticker-bar">
         <MarketTicker />
       </div>
+
+      {/* Nav tabs span full width so opening Charts never shifts them. */}
+      <div className="preset-toolbar" style={{
+        display: 'flex', gap: '8px', padding: '10px 16px',
+        background: 'rgba(13, 20, 38, 0.75)', backdropFilter: 'blur(12px)',
+        borderBottom: '1px solid var(--border-glass)', alignItems: 'center', flexWrap: 'wrap',
+        flexShrink: 0,
+      }}>
+        <HavenLogo size={26} />
+        {NAV.map(([key, label]) => {
+          const active = view === key
+            || (view === 'token' && (key === 'dashboard' || key === 'portfolio'))
+            || (view === 'strategy' && key === 'dashboard');
+          return (
+            <button key={key} onClick={() => navigate(key)} className={`nav-tab${active ? ' active' : ''}`}>
+              {label}
+            </button>
+          );
+        })}
+
+        {detailActive && (
+          <span className="app-breadcrumb">
+            <button type="button" onClick={() => navigate(view === 'token' ? 'portfolio' : 'dashboard')}>
+              {view === 'token' ? 'Portfolio' : 'Dashboard'}
+            </button>
+            {' › '}
+            {view === 'token' && (pageToken?.name || pageToken?.symbol)}
+            {view === 'strategy' && 'Strategy'}
+          </span>
+        )}
+
+        <div style={{ flex: 1 }} />
+
+        <div style={{ display: 'flex', alignItems: 'center', gap: '10px', marginRight: 8 }}>
+          <HealthDot label="API" status={signalError ? 'down' : 'ok'} />
+          <HealthDot label="Collector" status={health.collector || 'unknown'} />
+          <HealthDot label="Engine" status={health.execution_engine || 'unknown'} />
+        </div>
+
+        <EngineToggle />
+      </div>
+
+      {/* Below tabs: screener (charts only) sits beside page content, top-aligned with layouts row */}
       <div style={{ display: 'flex', flex: 1, minHeight: 0, overflow: 'hidden' }}>
       {view === 'charts' && (
         <Screener
@@ -247,46 +302,7 @@ function App() {
         />
       )}
 
-      <div className="main-content" style={{ display: 'flex', flexDirection: 'column', flex: 1, overflow: 'hidden' }}>
-        <div className="preset-toolbar" style={{
-          display: 'flex', gap: '8px', padding: '10px 16px',
-          background: 'rgba(13, 20, 38, 0.75)', backdropFilter: 'blur(12px)',
-          borderBottom: '1px solid var(--border-glass)', alignItems: 'center', flexWrap: 'wrap',
-        }}>
-          <HavenLogo size={26} />
-          {NAV.map(([key, label]) => {
-            const active = view === key
-              || (view === 'token' && (key === 'dashboard' || key === 'portfolio'))
-              || (view === 'strategy' && key === 'dashboard');
-            return (
-              <button key={key} onClick={() => navigate(key)} className={`nav-tab${active ? ' active' : ''}`}>
-                {label}
-              </button>
-            );
-          })}
-
-          {detailActive && (
-            <span className="app-breadcrumb">
-              <button type="button" onClick={() => navigate(view === 'token' ? 'portfolio' : 'dashboard')}>
-                {view === 'token' ? 'Portfolio' : 'Dashboard'}
-              </button>
-              {' › '}
-              {view === 'token' && (pageToken?.name || pageToken?.symbol)}
-              {view === 'strategy' && 'Strategy'}
-            </span>
-          )}
-
-          <div style={{ flex: 1 }} />
-
-          <div style={{ display: 'flex', alignItems: 'center', gap: '10px', marginRight: 8 }}>
-            <HealthDot label="API" status={signalError ? 'down' : 'ok'} />
-            <HealthDot label="Collector" status={health.collector || 'unknown'} />
-            <HealthDot label="Engine" status={health.execution_engine || 'unknown'} />
-          </div>
-
-          <EngineToggle />
-        </div>
-
+      <div className="main-content" style={{ display: 'flex', flexDirection: 'column', flex: 1, overflow: 'hidden', minWidth: 0 }}>
         {view === 'charts' && (
           <div className="charts-toolbar">
             <span style={{ color: 'var(--text-muted)', fontWeight: 600, fontSize: 11 }}>Layouts</span>
@@ -363,7 +379,15 @@ function App() {
             onEdit={openStrategyEditor}
           />
         ) : view === 'settings' ? (
-          <SettingsView />
+          <SettingsView onOpenLegal={openLegalPage} />
+        ) : view === 'docs' ? (
+          <LegalDocView
+            docKey={legalDoc || 'docs'}
+            onBack={() => {
+              if (legalDoc) setLegalDoc(null);
+              else navigate('dashboard');
+            }}
+          />
         ) : view === 'strategies' ? (
           <StrategyWorkbench signals={signals} initialSelectId={selectedStrategyId}
             onOpenStrategyPage={openStrategyPage} />
@@ -408,6 +432,16 @@ function App() {
                 />
               ))
             )}
+          </div>
+        )}
+
+        {view !== 'charts' && (
+          <div className="app-legal-bar">
+            <span className="app-legal-strip">{RISK_SUMMARY_SHORT}</span>
+            <LegalFooter
+              showStrip={false}
+              onOpen={openLegalPage}
+            />
           </div>
         )}
       </div>

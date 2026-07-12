@@ -38,8 +38,8 @@ export default function GoPlusSecurity({ security, chain, address, symbol }) {
           <span className="dash-muted" style={{ fontSize: 11 }}>Not scanned yet</span>
         </div>
         <p className="dash-muted" style={{ fontSize: 12, margin: '8px 0 0' }}>
-          Haven scans liquid tokens gradually (daily budget) via GoPlus so free-tier quota is not burned.
-          Results appear here after the next scan tick.
+          Haven scans liquid tokens gradually under a local address cap (not GoPlus CU).
+          Results appear here after the next scan tick. Charting stays available while waiting.
         </p>
       </div>
     );
@@ -60,7 +60,7 @@ export default function GoPlusSecurity({ security, chain, address, symbol }) {
       <div className="goplus-panel-head">
         <GoPlusBadge />
         <span className={`goplus-verdict ${safe ? 'ok' : 'bad'}`}>
-          {critical.length ? 'Risk detected' : safe ? 'No critical risks' : 'See flags'}
+          {critical.length ? 'Risk detected — chart OK' : safe ? 'No critical risks' : 'See flags'}
         </span>
       </div>
       <div className="goplus-stats">

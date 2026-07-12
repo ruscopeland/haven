@@ -4,11 +4,15 @@ import { useEffect, useState } from 'react';
 import { UserButton } from '@clerk/clerk-react';
 import { API_URL } from '../authFetch.js';
 import HavenLogo from './HavenLogo.jsx';
+import LegalFooter from './LegalFooter.jsx';
+import LegalDocView from './LegalDoc.jsx';
+import { RISK_SUMMARY_SHORT } from '../legal/content.js';
 
 export default function Subscribe({ onActivated }) {
   const [pricing, setPricing] = useState(null);
   const [busy, setBusy] = useState('');
   const [error, setError] = useState('');
+  const [legalView, setLegalView] = useState(null);
 
   useEffect(() => {
     fetch(`${API_URL}/billing/pricing`).then(r => r.json()).then(setPricing).catch(() => {});
@@ -49,6 +53,15 @@ export default function Subscribe({ onActivated }) {
   const annual = pricing?.annual_usd ?? 60;
   const trialDays = pricing?.paper_trial_days ?? 14;
 
+  if (legalView) {
+    return (
+      <div className="subscribe-root">
+        <LegalDocView docKey={legalView} onBack={() => setLegalView(null)} />
+        <LegalFooter onOpen={setLegalView} />
+      </div>
+    );
+  }
+
   return (
     <div className="subscribe-root">
       <div className="subscribe-topbar">
@@ -58,9 +71,10 @@ export default function Subscribe({ onActivated }) {
       <div className="subscribe-card">
         <h1>Choose how you want to start</h1>
         <p className="subscribe-sub">
-          Start free with paper trading, or subscribe for live execution and full bot slots.
-          Charts, strategies, and Token Finder are included either way.
+          Paper trial or subscribe for the live path and full bot slots. This is software and
+          shared data access — not investment advice. You control keys and decisions.
         </p>
+        <p className="landing-risk-line" style={{ marginBottom: 16 }}>{RISK_SUMMARY_SHORT}</p>
         {early && pricing && (
           <div className="subscribe-early">
             🔥 Founding price — {pricing.seats_left} of {pricing.early_limit} seats left.
@@ -96,10 +110,16 @@ export default function Subscribe({ onActivated }) {
         </div>
         {error && <div className="subscribe-error">{error}</div>}
         <p className="landing-fineprint">
-          Paper trial never executes live trades. LIVE trading requires a paid plan and the
-          desktop engine. Payments by Stripe. Cancel anytime from Settings. Not financial advice.
+          By continuing you agree to our{' '}
+          <button type="button" className="legal-inline-link" onClick={() => setLegalView('terms')}>Terms</button>,{' '}
+          <button type="button" className="legal-inline-link" onClick={() => setLegalView('privacy')}>Privacy</button>, and{' '}
+          <button type="button" className="legal-inline-link" onClick={() => setLegalView('risk')}>Risk disclosure</button>.
+          Paper trial never executes live trades. LIVE requires a paid plan and a desktop engine
+          you control. Payments by Stripe. Subscription helps fund data, development, and updates.
+          Not financial advice. You can lose money.
         </p>
       </div>
+      <LegalFooter onOpen={setLegalView} />
     </div>
   );
 }

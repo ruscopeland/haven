@@ -52,7 +52,8 @@ export default function EngineConnect() {
       <p className="dash-muted" style={{ fontSize: 12, marginBottom: 16 }}>
         Live trading runs from a small app on your own computer, so your wallet key
         never leaves your machine. Download it, generate a connection key, and paste
-        the key into the app's setup.
+        the key into the app&apos;s setup. Haven does not give trading advice — you
+        control keys, tokens, and size.
       </p>
 
       <ol className="engine-steps">

@@ -5,6 +5,7 @@ import { getSavedAddress } from '../hooks/useWalletData';
 import { fmtUsd, fmtQty, fmtPrice, fmtTime, tokenColor, tradeUsd } from '../utils/format';
 import GoPlusSecurity from './GoPlusSecurity';
 import ManualTradePanel from './ManualTradePanel';
+import RiskTradeBanner from './RiskTradeBanner';
 import '../dashboard.css';
 
 const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:8000';
@@ -20,6 +21,7 @@ export default function TokenDetailView({
   const [markers, setMarkers] = useState([]);
   const [heldQty, setHeldQty] = useState(null);
   const [copied, setCopied] = useState(false);
+  const [tradePolicy, setTradePolicy] = useState(null);
 
   const signal = useMemo(() => (signals || []).find(s => s.symbol === symbol), [signals, symbol]);
   const chg = signal?.price_change_24h;
@@ -54,7 +56,37 @@ export default function TokenDetailView({
         if (r.ok && alive) setMarkers(await r.json());
       } catch { /* */ }
     };
-    loadMeta(); loadPrice(); loadTrades(); loadMarkers();
+    const loadSecurity = async () => {
+      try {
+        const r = await fetch(`${API_URL}/security/check/${encodeURIComponent(symbol)}`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ force: false }),
+        });
+        if (!r.ok || !alive) return;
+        const data = await r.json();
+        setTradePolicy(data.trade_policy || null);
+        // Merge security into meta-shaped view if /tokens lacked a scan yet
+        if (data && alive) {
+          setMeta(prev => prev ? {
+            ...prev,
+            security: data.safe != null || data.critical
+              ? {
+                  safe: data.safe,
+                  critical: data.critical,
+                  flags: data.flags,
+                  is_honeypot: data.is_honeypot,
+                  buy_tax: data.buy_tax,
+                  sell_tax: data.sell_tax,
+                  is_in_dex: data.is_in_dex,
+                  scanned_at: data.scanned_at,
+                }
+              : prev.security,
+          } : prev);
+        }
+      } catch { /* banner optional */ }
+    };
+    loadMeta(); loadPrice(); loadTrades(); loadMarkers(); loadSecurity();
     const a = setInterval(loadPrice, 10_000);
     const b = setInterval(loadTrades, 15_000);
     const c = setInterval(loadMarkers, 10_000);
@@ -145,6 +177,14 @@ export default function TokenDetailView({
           </div>
         </div>
       </div>
+
+      <RiskTradeBanner
+        policy={tradePolicy}
+        security={meta?.security}
+        contract={contract}
+        chain={meta?.chain_id}
+        symbol={displayName}
+      />
 
       <GoPlusSecurity
         security={meta?.security}

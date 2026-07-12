@@ -1503,46 +1503,82 @@ def security_check_token(symbol: str, body: SecurityCheckBody | None = None,
                          identity: Identity = Depends(require_paid)):
     """Pre-trade GoPlus gate — engine/UI call this BEFORE any approve/swap.
 
-    - Scans (or reuses fresh cache) the token via GoPlus.
-    - Auto-blacklists honeypots / airdrop scams / extreme tax.
-    - Returns {safe, blocked, critical, flags, ...}. Engine refuses trade if blocked.
+    Policy (product):
+      - Chart is ALWAYS allowed (research).
+      - Auto/strategy execution is blocked when risk is elevated (`blocked=true`)
+        unless the marker carries a manual risk acknowledgment.
+      - Manual trades may proceed after contract verify + risk ack; UI should
+        recommend a small probe first.
     """
     from ingest.goplus import scan_one_token
     from ingest.chains import load_env_file
+    from cmc_discover import trade_policy_from_security
     load_env_file()
     tok = db.query(Token).filter(Token.symbol == symbol).first()
     if not tok:
         raise HTTPException(status_code=404, detail="Token not found")
-    if tok.status == "blacklisted":
-        return {
-            "symbol": symbol, "safe": False, "blocked": True,
-            "critical": ["blacklisted"], "flags": ["blacklisted"],
-            "message": "Token is blacklisted — no approve, no swap.",
-        }
     if not tok.contract_address:
+        policy = trade_policy_from_security(
+            {"safe": False, "critical": ["no_contract"], "flags": []},
+            status=tok.status,
+        )
         return {
             "symbol": symbol, "safe": False, "blocked": True,
             "critical": ["no_contract"], "flags": [],
+            "chart_allowed": True,
+            "trade_policy": policy,
             "message": "No contract address — cannot trade.",
         }
     do_force = bool(force) or bool(body and body.force)
-    result = scan_one_token(db, tok, force=do_force, count_budget=True)
-    # Refresh status after possible blacklist
-    db.refresh(tok)
-    result["symbol"] = symbol
-    result["status"] = tok.status
-    result["contract_address"] = tok.contract_address
-    result["chain_id"] = tok.chain_id
-    if result.get("blocked") or result.get("critical"):
+    if tok.status == "blacklisted" and not do_force:
+        # Still return cached security if present; chart allowed.
+        cached = None
+        if tok.security_json:
+            try:
+                cached = json.loads(tok.security_json)
+            except Exception:
+                cached = None
+        result = {
+            **(cached or {}),
+            "symbol": symbol,
+            "safe": False,
+            "blocked": True,
+            "critical": list(dict.fromkeys(
+                list((cached or {}).get("critical") or []) + ["blacklisted"]
+            )),
+            "flags": list(dict.fromkeys(
+                list((cached or {}).get("flags") or []) + ["blacklisted"]
+            )),
+            "status": tok.status,
+            "contract_address": tok.contract_address,
+            "chain_id": tok.chain_id,
+            "from_cache": True,
+        }
+    else:
+        result = scan_one_token(db, tok, force=do_force, count_budget=True)
+        db.refresh(tok)
+        result["symbol"] = symbol
+        result["status"] = tok.status
+        result["contract_address"] = tok.contract_address
+        result["chain_id"] = tok.chain_id
+
+    policy = trade_policy_from_security(result, status=tok.status)
+    result["chart_allowed"] = True
+    result["trade_policy"] = policy
+    # `blocked` = auto/strategy path must not trade without manual risk ack.
+    if policy["mode"] == "elevated_risk":
+        result["blocked"] = True
         result["message"] = (
-            "SECURITY BLOCK — no ERC-20 approve and no swap. "
+            "ELEVATED RISK — chart OK. Manual trade requires contract verification "
+            "and risk acknowledgment; start with a small probe. "
             f"Flags: {', '.join(result.get('critical') or result.get('flags') or [])}"
         )
     elif result.get("safe") is True:
+        result["blocked"] = False
         result["message"] = "GoPlus clear — exact-amount approve allowed for this trade only."
     else:
-        result["message"] = "Incomplete security data — trade blocked until a clean scan."
         result["blocked"] = True
+        result["message"] = "Incomplete security data — trade blocked until a clean scan or risk ack."
     return result
 
 
@@ -1575,6 +1611,13 @@ def goplus_status(identity: Identity = Depends(require_paid)):
         "blacklisted": blacklisted,
         "provider": "GoPlus Security",
         "docs": "https://gopluslabs.io/",
+        # Clarify: this counter is Haven's self-limit, not GoPlus CU on the portal.
+        "budget_kind": "local_address_cap",
+        "budget_note": (
+            "daily_budget/day_used count token addresses Haven allows itself to scan "
+            "per UTC day (GOPLUS_DAILY_BUDGET). This is separate from GoPlus Compute "
+            "Units (CU) shown in the GoPlus dashboard."
+        ),
     }
 
 
@@ -1718,6 +1761,95 @@ def get_tokens(skip: int = 0, limit: int = 100, status: str = "active",
     q = _product_token_filters(q, floor=floor, enforce_quality=enforce)
     tokens = q.offset(skip).limit(limit).all()
     return [_token_to_response(t) for t in tokens]
+
+
+class TokenSearchHit(BaseModel):
+    source: str
+    in_db: bool = False
+    symbol: str | None = None
+    display: str | None = None
+    name: str | None = None
+    chain: str | None = None
+    contract_address: str | None = None
+    cmc_id: int | None = None
+    cmc_rank: int | None = None
+    cmc_slug: str | None = None
+    market_cap: float | None = None
+    logo_url: str | None = None
+    status: str | None = None
+    liquidity_usd: float | None = None
+
+
+@app.get("/tokens/search", response_model=List[TokenSearchHit])
+def search_tokens_endpoint(
+    q: str = "",
+    limit: int = 12,
+    identity: Identity = Depends(require_paid),
+):
+    """Typeahead for screener — local DB first, then CMC public search."""
+    from cmc_discover import search_tokens
+    q = (q or "").strip()
+    if len(q) < 1:
+        return []
+    limit = max(1, min(int(limit or 12), 25))
+    try:
+        return search_tokens(q, limit=limit)
+    except Exception as e:
+        raise HTTPException(status_code=502, detail=f"Search failed: {e}")
+
+
+class TokenEnsureBody(BaseModel):
+    cmc_id: int | None = None
+    chain: str | None = None
+    contract_address: str | None = None
+    display: str | None = None
+    name: str | None = None
+    cmc_slug: str | None = None
+    cmc_rank: int | None = None
+    market_cap: float | None = None
+    price: float | None = None
+    volume_24h: float | None = None
+    price_change_24h: float | None = None
+    backfill: bool = True
+    scan_security: bool = True
+
+
+@app.post("/tokens/ensure")
+def ensure_token_endpoint(
+    body: TokenEnsureBody,
+    identity: Identity = Depends(require_paid),
+):
+    """Add/refresh a CMC (or contract) token, backfill chart history, GoPlus scan.
+
+    Chart is always allowed. Elevated risk is returned in trade_policy — UI
+    still opens the chart and only gates trading with acknowledgments.
+    """
+    from cmc_discover import ensure_token, trade_policy_from_security
+    try:
+        result = ensure_token(
+            cmc_id=body.cmc_id,
+            chain=body.chain,
+            contract_address=body.contract_address,
+            display=body.display,
+            name=body.name,
+            cmc_slug=body.cmc_slug,
+            cmc_rank=body.cmc_rank,
+            market_cap=body.market_cap,
+            price=body.price,
+            volume_24h=body.volume_24h,
+            price_change_24h=body.price_change_24h,
+            backfill=body.backfill,
+            scan_security=body.scan_security,
+        )
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    except Exception as e:
+        raise HTTPException(status_code=502, detail=f"Ensure failed: {e}")
+
+    sec = result.get("security") if isinstance(result.get("security"), dict) else None
+    result["trade_policy"] = trade_policy_from_security(sec, status=result.get("status"))
+    result["chart_allowed"] = True
+    return result
 
 
 @app.get("/tokens/{symbol}", response_model=TokenResponse)

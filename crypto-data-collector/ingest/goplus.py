@@ -207,7 +207,9 @@ class GoPlusClient:
         # Free tier is strict (4029 too many requests at 3s); default 5s.
         self.min_interval = _cfg_float("GOPLUS_MIN_INTERVAL_SEC", 5.0)
         self.batch_size = max(1, min(_cfg_int("GOPLUS_BATCH_SIZE", 5), 20))
-        self.daily_budget = max(1, _cfg_int("GOPLUS_DAILY_BUDGET", 300))
+        # Local self-limit (addresses/day), NOT GoPlus Compute Units (CU).
+        # Default raised for paid/high-CU plans; free-tier can lower via .env.
+        self.daily_budget = max(1, _cfg_int("GOPLUS_DAILY_BUDGET", 10000))
         self.refresh_days = max(1, _cfg_int("GOPLUS_REFRESH_DAYS", 14))
         # Persist daily usage across process restarts
         self._usage_path = os.path.join(
@@ -406,9 +408,23 @@ def scan_one_token(db, tok: Token, *, force: bool = False, count_budget: bool = 
         # Prefer cached even if slightly stale over failing closed with no data
         if cached and cached.get("scanned_at"):
             blocked = bool(cached.get("critical")) or cached.get("safe") is False
-            return {**cached, "blocked": blocked, "from_cache": True, "budget_exhausted": True}
-        return {"safe": None, "blocked": True, "critical": ["goplus_budget_exhausted"],
-                "flags": [], "error": "daily GoPlus budget exhausted — cannot clear new tokens"}
+            return {**cached, "blocked": blocked, "from_cache": True, "budget_exhausted": True,
+                    "error": (
+                        f"Haven local scan cap reached ({client.daily_budget} addresses/day "
+                        f"via GOPLUS_DAILY_BUDGET) — this is NOT GoPlus CU. "
+                        f"Raise GOPLUS_DAILY_BUDGET in .env if your GoPlus plan still has CU left."
+                    )}
+        return {
+            "safe": None, "blocked": True,
+            "critical": ["goplus_local_budget_exhausted"],
+            "flags": [],
+            "error": (
+                f"Haven local scan cap reached ({client.daily_budget} addresses/day, "
+                f"GOPLUS_DAILY_BUDGET) — not GoPlus Compute Units. "
+                f"Your GoPlus dashboard CU can still be nearly full. "
+                f"Raise GOPLUS_DAILY_BUDGET in crypto-data-collector/.env and restart the API."
+            ),
+        }
 
     chain = tok.chain_id or "bsc"
     if chain == "56":

@@ -36,7 +36,8 @@ def main():
         try:
             client = GoPlusClient()  # refresh usage from disk
             if client.remaining_budget() <= 0:
-                log(f"GoPlus budget exhausted for today ({client.daily_budget}) — sleep 30m")
+                log(f"Haven local GoPlus address cap exhausted for today "
+                    f"({client.daily_budget}/day, GOPLUS_DAILY_BUDGET) — not GoPlus CU. Sleep 30m")
                 time.sleep(1800)
                 continue
             result = run_scan(max_addresses=min(batch, client.remaining_budget()))

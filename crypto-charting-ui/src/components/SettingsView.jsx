@@ -17,7 +17,7 @@ const FIELDS = [
     help: 'Failed marker fires re-arm this many times, then the marker is disabled.' },
 ];
 
-export default function SettingsView() {
+export default function SettingsView({ onOpenLegal }) {
   const [saved, setSaved] = useState(null);
   const [draft, setDraft] = useState({});
   const [msg, setMsg] = useState(null);
@@ -95,17 +95,23 @@ export default function SettingsView() {
           </p>
         ) : (
           <div className="dash-muted" style={{ fontSize: 12, lineHeight: 1.6 }}>
-            <div>Status: <b className="dash-green">configured</b> · daily budget {goplus.day_used}/{goplus.daily_budget} addresses</div>
-            <div>Remaining today: <b style={{ color: 'var(--text-bright)' }}>{goplus.remaining}</b></div>
+            <div>Status: <b className="dash-green">configured</b> · Haven local cap {goplus.day_used}/{goplus.daily_budget} addresses today</div>
+            <div>Remaining under local cap: <b style={{ color: 'var(--text-bright)' }}>{goplus.remaining}</b></div>
             <div>Queue (liquid, need scan/refresh): <b style={{ color: 'var(--text-bright)' }}>{goplus.need_scan}</b></div>
             <div>Scanned total: {goplus.scanned_total} · auto-blacklisted: {goplus.blacklisted}</div>
+            <div style={{ marginTop: 6 }}>
+              This is <b>Haven’s self-limit</b> (<code>GOPLUS_DAILY_BUDGET</code>) in token addresses —
+              <b> not</b> GoPlus Compute Units (CU) from the GoPlus dashboard. If CU is still high but
+              scans stop, raise that env var and restart the API.
+            </div>
             <div style={{ marginTop: 6 }}>
               Only tokens with ≥$100k liquidity are bulk-scanned. Run the <b>Haven GoPlus</b> window from start.bat
               (or <code>python goplus_worker.py</code>) so usage is paced across the day.
             </div>
             <div style={{ marginTop: 8, color: 'var(--text-bright)' }}>
               <b>Trade safety:</b> the engine never unlimited-approves tokens. Before any approve/swap it
-              runs a GoPlus check (honeypot, <b>airdrop scam</b>, extreme tax). Failures block the trade.
+              runs a GoPlus check (honeypot, <b>airdrop scam</b>, extreme tax). Elevated risk still charts;
+              manual trades need risk acknowledgment.
             </div>
           </div>
         )}
@@ -117,6 +123,27 @@ export default function SettingsView() {
           Live trading runs on your machine. Download the engine and connect an API key here.
         </p>
         <EngineConnect />
+      </section>
+
+      <section className="settings-section" id="settings-legal">
+        <h2>Legal &amp; documentation</h2>
+        <p className="dash-muted" style={{ fontSize: 12, marginBottom: 12 }}>
+          Haven is software and shared data access — not investment advice. You control keys and outcomes.
+          Subscription helps fund data, development, and updates.
+        </p>
+        <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8 }}>
+          {[
+            ['docs', 'User guide'],
+            ['terms', 'Terms of Service'],
+            ['privacy', 'Privacy Policy'],
+            ['risk', 'Risk disclosure'],
+          ].map(([k, label]) => (
+            <button key={k} type="button" className="btn-secondary" style={{ padding: '8px 12px', fontSize: 12 }}
+              onClick={() => onOpenLegal?.(k)}>
+              {label}
+            </button>
+          ))}
+        </div>
       </section>
 
       <section className="settings-section" id="settings-risk">
