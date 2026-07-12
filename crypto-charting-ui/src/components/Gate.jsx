@@ -59,10 +59,27 @@ export default function Gate() {
     const params = new URLSearchParams(window.location.search);
     let poll;
     if (params.get('billing') === 'success') {
+      // Apply Stripe checkout immediately (webhook is backup — was broken on .get()).
+      (async () => {
+        setState(s => ({ ...s, loading: true, message: 'Confirming your subscription…' }));
+        const sessionId = params.get('session_id');
+        try {
+          await fetch(`${API_URL}/billing/confirm-checkout`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(sessionId ? { session_id: sessionId } : {}),
+          });
+        } catch { /* still poll status below */ }
+        if (alive) await check();
+        window.history.replaceState({}, '', window.location.pathname || '/');
+      })();
+
       let tries = 0;
-      poll = setInterval(() => {
-        if (++tries > 10) clearInterval(poll);
-        if (alive) check();
+      poll = setInterval(async () => {
+        if (++tries > 15) clearInterval(poll);
+        if (!alive) return;
+        const d = await check();
+        if (d && d.plan && d.plan !== 'paper' && d.status === 'active') clearInterval(poll);
       }, 2000);
     }
     return () => { alive = false; if (poll) clearInterval(poll); };

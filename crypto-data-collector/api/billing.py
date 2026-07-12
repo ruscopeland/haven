@@ -192,6 +192,107 @@ def start_paper_trial(db: Session = Depends(get_db),
     }
 
 
+def _plain(obj):
+    """Stripe SDK objects are not plain dicts — never call .get on them directly."""
+    if obj is None:
+        return {}
+    if isinstance(obj, dict):
+        return obj
+    if hasattr(obj, "to_dict_recursive"):
+        try:
+            return obj.to_dict_recursive()
+        except Exception:
+            pass
+    if hasattr(obj, "to_dict"):
+        try:
+            return obj.to_dict()
+        except Exception:
+            pass
+    try:
+        return dict(obj)
+    except Exception:
+        return {}
+
+
+def _meta(obj) -> dict:
+    return _plain(_plain(obj).get("metadata"))
+
+
+def _upsert_subscription(db: Session, user_id: str, **fields):
+    sub = db.query(Subscription).filter(Subscription.user_id == user_id).first()
+    now_ms = int(time.time() * 1000)
+    if not sub:
+        sub = Subscription(user_id=user_id, created_at=now_ms)
+        db.add(sub)
+    for k, v in fields.items():
+        if v is not None:
+            setattr(sub, k, v)
+    sub.updated_at = now_ms
+    db.commit()
+    return sub
+
+
+def _apply_checkout_session(db: Session, session_obj) -> str | None:
+    """Mark user active from a completed Checkout Session. Returns user_id or None."""
+    s = _plain(session_obj)
+    meta = _meta(s)
+    user_id = s.get("client_reference_id") or meta.get("user_id")
+    if not user_id:
+        return None
+    plan = meta.get("plan") or "monthly"
+    if plan not in ("monthly", "annual"):
+        plan = "monthly"
+    early = 1 if meta.get("early") == "1" else 0
+    # Checkout complete ⇒ paid access (paper trial plan replaced).
+    status = "active"
+    if s.get("status") == "complete" or s.get("payment_status") in ("paid", "no_payment_required"):
+        status = "active"
+    _upsert_subscription(
+        db, user_id,
+        stripe_customer_id=s.get("customer"),
+        stripe_subscription_id=s.get("subscription"),
+        status=status,
+        plan=plan,
+        early=early,
+    )
+    return user_id
+
+
+def _apply_stripe_subscription(db: Session, sub_obj, user_id: str | None = None) -> str | None:
+    s = _plain(sub_obj)
+    meta = _meta(s)
+    uid = user_id or meta.get("user_id") or _user_from_customer(db, s.get("customer"))
+    if not uid:
+        return None
+    items = _plain(s.get("items")).get("data") or []
+    first = _plain(items[0]) if items else {}
+    price = _plain(first.get("price"))
+    price_id = price.get("id")
+    period_end = s.get("current_period_end") or 0
+    st = s.get("status") or "active"
+    # Map Stripe "trialing" only when still a Stripe trial — paid checkout is active.
+    plan = meta.get("plan")
+    if not plan and price_id:
+        # Infer monthly vs annual from configured price ids
+        for (p, _early), pid in PRICES.items():
+            if pid and pid == price_id:
+                plan = p
+                break
+    fields = {
+        "stripe_customer_id": s.get("customer"),
+        "stripe_subscription_id": s.get("id"),
+        "status": st,
+        "price_id": price_id,
+        "current_period_end": int(period_end) * 1000 if period_end else None,
+    }
+    if plan:
+        fields["plan"] = plan
+    if meta.get("early") == "1":
+        fields["early"] = 1
+    _upsert_subscription(db, uid, **fields)
+    return uid
+
+
 @router.post("/checkout")
 def create_checkout(req: CheckoutRequest, db: Session = Depends(get_db),
                     identity: Identity = Depends(get_identity)):
@@ -214,7 +315,8 @@ def create_checkout(req: CheckoutRequest, db: Session = Depends(get_db),
     customer_id = sub.stripe_customer_id if sub else None
 
     subscription_data = {"metadata": {"user_id": identity.user_id,
-                                      "early": "1" if early else "0"}}
+                                      "early": "1" if early else "0",
+                                      "plan": plan}}
     if TRIAL_DAYS > 0:
         subscription_data["trial_period_days"] = TRIAL_DAYS
     session = stripe.checkout.Session.create(
@@ -224,11 +326,88 @@ def create_checkout(req: CheckoutRequest, db: Session = Depends(get_db),
         customer=customer_id or None,
         metadata={"user_id": identity.user_id, "plan": plan, "early": "1" if early else "0"},
         subscription_data=subscription_data,
-        success_url=f"{WEB_APP_URL}/?billing=success",
+        success_url=f"{WEB_APP_URL}/?billing=success&session_id={{CHECKOUT_SESSION_ID}}",
         cancel_url=f"{WEB_APP_URL}/?billing=cancelled",
         allow_promotion_codes=True,
     )
     return {"url": session.url}
+
+
+class ConfirmCheckoutBody(BaseModel):
+    session_id: str | None = None
+
+
+@router.post("/confirm-checkout")
+def confirm_checkout(body: ConfirmCheckoutBody | None = None,
+                     db: Session = Depends(get_db),
+                     identity: Identity = Depends(get_identity)):
+    """Apply a completed Checkout Session (or recover latest Stripe sub for this user).
+
+    Called by the web app when it returns with ?billing=success. Works even when
+    the webhook failed, so the account upgrades immediately after Stripe.
+    """
+    if SOLO_MODE:
+        return {"ok": True, "status": "active", "plan": "solo", "paid": True}
+    if identity.kind not in ("user",):
+        raise HTTPException(status_code=403, detail="Sign in required")
+
+    stripe = _stripe()
+    session_id = (body.session_id if body else None) or None
+
+    if session_id:
+        try:
+            session = stripe.checkout.Session.retrieve(session_id)
+        except Exception as e:
+            raise HTTPException(status_code=400, detail=f"Invalid session: {e}") from e
+        s = _plain(session)
+        ref = s.get("client_reference_id") or _meta(s).get("user_id")
+        if ref and ref != identity.user_id:
+            raise HTTPException(status_code=403, detail="Checkout session belongs to another account")
+        if s.get("status") != "complete" and s.get("payment_status") not in ("paid", "no_payment_required"):
+            raise HTTPException(status_code=400, detail="Checkout not complete yet")
+        _apply_checkout_session(db, session)
+        # Also pull subscription for period end / price id
+        sub_id = s.get("subscription")
+        if sub_id:
+            try:
+                stripe_sub = stripe.Subscription.retrieve(sub_id)
+                _apply_stripe_subscription(db, stripe_sub, user_id=identity.user_id)
+            except Exception:
+                pass
+    else:
+        # Recover: find an active Stripe subscription tagged with this user.
+        found = False
+        try:
+            result = stripe.Subscription.search(
+                query=f"metadata['user_id']:'{identity.user_id}'",
+                limit=5,
+            )
+            for stripe_sub in (result.data if hasattr(result, "data") else _plain(result).get("data") or []):
+                st = _plain(stripe_sub).get("status")
+                if st in ("active", "trialing", "past_due"):
+                    _apply_stripe_subscription(db, stripe_sub, user_id=identity.user_id)
+                    found = True
+                    break
+        except Exception:
+            # Search API may be unavailable — fall through to customer lookup
+            pass
+        if not found:
+            sub = db.query(Subscription).filter(Subscription.user_id == identity.user_id).first()
+            if sub and sub.stripe_subscription_id:
+                try:
+                    stripe_sub = stripe.Subscription.retrieve(sub.stripe_subscription_id)
+                    _apply_stripe_subscription(db, stripe_sub, user_id=identity.user_id)
+                    found = True
+                except Exception:
+                    pass
+        if not found:
+            raise HTTPException(
+                status_code=404,
+                detail="No completed Stripe subscription found for this account yet",
+            )
+
+    # Return fresh status payload (same shape as GET /billing/status)
+    return billing_status(db=db, identity=identity)
 
 
 @router.post("/portal")
@@ -239,27 +418,13 @@ def create_portal(db: Session = Depends(get_db),
         raise HTTPException(status_code=400, detail="Billing disabled in solo mode")
     sub = db.query(Subscription).filter(Subscription.user_id == identity.user_id).first()
     if not sub or not sub.stripe_customer_id:
-        raise HTTPException(status_code=404, detail="No billing account yet")
+        raise HTTPException(status_code=404, detail="No billing account yet — subscribe first")
     stripe = _stripe()
     portal = stripe.billing_portal.Session.create(
         customer=sub.stripe_customer_id,
         return_url=f"{WEB_APP_URL}/?tab=settings",
     )
     return {"url": portal.url}
-
-
-def _upsert_subscription(db: Session, user_id: str, **fields):
-    sub = db.query(Subscription).filter(Subscription.user_id == user_id).first()
-    now_ms = int(time.time() * 1000)
-    if not sub:
-        sub = Subscription(user_id=user_id, created_at=now_ms)
-        db.add(sub)
-    for k, v in fields.items():
-        if v is not None:
-            setattr(sub, k, v)
-    sub.updated_at = now_ms
-    db.commit()
-    return sub
 
 
 @router.post("/webhook")
@@ -280,41 +445,24 @@ async def stripe_webhook(request: Request, db: Session = Depends(get_db)):
     except Exception:
         raise HTTPException(status_code=400, detail="Invalid webhook signature")
 
-    typ = event["type"]
-    obj = event["data"]["object"]
+    typ = event["type"] if isinstance(event, dict) else event["type"]
+    data = _plain(event["data"] if isinstance(event, dict) else event["data"])
+    obj = data.get("object") or event["data"]["object"]
 
-    if typ == "checkout.session.completed":
-        user_id = obj.get("client_reference_id") or (obj.get("metadata") or {}).get("user_id")
-        if user_id:
-            early = (obj.get("metadata") or {}).get("early") == "1"
-            _upsert_subscription(
-                db, user_id,
-                stripe_customer_id=obj.get("customer"),
-                stripe_subscription_id=obj.get("subscription"),
-                status="active",
-                plan=(obj.get("metadata") or {}).get("plan"),
-                early=1 if early else 0,
-            )
-    elif typ in ("customer.subscription.updated", "customer.subscription.created"):
-        user_id = (obj.get("metadata") or {}).get("user_id")
-        if not user_id:
-            user_id = _user_from_customer(db, obj.get("customer"))
-        if user_id:
-            items = (obj.get("items") or {}).get("data") or [{}]
-            price_id = (items[0].get("price") or {}).get("id")
-            _upsert_subscription(
-                db, user_id,
-                stripe_customer_id=obj.get("customer"),
-                stripe_subscription_id=obj.get("id"),
-                status=obj.get("status"),
-                price_id=price_id,
-                current_period_end=(obj.get("current_period_end") or 0) * 1000,
-            )
-    elif typ == "customer.subscription.deleted":
-        user_id = (obj.get("metadata") or {}).get("user_id") or \
-            _user_from_customer(db, obj.get("customer"))
-        if user_id:
-            _upsert_subscription(db, user_id, status="canceled")
+    try:
+        if typ == "checkout.session.completed":
+            _apply_checkout_session(db, obj)
+        elif typ in ("customer.subscription.updated", "customer.subscription.created"):
+            _apply_stripe_subscription(db, obj)
+        elif typ == "customer.subscription.deleted":
+            s = _plain(obj)
+            user_id = _meta(s).get("user_id") or _user_from_customer(db, s.get("customer"))
+            if user_id:
+                _upsert_subscription(db, user_id, status="canceled")
+    except Exception as e:
+        # Log and 500 so Stripe retries; never silently drop paid upgrades.
+        print(f"stripe_webhook handler error type={typ}: {e}")
+        raise HTTPException(status_code=500, detail=f"Webhook handler failed: {e}") from e
 
     return {"received": True}
 

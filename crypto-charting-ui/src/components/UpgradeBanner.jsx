@@ -27,8 +27,11 @@ export default function UpgradeBanner({ onOpenSettings }) {
   }, []);
 
   if (!status) return null;
-  const isPaper = status.plan === 'paper' || status.trial || status.status === 'trialing';
-  if (!isPaper || status.plan === 'solo') return null;
+  // Paid Stripe plans: status active + live_allowed. Paper trial only.
+  const isPaper = status.plan === 'solo'
+    ? false
+    : (status.live_allowed === false && (status.plan === 'paper' || status.trial || status.status === 'trialing'));
+  if (!isPaper) return null;
 
   const monthly = pricing?.monthly_usd ?? 10;
   const annual = pricing?.annual_usd ?? 60;

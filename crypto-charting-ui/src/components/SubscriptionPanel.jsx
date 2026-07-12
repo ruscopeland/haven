@@ -1,5 +1,5 @@
 // Settings → Subscription. Paper trial: clear Stripe checkout upgrade.
-// Paid: manage billing portal.
+// Paid: manage billing portal. Stuck after pay: "I already paid — sync".
 import { useEffect, useState } from 'react';
 import { API_URL } from '../authFetch.js';
 
@@ -26,9 +26,12 @@ export default function SubscriptionPanel() {
   if (!status) return null;
   if (status.plan === 'solo') return null;
 
-  const isPaper = status.plan === 'paper' || status.trial || status.status === 'trialing';
-  const isPaidPlan = status.paid && !isPaper && status.status === 'active';
-  const [label, cls] = LABELS[status.status] || LABELS.none;
+  const isPaper = status.live_allowed === false
+    && (status.plan === 'paper' || status.trial || status.status === 'trialing');
+  const isPaidPlan = status.paid && !isPaper && (status.status === 'active' || status.status === 'past_due');
+  const [label, cls] = isPaidPlan && status.status === 'active'
+    ? ['Active', 'dash-green']
+    : (LABELS[status.status] || LABELS.none);
   const trialEnds = status.current_period_end
     ? new Date(status.current_period_end).toLocaleDateString()
     : null;
@@ -46,8 +49,7 @@ export default function SubscriptionPanel() {
         body: JSON.stringify({ plan }),
       });
       if (!r.ok) throw new Error((await r.json()).detail || `HTTP ${r.status}`);
-      const { url } = await r.json();
-      window.location.href = url;
+      window.location.href = (await r.json()).url;
     } catch (e) {
       setErr(e.message || 'Checkout failed');
       setBusy('');
@@ -67,6 +69,24 @@ export default function SubscriptionPanel() {
     }
   };
 
+  const syncPayment = async () => {
+    setBusy('sync');
+    setErr('');
+    try {
+      const r = await fetch(`${API_URL}/billing/confirm-checkout`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({}),
+      });
+      const body = await r.json().catch(() => ({}));
+      if (!r.ok) throw new Error(body.detail || `HTTP ${r.status}`);
+      setStatus(body);
+    } catch (e) {
+      setErr(e.message || 'Could not sync payment');
+    }
+    setBusy('');
+  };
+
   return (
     <div style={{ marginBottom: 8 }}>
       <h2 style={{ color: 'var(--text-bright)', marginTop: 0 }}>Subscription</h2>
@@ -83,6 +103,7 @@ export default function SubscriptionPanel() {
         <div className="dash-muted" style={{ fontSize: 12, marginBottom: 12 }}>
           Bots: <b style={{ color: 'var(--text-bright)' }}>{status.bots_running ?? 0} of {status.max_bots}</b> running.
           {status.live_allowed === false && ' Paper trial is paper-only.'}
+          {status.live_allowed === true && ' Live trading unlocked.'}
         </div>
       )}
 
@@ -99,30 +120,34 @@ export default function SubscriptionPanel() {
             </div>
           )}
           <div className="upgrade-actions">
-            <button
-              type="button"
-              className="btn-primary"
-              disabled={!!busy}
-              onClick={() => checkout('monthly')}
-            >
+            <button type="button" className="btn-primary" disabled={!!busy} onClick={() => checkout('monthly')}>
               {busy === 'monthly' ? 'Redirecting…' : `Subscribe monthly · $${monthly}/mo`}
+            </button>
+            <button type="button" className="btn-primary" disabled={!!busy} onClick={() => checkout('annual')}>
+              {busy === 'annual' ? 'Redirecting…' : `Subscribe annually · $${annual}/yr`}
             </button>
             <button
               type="button"
-              className="btn-primary"
+              className="btn-secondary"
               disabled={!!busy}
-              onClick={() => checkout('annual')}
+              onClick={syncPayment}
+              title="If you already paid in Stripe but still see paper trial"
             >
-              {busy === 'annual' ? 'Redirecting…' : `Subscribe annually · $${annual}/yr`}
+              {busy === 'sync' ? 'Syncing…' : 'I already paid — sync'}
             </button>
           </div>
         </div>
       )}
 
       {isPaidPlan && (
-        <button className="settings-save" disabled={!!busy} onClick={openPortal}>
-          {busy === 'portal' ? 'Opening…' : 'Manage billing / cancel'}
-        </button>
+        <>
+          <p className="dash-muted" style={{ fontSize: 13, marginBottom: 12 }}>
+            Paid plan active. Download the desktop engine under <b>Connect your engine</b> below.
+          </p>
+          <button className="settings-save" disabled={!!busy} onClick={openPortal}>
+            {busy === 'portal' ? 'Opening…' : 'Manage billing / cancel'}
+          </button>
+        </>
       )}
 
       {!isPaper && !isPaidPlan && status.paid === false && (
