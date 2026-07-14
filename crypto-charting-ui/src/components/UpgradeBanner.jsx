@@ -1,17 +1,16 @@
-// Paper-only banner: send users to Clerk PricingTable (Settings or /?subscribe=1).
-import { useAuth } from '@clerk/clerk-react';
-import { isClerkPaid } from '../clerkBilling.js';
+// Trial reminder: sends users to Clerk PricingTable without restricting workflow.
+import useEntitlements from '../hooks/useEntitlements.js';
 
 export default function UpgradeBanner({ onOpenSettings }) {
-  const { isLoaded, has } = useAuth();
-  if (!isLoaded || isClerkPaid(has)) return null;
+  const { loading, data } = useEntitlements();
+  if (loading || !data?.trial) return null;
 
   return (
     <div className="upgrade-banner" role="region" aria-label="Upgrade subscription">
       <div className="upgrade-banner-copy">
-        <strong>You are on the free paper tier</strong>
+        <strong>Your seven-day trial is active</strong>
         <span className="upgrade-banner-sub">
-          {' '}— subscribe for live trading, full bots, and the desktop engine.
+          {' '}— paper and live trading are available now; subscribe to keep access after the trial.
         </span>
       </div>
       <div className="upgrade-banner-actions">

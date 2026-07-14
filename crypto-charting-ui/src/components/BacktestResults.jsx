@@ -13,7 +13,7 @@ function Stat({ label, value, cls = '' }) {
 }
 
 // Stats strip + simulated trade table + strategy logs for a backtest result.
-export default function BacktestResults({ result, flowInfo }) {
+export default function BacktestResults({ result }) {
   if (!result) {
     return <div className="bt-results bt-empty">Run a backtest to see results</div>;
   }
@@ -31,18 +31,11 @@ export default function BacktestResults({ result, flowInfo }) {
 
   // Portfolio (finder-bound) runs annotate trades with the token they hit.
   const showSymbol = trades.some(t => t.symbol);
-  const shortSym = (s) => (s || '').replace(/^ALPHA_/, '').replace(/USDT$/, '');
+  const shortSym = (s) => (s || '').replace(/_\d+_bsc$/, '');
 
   return (
     <div className="bt-results">
       {error && <div className="bt-error">⚠ {error}</div>}
-
-      {flowInfo && flowInfo.used && (
-        <div className="bt-flow-banner">
-          Flow data covers {flowInfo.covered} of {flowInfo.total} bars (collector keeps ~7
-          days of 1m buckets) — earlier bars saw <code>ctx.flow.* = null</code>.
-        </div>
-      )}
 
       <div className="bt-stats-row">
         <Stat label="Net PnL" value={`${fmtUsd(stats.netPnlUsd)} (${stats.netPnlPct}%)`} cls={pnlClass(stats.netPnlUsd)} />

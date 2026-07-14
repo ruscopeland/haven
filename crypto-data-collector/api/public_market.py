@@ -1,7 +1,7 @@
 """Public market endpoints for the signed-out landing page.
 
-Real data only — no mocks. Reads tokens + latest_tickers + fifteen_min_buckets
-written by the on-chain collector and CMC ranking job. Heavily rate-limited.
+Real data only — no mocks. Reads Haven's licensed CMC caches and is heavily
+rate-limited.
 """
 import re
 import time
@@ -14,7 +14,7 @@ from sqlalchemy.orm import Session
 from sqlalchemy import func
 
 from database.db import get_db
-from database.models import Token, LatestTicker, FifteenMinBucket
+from database.models import Token, LatestTicker, MarketCandle
 
 router = APIRouter(prefix="/public", tags=["public"])
 
@@ -75,7 +75,7 @@ class PublicToken(BaseModel):
     volume_24h: float = 0.0
     liquidity_usd: float = 0.0
     default_checked: bool = False
-    # Real closes from fifteen_min_buckets over ~24h (downsampled).
+    # Real closes from the CMC candle cache over ~24h (downsampled).
     sparkline: List[float] = []
 
 
@@ -151,21 +151,15 @@ def _downsample(points: list[float], target: int = 24) -> list[float]:
 
 
 def _sparklines(db: Session, symbols: list[str], points: int = 24) -> dict[str, list[float]]:
-    """Close prices from real fifteen_min_buckets over the last ~24h."""
+    """Close prices from cached, closed CMC 15-minute candles."""
     if not symbols:
         return {}
     start_ms = int(time.time() * 1000) - 86_400_000
-    rows = (
-        db.query(
-            FifteenMinBucket.symbol,
-            FifteenMinBucket.bucket_start,
-            FifteenMinBucket.close_price,
-        )
-        .filter(FifteenMinBucket.symbol.in_(symbols))
-        .filter(FifteenMinBucket.bucket_start >= start_ms)
-        .order_by(FifteenMinBucket.symbol, FifteenMinBucket.bucket_start.asc())
-        .all()
-    )
+    rows = (db.query(Token.symbol, MarketCandle.open_time, MarketCandle.close_price)
+            .join(MarketCandle, MarketCandle.cmc_id == Token.cmc_id)
+            .filter(Token.symbol.in_(symbols), MarketCandle.interval == "15min",
+                    MarketCandle.closed == 1, MarketCandle.open_time >= start_ms)
+            .order_by(Token.symbol, MarketCandle.open_time.asc()).all())
     by_sym: dict[str, list[float]] = {}
     for sym, _ts, close in rows:
         if close is None or close <= 0:

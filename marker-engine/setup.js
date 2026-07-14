@@ -7,6 +7,7 @@ import readline from 'node:readline';
 import { fileURLToPath } from 'node:url';
 import { Wallet } from 'ethers';
 import { createLocalWallet } from './create-wallet.js';
+import { credentialLocation, loadEngineSecrets, saveEngineSecrets } from './credential-store.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const ENV_PATH = path.join(__dirname, '.env');
@@ -136,6 +137,9 @@ async function main() {
   console.log('Connects this computer to your Haven account for live trading.\n');
 
   const cur = readExisting();
+  const secure = loadEngineSecrets();
+  if (secure.apiKey) cur.HAVEN_API_KEY = secure.apiKey;
+  if (secure.privateKey) cur.PRIVATE_KEY = secure.privateKey;
 
   const apiUrl = await ask(
     '1) Haven API address (press Enter for the default)',
@@ -164,16 +168,16 @@ async function main() {
   }
 
   const lines = [
-    '# Haven Engine — local config only (this file is not uploaded).',
+    '# Haven Engine — non-secret local configuration.',
     `# Trading wallet address: ${address}`,
     `HAVEN_API_URL=${apiUrl}`,
-    `HAVEN_API_KEY=${apiKey}`,
-    `PRIVATE_KEY=${pk}`,
     '',
   ];
+  saveEngineSecrets({ apiKey, privateKey: pk });
   fs.writeFileSync(ENV_PATH, lines.join('\n'), { mode: 0o600 });
 
   console.log(`\nSaved: ${ENV_PATH}`);
+  console.log(`Encrypted credentials: ${credentialLocation()}`);
   console.log(`Wallet address: ${address}`);
   console.log('Start the engine:  npm start   (or run.bat)');
   console.log('Fund this address on-chain before live trades.\n');

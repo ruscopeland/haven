@@ -12,8 +12,13 @@ RUN pip install --no-cache-dir -r requirements.txt
 
 COPY . .
 
-# The engine zip is a build artifact; if present it is served by /engine/download.
-# (Build it in CI with tools/build_engine_zip.py, or the endpoint 404s gracefully.)
+# A signed engine archive is injected by the protected release job. The API
+# rejects a missing, unsigned, or checksum-mismatched release.
+
+RUN useradd --create-home --uid 10001 haven && chown -R haven:haven /app
+USER haven
 
 EXPOSE 8000
+HEALTHCHECK --interval=30s --timeout=5s --start-period=20s --retries=3 \
+  CMD python -c "import urllib.request; urllib.request.urlopen('http://127.0.0.1:' + __import__('os').environ.get('PORT', '8000') + '/health', timeout=3)" || exit 1
 CMD ["python", "main.py"]

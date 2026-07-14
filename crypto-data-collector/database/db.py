@@ -1,153 +1,45 @@
+"""Database engine, sessions and migration entrypoint."""
+
 import os
-import time
-from sqlalchemy import create_engine, text
+from pathlib import Path
+
+from sqlalchemy import create_engine
 from sqlalchemy.orm import declarative_base, sessionmaker
-from sqlalchemy.exc import OperationalError
 
-# ── Database location ────────────────────────────────────────────────────────
-# Default: the original single-file SQLite DB next to this package (solo mode,
-# exactly the pre-SaaS behavior). Cloud/multi-user: set DATABASE_URL to a
-# Postgres URL (Railway supplies one). Multi-user REQUIRES Postgres — the
-# SQLite path exists for local solo development only.
-_DB_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-_SQLITE_URL = f"sqlite:///{os.path.join(_DB_DIR, 'crypto_data.db').replace(os.sep, '/')}"
 
+_ROOT = Path(__file__).resolve().parents[1]
+_SQLITE_URL = f"sqlite:///{(_ROOT / 'crypto_data.db').as_posix()}"
 DATABASE_URL = os.environ.get("DATABASE_URL", _SQLITE_URL)
-# Railway/Heroku hand out postgres:// which SQLAlchemy 2.0 no longer accepts.
 if DATABASE_URL.startswith("postgres://"):
     DATABASE_URL = DATABASE_URL.replace("postgres://", "postgresql+psycopg2://", 1)
 
 IS_SQLITE = DATABASE_URL.startswith("sqlite")
-
 engine = create_engine(
     DATABASE_URL,
     connect_args={"check_same_thread": False} if IS_SQLITE else {},
     pool_pre_ping=True,
 )
-
 SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
-
 Base = declarative_base()
 
 
+def run_migrations(revision: str = "head") -> None:
+    """Apply checked-in Alembic migrations before accepting traffic."""
+    from alembic import command
+    from alembic.config import Config
+    config = Config(str(_ROOT / "alembic.ini"))
+    config.set_main_option("script_location", str(_ROOT / "migrations"))
+    config.set_main_option("sqlalchemy.url", DATABASE_URL.replace("%", "%%"))
+    command.upgrade(config, revision)
+
+
 def dialect_insert(model):
-    """INSERT statement builder with .on_conflict_do_update on both dialects.
-
-    SQLite and Postgres expose the same on_conflict API from different modules;
-    every upsert in the collector goes through here so it works on both.
-    """
+    """Return the dialect-specific INSERT builder used for safe upserts."""
     if IS_SQLITE:
-        from sqlalchemy.dialects.sqlite import insert as _insert
+        from sqlalchemy.dialects.sqlite import insert
     else:
-        from sqlalchemy.dialects.postgresql import insert as _insert
-    return _insert(model)
-
-
-def _existing_columns(conn, table: str) -> set:
-    """Column names for a table, on either dialect (empty set = table missing)."""
-    if IS_SQLITE:
-        return {row[1] for row in conn.execute(text(f"PRAGMA table_info({table});"))}
-    rows = conn.execute(text(
-        "SELECT column_name FROM information_schema.columns "
-        "WHERE table_name = :t"), {"t": table})
-    return {r[0] for r in rows}
-
-
-def _ensure_column(conn, table: str, column: str, ddl: str):
-    """ADD COLUMN if missing — idempotent upgrade for pre-existing tables.
-
-    DDL uses a DEFAULT so existing rows stay valid (solo-mode rows become
-    user_id='local' automatically, which is exactly what the API's solo
-    identity expects).
-    """
-    cols = _existing_columns(conn, table)
-    if cols and column not in cols:
-        conn.execute(text(f"ALTER TABLE {table} ADD COLUMN {column} {ddl};"))
-
-
-def ensure_db_settings():
-    """Per-dialect setup: pragmas (sqlite), indexes, idempotent column upgrades.
-
-    create_all() won't add columns/indexes to pre-existing tables, so every
-    schema addition since v0 is repeated here as an ALTER-if-missing.
-    """
-    with engine.connect() as conn:
-        if IS_SQLITE:
-            # WAL lets the collector, API, and engine share one file locally.
-            conn.execute(text("PRAGMA journal_mode=WAL;"))
-            conn.execute(text("PRAGMA synchronous=NORMAL;"))
-        conn.execute(text(
-            "CREATE INDEX IF NOT EXISTS ix_one_min_buckets_bucket_start "
-            "ON one_min_buckets (bucket_start);"
-        ))
-        conn.execute(text(
-            "CREATE INDEX IF NOT EXISTS ix_fifteen_min_buckets_bucket_start "
-            "ON fifteen_min_buckets (bucket_start);"
-        ))
-        # Token Finder columns (2026-07-03).
-        _ensure_column(conn, "strategies", "finder_id", "TEXT")
-        _ensure_column(conn, "strategies", "max_positions", "INTEGER DEFAULT 1")
-        _ensure_column(conn, "strategies", "switch_margin_pct", "FLOAT DEFAULT 10.0")
-        # Multi-user columns (2026-07-06, Haven SaaS). Existing solo rows are
-        # owned by the 'local' pseudo-user; API/middleware logs by 'system'.
-        for table in ("strategies", "finders", "chart_markers", "trade_history",
-                      "engine_settings"):
-            _ensure_column(conn, table, "user_id", "TEXT DEFAULT 'local'")
-        _ensure_column(conn, "debug_logs", "user_id", "TEXT DEFAULT 'system'")
-        # Bot-slot entitlements (2026-07-06): purchased slots beyond the plan's
-        # included bots.
-        _ensure_column(conn, "subscriptions", "extra_bots", "INTEGER DEFAULT 0")
-        # On-chain data migration columns (2026-07-07, DATA-ROADMAP M1).
-        _ensure_column(conn, "tokens", "display_symbol", "TEXT")
-        _ensure_column(conn, "tokens", "decimals", "INTEGER")
-        _ensure_column(conn, "tokens", "total_supply", "FLOAT")
-        _ensure_column(conn, "tokens", "liquidity_usd", "FLOAT")
-        _ensure_column(conn, "tokens", "listed_at", "BIGINT")
-        _ensure_column(conn, "tokens", "status", "TEXT DEFAULT 'active'")
-        _ensure_column(conn, "tokens", "security_json", "TEXT")
-        _ensure_column(conn, "tokens", "primary_pool", "TEXT")
-        _ensure_column(conn, "tokens", "market_cap", "FLOAT")
-        _ensure_column(conn, "tokens", "cmc_rank", "INTEGER")
-        _ensure_column(conn, "tokens", "cmc_slug", "TEXT")
-        _ensure_column(conn, "tokens", "cmc_id", "INTEGER")
-        conn.execute(text(
-            "CREATE INDEX IF NOT EXISTS ix_tokens_cmc_rank ON tokens (cmc_rank);"
-        ))
-        conn.execute(text(
-            "CREATE TABLE IF NOT EXISTS daily_buckets ("
-            "symbol TEXT NOT NULL, "
-            "bucket_start BIGINT NOT NULL, "
-            "open_price FLOAT, high_price FLOAT, low_price FLOAT, close_price FLOAT, "
-            "buy_volume FLOAT, sell_volume FLOAT, trade_count INTEGER, "
-            "PRIMARY KEY (symbol, bucket_start));"
-        ))
-        conn.execute(text(
-            "CREATE INDEX IF NOT EXISTS ix_daily_buckets_bucket_start "
-            "ON daily_buckets (bucket_start);"
-        ))
-        if _existing_columns(conn, "pools"):  # table exists (create_all ran first)
-            conn.execute(text(
-                "CREATE INDEX IF NOT EXISTS ix_pools_chain_watch ON pools (chain, watch);"))
-        for table in ("strategies", "chart_markers", "trade_history"):
-            conn.execute(text(
-                f"CREATE INDEX IF NOT EXISTS ix_{table}_user_id ON {table} (user_id);"
-            ))
-        conn.commit()
-
-
-def db_write(fn, max_retries=3):
-    """Execute a DB write with exponential backoff on SQLITE_BUSY.
-
-    No-op safety on Postgres (the error string never matches there).
-    """
-    for attempt in range(max_retries):
-        try:
-            return fn()
-        except OperationalError as e:
-            if "database is locked" in str(e) and attempt < max_retries - 1:
-                time.sleep(0.1 * (2 ** attempt))
-                continue
-            raise
+        from sqlalchemy.dialects.postgresql import insert
+    return insert(model)
 
 
 def get_db():

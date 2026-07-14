@@ -2,7 +2,7 @@ import { useState, useEffect } from 'react';
 import '../dashboard.css';
 import SubscriptionPanel from './SubscriptionPanel.jsx';
 import EngineConnect from './EngineConnect.jsx';
-import { GoPlusBadge } from './GoPlusSecurity.jsx';
+import { CmcBadge } from './CmcSecurity.jsx';
 
 const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:8000';
 
@@ -12,7 +12,7 @@ const FIELDS = [
   { key: 'max_trade_usd', label: 'Max trade size (USD)', step: 10, min: 0,
     help: 'Any single trade above this is aborted before it reaches the chain.' },
   { key: 'max_price_impact_pct', label: 'Max price impact (%)', step: 0.5, min: 0,
-    help: 'Swap quotes implying a worse price than this vs the collector feed are rejected.' },
+    help: 'Swap quotes implying a worse price than this versus the CMC feed are rejected.' },
   { key: 'max_retry_attempts', label: 'Max retry attempts', step: 1, min: 0,
     help: 'Failed marker fires re-arm this many times, then the marker is disabled.' },
 ];
@@ -22,7 +22,7 @@ export default function SettingsView({ onOpenLegal }) {
   const [draft, setDraft] = useState({});
   const [msg, setMsg] = useState(null);
   const [busy, setBusy] = useState(false);
-  const [goplus, setGoplus] = useState(null);
+  const [securityStatus, setSecurityStatus] = useState(null);
 
   const load = async () => {
     try {
@@ -41,8 +41,8 @@ export default function SettingsView({ onOpenLegal }) {
     let alive = true;
     const tick = async () => {
       try {
-        const r = await fetch(`${API_URL}/goplus/status`);
-        if (r.ok && alive) setGoplus(await r.json());
+        const r = await fetch(`${API_URL}/security/status`);
+        if (r.ok && alive) setSecurityStatus(await r.json());
       } catch { /* */ }
     };
     tick();
@@ -82,36 +82,25 @@ export default function SettingsView({ onOpenLegal }) {
         <SubscriptionPanel />
       </section>
 
-      <section className="settings-section" id="settings-goplus">
+      <section className="settings-section" id="settings-security">
         <div style={{ display: 'flex', alignItems: 'center', gap: 12, marginBottom: 8, flexWrap: 'wrap' }}>
           <h2 style={{ margin: 0 }}>Token security</h2>
-          <GoPlusBadge compact />
+          <CmcBadge compact />
         </div>
-        {!goplus ? (
-          <p className="dash-muted" style={{ fontSize: 12 }}>Loading GoPlus status…</p>
-        ) : !goplus.configured ? (
+        {!securityStatus ? (
+          <p className="dash-muted" style={{ fontSize: 12 }}>Loading security status…</p>
+        ) : !securityStatus.configured ? (
           <p className="dash-error" style={{ fontSize: 12 }}>
-            GoPlus keys not configured in crypto-data-collector/.env (GOPLUS_APP_KEY / SECRET).
+            CoinMarketCap is not configured on the Haven server.
           </p>
         ) : (
           <div className="dash-muted" style={{ fontSize: 12, lineHeight: 1.6 }}>
-            <div>Status: <b className="dash-green">configured</b> · Haven local cap {goplus.day_used}/{goplus.daily_budget} addresses today</div>
-            <div>Remaining under local cap: <b style={{ color: 'var(--text-bright)' }}>{goplus.remaining}</b></div>
-            <div>Queue (liquid, need scan/refresh): <b style={{ color: 'var(--text-bright)' }}>{goplus.need_scan}</b></div>
-            <div>Scanned total: {goplus.scanned_total} · auto-blacklisted: {goplus.blacklisted}</div>
-            <div style={{ marginTop: 6 }}>
-              This is <b>Haven’s self-limit</b> (<code>GOPLUS_DAILY_BUDGET</code>) in token addresses —
-              <b> not</b> GoPlus Compute Units (CU) from the GoPlus dashboard. If CU is still high but
-              scans stop, raise that env var and restart the API.
-            </div>
-            <div style={{ marginTop: 6 }}>
-              Only tokens with ≥$100k liquidity are bulk-scanned. Run the <b>Haven GoPlus</b> window from start.bat
-              (or <code>python goplus_worker.py</code>) so usage is paced across the day.
-            </div>
+            <div>Status: <b className="dash-green">configured</b> · {securityStatus.provider}</div>
+            <div>Cached checks: {securityStatus.scanned_total} · blocked tokens: {securityStatus.blocked_total}</div>
             <div style={{ marginTop: 8, color: 'var(--text-bright)' }}>
               <b>Trade safety:</b> the engine never unlimited-approves tokens. Before any approve/swap it
-              runs a GoPlus check (honeypot, <b>airdrop scam</b>, extreme tax). Elevated risk still charts;
-              manual trades need risk acknowledgment.
+              uses CoinMarketCap DEX security information. Elevated risk still charts; manual trades require
+              contract verification and an explicit risk acknowledgment.
             </div>
           </div>
         )}

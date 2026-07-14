@@ -3,8 +3,6 @@
 import { ethers } from 'ethers';
 
 export const WBNB = '0xbb4cdb9cbd36b01bd1cbaebf2de08d9173bc095c';
-const USDT = '0x55d398326f99059ff775485246999027b3197955';
-const PANCAKE_ROUTER = '0x10ed43c718714eb63d5aa57b78b54704e256024e';
 const OO_NATIVE = '0xEeeeeEeeeEeEeeEeEeEeeEEEeeeeEeeeeeeeEEeE';
 
 const ERC20_ABI = [
@@ -92,16 +90,47 @@ export async function getOpenOceanSwap(fromToken, toToken, amountDecimal, slippa
   return body.data; // { to, data, value, estimatedGas/gas, outAmount, outToken, inAmount, ... }
 }
 
-export async function sendBuiltTx(txData, gasPriceGwei, wallet) {
+export async function validateBuiltTx(txData, wallet, {
+  maxValueWei = null,
+  allowedRouters = process.env.HAVEN_ALLOWED_ROUTER_ADDRESSES || '',
+} = {}) {
+  if (!txData || !ethers.isAddress(txData.to)) throw new Error('swap transaction has an invalid destination');
+  const allowed = new Set(allowedRouters.split(',').map(x => x.trim().toLowerCase()).filter(Boolean));
+  if (!allowed.size) throw new Error('HAVEN_ALLOWED_ROUTER_ADDRESSES must be configured before live trading');
+  if (!allowed.has(txData.to.toLowerCase())) throw new Error(`swap router ${txData.to} is not allow-listed`);
+  if (typeof txData.data !== 'string' || !/^0x[0-9a-fA-F]{8,}$/.test(txData.data)
+      || txData.data.length > 131_074) {
+    throw new Error('swap calldata is malformed or unexpectedly large');
+  }
+  const network = await wallet.provider.getNetwork();
+  if (network.chainId !== 56n) throw new Error(`wrong chain: expected BSC 56, received ${network.chainId}`);
+  const value = BigInt(txData.value || 0);
+  if (maxValueWei != null && value > BigInt(maxValueWei)) throw new Error('swap value exceeds the validated input amount');
+  const selectors = new Set((process.env.HAVEN_ALLOWED_SWAP_SELECTORS || '')
+    .split(',').map(x => x.trim().toLowerCase()).filter(Boolean));
+  if (selectors.size && !selectors.has(txData.data.slice(0, 10).toLowerCase())) {
+    throw new Error(`swap selector ${txData.data.slice(0, 10)} is not allow-listed`);
+  }
+  await wallet.provider.call({ from: wallet.address, to: txData.to, data: txData.data, value });
+  return true;
+}
+
+export async function sendBuiltTx(txData, gasPriceGwei, wallet, {
+  validation = {}, onPrepared = null,
+} = {}) {
+  await validateBuiltTx(txData, wallet, validation);
   const gasVal = txData.gas || txData.estimatedGas;
-  const tx = await wallet.sendTransaction({
+  const request = await wallet.populateTransaction({
     to: txData.to,
     data: txData.data,
     value: txData.value ? BigInt(txData.value) : 0n,
     gasLimit: gasVal ? (BigInt(gasVal) * 12n) / 10n : undefined, // +20% buffer
     gasPrice: gasPriceGwei ? ethers.parseUnits(String(gasPriceGwei), 'gwei') : undefined,
   });
-  return tx;
+  const signed = await wallet.signTransaction(request);
+  const transaction = ethers.Transaction.from(signed);
+  if (onPrepared) await onPrepared(transaction.hash, request);
+  return wallet.provider.broadcastTransaction(signed);
 }
 
 // ── Real fill parsing ───────────────────────────────────────────────────────
@@ -147,29 +176,14 @@ export async function parseSwapFill(receipt, tokenAddress, tokenDecimals, wallet
   return fill;
 }
 
-// ── BNB/USD price (60s cache) — DATA-ROADMAP AD-D7 ─────────────────────────
-// Primary: OUR collector's WBNB_bsc price, passed in by the engine from the
-// /dashboard/overview it already polls (one price source with the rest of the
-// stack; the engine only passes it when it is FRESH per the stale-price
-// guard). Fallback: the PancakeSwap router on-chain. No third-party feeds.
+// BNB/USD comes only from Haven's server-side licensed CMC feed.
 let bnbCache = { price: 0, ts: 0 };
-export async function getBnbPriceUsd(provider, apiPriceUsd = 0) {
+export async function getBnbPriceUsd(_provider, apiPriceUsd = 0) {
   if (apiPriceUsd > 0) {
     bnbCache = { price: apiPriceUsd, ts: Date.now() };
     return apiPriceUsd;
   }
   if (bnbCache.price > 0 && Date.now() - bnbCache.ts < 60_000) return bnbCache.price;
 
-  try {
-    const router = new ethers.Contract(PANCAKE_ROUTER,
-      ['function getAmountsOut(uint,address[]) view returns (uint[])'], provider);
-    const amounts = await router.getAmountsOut(ethers.parseEther('1'), [WBNB, USDT]);
-    const price = parseFloat(ethers.formatUnits(amounts[1], 18));
-    if (price > 0) {
-      bnbCache = { price, ts: Date.now() };
-      return price;
-    }
-  } catch { /* give up */ }
-
-  return 0; // callers must abort sized trades when this is 0
+  return 0; // callers abort rather than silently switching data providers
 }

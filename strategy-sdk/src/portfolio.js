@@ -67,7 +67,7 @@ export function runPortfolioBacktest({
       boundAtGi, boundAtTime: universe.times[boundAtGi],
     };
     sim.ctx = createCtx({
-      bars: token.bars, flow: token.flow, params: merged, state: {}, position,
+      bars: token.bars, params: merged, state: {}, position,
       emit: {
         buy: (usd, opts = {}) => {
           if (sim.suppressed) return;

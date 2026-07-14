@@ -7,18 +7,16 @@ Three ways a request proves who it is, checked in this order:
    Every request becomes the 'local' user with full (paid) access — exactly
    the pre-SaaS behavior, zero login required.
 
-2. X-Api-Key header (engine daemons + the cloud paper-runner). The raw key is
-   SHA-256-hashed and looked up in api_keys. The special SERVICE_API_KEY env
-   value identifies our own paper-runner, which may read every user's DRY
-   strategies (never live).
+2. X-Api-Key header (a user's local engine). The raw key is SHA-256-hashed,
+   scoped, expiring, and looked up in api_keys.
 
 3. Authorization: Bearer <Clerk session JWT> (the web app). Verified against
    Clerk's JWKS (public keys fetched once and cached by PyJWT); the token's
    `sub` claim is the user id.
 
-Payment gate: full data access requires an active subscription OR an unexpired
-paper trial (`status=trialing`). Live trading still requires a paid plan
-(`entitlements.live_allowed`). Public marketing endpoints are unauthenticated.
+Payment gate: full data access requires a paid subscription or an unexpired
+automatic trial. The trial permits both paper and live local-engine workflows,
+with smaller capacity limits. Public marketing endpoints are unauthenticated.
 """
 import hashlib
 import os
@@ -29,32 +27,30 @@ from dataclasses import dataclass
 from fastapi import Depends, HTTPException, Request
 from sqlalchemy.orm import Session
 
-from database.db import get_db
+from database.db import get_db, dialect_insert
 from database.models import ApiKey, Subscription
 from api.clerk_billing import clerk_billing_configured, get_clerk_entitlements
+from api.plans import TRIAL, TRIAL_DAYS, entitlement_payload, PLANS
 
 CLERK_JWKS_URL = os.environ.get("CLERK_JWKS_URL", "")
 CLERK_ISSUER = os.environ.get("CLERK_ISSUER", "")
-SERVICE_API_KEY = os.environ.get("SERVICE_API_KEY", "")
 SOLO_MODE = os.environ.get("HAVEN_SOLO", "1" if not CLERK_JWKS_URL else "0") == "1"
 
 # Subscription statuses that count as paid. `past_due` gets a grace window so
 # a card hiccup doesn't insta-kill someone's running strategies.
 ACTIVE_STATUSES = ("active", "trialing", "past_due")
 PAST_DUE_GRACE_MS = 3 * 24 * 3600 * 1000
-# Free paper trial length when the user starts one without Stripe (days).
-PAPER_TRIAL_DAYS = int(os.environ.get("HAVEN_PAPER_TRIAL_DAYS", "14"))
 
 
 @dataclass
 class Identity:
     user_id: str
-    kind: str          # solo | user | engine | service
+    kind: str          # solo | user | engine
     paid: bool = False
+    scopes: frozenset[str] = frozenset()
 
-    @property
-    def is_service(self) -> bool:
-        return self.kind == "service"
+    def allows(self, scope: str) -> bool:
+        return self.kind in ("solo", "user") or scope in self.scopes
 
 
 _jwk_client = None
@@ -96,22 +92,46 @@ def hash_key(raw: str) -> str:
 
 
 def subscription_active(db: Session, user_id: str) -> bool:
-    # Clerk Billing: any signed-in user has app access (free paper + paid).
     if clerk_billing_configured():
         ent = get_clerk_entitlements(user_id)
-        return bool(ent.get("app_access", True))
+        if ent.get("app_access"):
+            return True
 
-    sub = db.query(Subscription).filter(Subscription.user_id == user_id).first()
+        sub = db.query(Subscription).filter(Subscription.user_id == user_id).first()
+        # Clerk is authoritative for paid access. The only local fallback is
+        # Haven's own one-time trial, never a stale paid row.
+        if not sub or sub.plan != "trial":
+            return False
+    else:
+        sub = db.query(Subscription).filter(Subscription.user_id == user_id).first()
     if not sub or sub.status not in ACTIVE_STATUSES:
         return False
     now_ms = time.time() * 1000
     if sub.status == "past_due":
         end = sub.current_period_end or 0
         return now_ms < end + PAST_DUE_GRACE_MS
-    # Paper / Stripe trials expire at current_period_end when set.
+    # Haven's automatic trial expires at current_period_end when set.
     if sub.status == "trialing" and sub.current_period_end:
         return now_ms < sub.current_period_end
     return True
+
+
+def ensure_automatic_trial(db: Session, user_id: str) -> Subscription:
+    """Create the user's one non-renewable seven-day trial on first sign-in."""
+    sub = db.query(Subscription).filter(Subscription.user_id == user_id).first()
+    if sub:
+        return sub
+    at = int(time.time() * 1000)
+    values = dict(
+        user_id=user_id, status="trialing", plan="trial",
+        current_period_end=at + TRIAL_DAYS * 86_400_000,
+        extra_bots=0, created_at=at, updated_at=at,
+    )
+    stmt = dialect_insert(Subscription).values(**values).on_conflict_do_nothing(
+        index_elements=["user_id"])
+    db.execute(stmt)
+    db.commit()
+    return db.get(Subscription, user_id)
 
 
 # ── Tiny in-process rate limiter (per identity, per minute) ─────────────────
@@ -142,8 +162,6 @@ def get_identity(request: Request, db: Session = Depends(get_db)) -> Identity:
 
     api_key = request.headers.get("X-Api-Key")
     if api_key:
-        if SERVICE_API_KEY and api_key == SERVICE_API_KEY:
-            return Identity(user_id="service", kind="service", paid=True)
         row = (db.query(ApiKey)
                .filter(ApiKey.key_hash == hash_key(api_key), ApiKey.revoked == 0)
                .first())
@@ -151,15 +169,21 @@ def get_identity(request: Request, db: Session = Depends(get_db)) -> Identity:
             raise HTTPException(status_code=401, detail="Invalid API key")
         _rate_check(f"k:{row.user_id}")
         now_ms = int(time.time() * 1000)
+        if row.expires_at and row.expires_at <= now_ms:
+            raise HTTPException(status_code=401, detail="Engine key expired")
         if not row.last_used_at or now_ms - row.last_used_at > 60_000:
             row.last_used_at = now_ms      # coarse "engine connected" signal
             db.commit()
-        return Identity(user_id=row.user_id, kind="engine",
-                        paid=subscription_active(db, row.user_id))
+        return Identity(
+            user_id=row.user_id, kind="engine",
+            paid=subscription_active(db, row.user_id),
+            scopes=frozenset(s.strip() for s in (row.scopes or "").split(",") if s.strip()),
+        )
 
     auth = request.headers.get("Authorization", "")
     if auth.startswith("Bearer "):
         user_id = _verify_clerk_jwt(auth[7:])
+        ensure_automatic_trial(db, user_id)
         _rate_check(f"u:{user_id}")
         return Identity(user_id=user_id, kind="user",
                         paid=subscription_active(db, user_id))
@@ -168,23 +192,34 @@ def get_identity(request: Request, db: Session = Depends(get_db)) -> Identity:
 
 
 def require_paid(identity: Identity = Depends(get_identity)) -> Identity:
-    """Data endpoints require an active paid plan or unexpired paper trial.
+    """Data endpoints require an active paid plan or unexpired trial.
 
     402 tells the web app to show the subscribe / start-trial screen; engines
     surface it as 'subscription required' in their log.
     """
     if not identity.paid:
-        raise HTTPException(status_code=402, detail="Active subscription or paper trial required")
+        raise HTTPException(status_code=402, detail="Active subscription or trial required")
     return identity
+
+
+def require_identity_scope(identity: Identity, scope: str):
+    if not identity.allows(scope):
+        raise HTTPException(status_code=403, detail=f"Credential lacks required scope: {scope}")
+
+
+def require_owner(identity: Identity = Depends(require_paid)) -> Identity:
+    owners = {x.strip() for x in os.environ.get("HAVEN_OWNER_USER_IDS", "").split(",") if x.strip()}
+    if identity.kind == "solo" or identity.user_id in owners:
+        return identity
+    raise HTTPException(status_code=403, detail="Owner access required")
 
 
 # ── Bot + library entitlements ───────────────────────────────────────────────
 # A "bot" is a strategy armed DRY or LIVE (mode != off). Plan allowances:
-# paid subscription includes BASE_BOTS; paper/Stripe trials get TRIAL_BOTS and
-# may only paper-trade (live_allowed=False). Solo/service unlimited.
-BASE_BOTS = int(os.environ.get("HAVEN_BASE_BOTS", "3"))
-TRIAL_BOTS = int(os.environ.get("HAVEN_TRIAL_BOTS", "1"))
-MAX_STRATEGIES = int(os.environ.get("HAVEN_MAX_STRATEGIES", "20"))
+# Paid plans and the automatic trial use the central configurable catalogue.
+BASE_BOTS = PLANS["starter"].bots
+TRIAL_BOTS = TRIAL.bots
+MAX_STRATEGIES = PLANS["starter"].strategies
 
 
 def entitlements(db: Session, identity: Identity) -> dict:
@@ -192,30 +227,34 @@ def entitlements(db: Session, identity: Identity) -> dict:
     live_allowed, trial, max_strategies (None = unlimited), plan}. Enforced
     where a strategy's mode is armed (PATCH /strategies) and on save.
     """
-    if SOLO_MODE or identity.is_service:
+    if SOLO_MODE:
         return {"max_bots": None, "live_allowed": True, "trial": False,
-                "max_strategies": None, "plan": "solo"}
+                "max_strategies": None, "max_finders": None, "ai_daily": None,
+                "plan": "solo"}
 
     # Preferred path: Clerk Billing owns free vs paid.
     if clerk_billing_configured() and identity.kind in ("user", "engine"):
-        ent = get_clerk_entitlements(identity.user_id)
-        return {
-            "max_bots": ent.get("max_bots", TRIAL_BOTS),
-            "live_allowed": bool(ent.get("live_allowed")),
-            "trial": bool(ent.get("trial")),
-            "max_strategies": ent.get("max_strategies", MAX_STRATEGIES),
-            "plan": ent.get("plan"),
-            "status": ent.get("status"),
-            "source": ent.get("source"),
-        }
+        paid = get_clerk_entitlements(identity.user_id)
+        if paid.get("app_access"):
+            at = int(time.time() * 1000)
+            sub = db.get(Subscription, identity.user_id)
+            if not sub:
+                sub = Subscription(user_id=identity.user_id, created_at=at)
+                db.add(sub)
+            sub.plan = paid.get("plan")
+            sub.status = paid.get("status") or "active"
+            sub.current_period_end = paid.get("current_period_end")
+            sub.updated_at = at
+            db.commit()
+            return paid
 
     sub = db.query(Subscription).filter(Subscription.user_id == identity.user_id).first()
     if sub and sub.status == "trialing" and subscription_active(db, identity.user_id):
-        return {"max_bots": TRIAL_BOTS, "live_allowed": False, "trial": True,
-                "max_strategies": MAX_STRATEGIES, "plan": sub.plan or "paper"}
+        return entitlement_payload(TRIAL, trial=True, status="trialing", source="haven")
     if not sub or not subscription_active(db, identity.user_id):
         return {"max_bots": 0, "live_allowed": False, "trial": False,
-                "max_strategies": MAX_STRATEGIES, "plan": None}
-    extra = (sub.extra_bots or 0) if sub else 0
-    return {"max_bots": BASE_BOTS + extra, "live_allowed": True, "trial": False,
-            "max_strategies": MAX_STRATEGIES, "plan": sub.plan}
+                "max_strategies": 0, "max_finders": 0, "ai_daily": 0, "plan": None}
+    plan = PLANS.get(sub.plan or "starter", PLANS["starter"])
+    payload = entitlement_payload(plan, trial=False, status=sub.status, source="haven")
+    payload["max_bots"] += sub.extra_bots or 0
+    return payload

@@ -22,7 +22,7 @@ export default function Subscribe({ onActivated }) {
       <div className="subscribe-card">
         <h1>Choose your plan</h1>
         <p className="subscribe-sub">
-          Paper tools work on the free tier. Subscribe for live trading and the desktop engine.
+          Your automatic seven-day trial includes paper and live trading. Choose a plan to keep access.
         </p>
         <p className="landing-risk-line" style={{ marginBottom: 20 }}>{RISK_SUMMARY_SHORT}</p>
         <div className="clerk-pricing-wrap">
@@ -35,7 +35,7 @@ export default function Subscribe({ onActivated }) {
           />
         </div>
         <p className="landing-fineprint" style={{ marginTop: 24 }}>
-          Billing is managed through your Haven account (Clerk). Payments process via Stripe.
+          Subscription and payment status are managed through your Haven account with Clerk.
           Cancel anytime from your account profile.
         </p>
       </div>

@@ -1,4 +1,5 @@
 @echo off
 cd /d "%~dp0"
-python tools\backup_db.py
+cd crypto-data-collector
+python -m tools.backup_database
 pause

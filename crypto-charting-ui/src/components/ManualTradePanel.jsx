@@ -87,7 +87,7 @@ export default function ManualTradePanel({
         setQuoting(false); return;
       }
       setMaxImpact(s.max_price_impact_pct);
-      const q = await fetchSwapPreview({ side: dir, usd: usdNum, contract, collectorPrice: price, heldQty });
+      const q = await fetchSwapPreview({ side: dir, usd: usdNum, contract, marketPrice: price, heldQty });
       setQuote(q);
     } catch (e) {
       setQuoteErr({ text: `Quote preview unavailable: ${e.message || e}`, fatal: false });
@@ -110,7 +110,7 @@ export default function ManualTradePanel({
   const send = async (dir, usdNum) => {
     setBusy(true); setMsg(null);
     try {
-      // Refresh GoPlus gate — chart stays open even when elevated.
+      // Refresh the CMC security gate — chart stays open when risk is elevated.
       const secRes = await fetch(`${API_URL}/security/check/${encodeURIComponent(symbol)}`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -268,7 +268,7 @@ export default function ManualTradePanel({
       )}
 
       <div className="trade-line" style={{ maxWidth: '100%' }}>
-        <span className="l">Market (collector)</span>
+        <span className="l">Market (CoinMarketCap)</span>
         <span className="v">{price ? `$${fmtPrice(price)}` : '…'}</span>
       </div>
       <div className="trade-line" style={{ maxWidth: '100%' }}>

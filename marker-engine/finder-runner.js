@@ -8,11 +8,12 @@
 // Data source is GET /universe — the same resampled bucket dataset the
 // workbench ranks on. Latest CLOSED bar only; the in-progress bar is excluded
 // server-side.
-import { loadFinder, normalizeUniverse, runRanking, mergeParams } from '../strategy-sdk/src/index.js';
+import { normalizeUniverse, runRanking, mergeParams } from '../strategy-sdk/src/index.js';
+import { loadIsolatedFinder as loadFinder } from './sandbox-runtime.js';
 
 const LIST_REFRESH_MS = 15_000;
 const UNIVERSE_BARS = 300;           // enough history for typical finder warm-ups
-const EVAL_LAG_MS = 25_000;          // collector flushes 1m buckets every ~10s; wait it out
+const EVAL_LAG_MS = 25_000;          // allow CMC's closed candle to settle
 const RETRY_MS = 30_000;
 const INTERVAL_SEC = { '5m': 300, '15m': 900, '30m': 1800, '1h': 3600 };
 

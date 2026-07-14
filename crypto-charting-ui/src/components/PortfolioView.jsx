@@ -7,7 +7,6 @@ import { computePnl, unrealizedFor } from '../utils/pnl';
 import { fmtUsd, fmtQty, fmtPrice, fmtTime, tokenColor, tokenLabel, tradeUsd } from '../utils/format';
 import ManualTradePanel from './ManualTradePanel';
 import AssetAllocation from './AssetAllocation';
-import { formatUnits } from 'ethers';
 import '../dashboard.css';
 
 const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:8000';

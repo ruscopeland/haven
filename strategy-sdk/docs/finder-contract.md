@@ -8,7 +8,7 @@ Your code must define a top-level `finder` object:
 
 ```js
 const finder = {
-  name: 'Flow momentum',
+  name: 'Relative strength',
   params: { lookback: 8, minVol24hUsd: 100000 },   // defaults; editable in the form
 
   // OPTIONAL hard gate — return false and the token is excluded entirely.
@@ -28,15 +28,14 @@ const finder = {
 
 ## The finder ctx
 
-Identical to a strategy ctx (same series, indicators, flow, look-ahead guard,
+Identical to a strategy ctx (same CMC OHLCV series, indicators, look-ahead guard,
 `ctx.params`, `ctx.state`, `ctx.log`) with two differences:
 
 - **no trading surface** — there is no `ctx.buy` / `ctx.sell` / `ctx.position`;
 - **`ctx.token`** = `{ symbol, name, volume24h, priceChange24h }` for the
   token being scored right now.
 
-One more quirk: `ctx.volume` in finder code is **buy+sell USD volume** per
-bar (the multi-token dataset has no token-quantity volume).
+`ctx.volume` in finder code is CMC's USD OHLCV volume per bar.
 
 `score()` runs once per token per bar — a 3-day, 15-minute window over 100
 tokens is ~29k calls per edit. Keep it simple; indicators are cached per
@@ -47,7 +46,7 @@ token, so `ctx.ema(48)` is still cheap.
 Only the **ordering** matters, plus the switch margin: a flat strategy slot
 rebinds when a challenger beats its current token's score by the margin
 (default 10%). Keep scores on a stable scale — mixing units (e.g. raw USD
-flow + percent momentum) makes the margin meaningless; normalize first, as
+volume + percent momentum) makes the margin meaningless; normalize first, as
 the templates do.
 
 ## Reading the panels
@@ -66,6 +65,5 @@ the templates do.
 Attach the finder to a strategy in the Strategies tab (Token selection →
 Finder). Backtest = the portfolio simulator; DRY = paper trades on live
 rankings; LIVE = real swaps, still behind every engine risk guard. The
-data window is the collector's bucket history (~7 days at 1-minute
-resolution, ~90 days at 15-minute via the archive), so rankings older than
-that simply don't exist.
+data window is the history licensed for the configured CMC Startup plan and
+the closed candles Haven has durably cached.

@@ -1,63 +1,49 @@
 from fastapi import FastAPI, Depends, HTTPException
 from sqlalchemy.orm import Session
-from sqlalchemy import desc, func, case
-from database.db import get_db, engine, Base, ensure_db_settings
+from sqlalchemy import func
+from database.db import get_db, run_migrations, dialect_insert
 from database.models import (
-    Token, OneMinBucket, LatestTicker, Heartbeat, ChartMarker, TradeHistory,
-    DebugLog, EngineSetting, Strategy, Finder, FifteenMinBucket, DailyBucket,
+    Token, LatestTicker, Heartbeat, ChartMarker, TradeHistory,
+    DebugLog, EngineSetting, Strategy, StrategyVersion, Finder,
+    AiDailyUsage, CmcAsset, MarketCandle, ProviderStatus,
     MARKER_TYPES, STRATEGY_MODES, FINDER_INTERVALS,
 )
 from api.auth import (
-    get_identity, require_paid, Identity, SOLO_MODE, hash_key, entitlements,
+    get_identity, require_paid, require_identity_scope, Identity, SOLO_MODE, hash_key, entitlements,
 )
-from ingest.chains import LEGACY_CHAIN_ID_MAP
-from pydantic import BaseModel
+from api.chains import chain_public_info
+
+LEGACY_CHAIN_ID_MAP = {"56": "bsc"}
+from pydantic import BaseModel, ConfigDict
 from typing import List, Any
-from collections import defaultdict
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi import Request
 from contextlib import asynccontextmanager
+from market_data import CmcMarketDataService
+from market_data.cmc_client import CmcClient, CmcError
+from api.config import validate_production_config
+from api.monitoring import initialize_monitoring
 import asyncio
 import os
 import time
 import json
+import hashlib
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
+    validate_production_config()
     # Ensure tables exist before serving (replaces deprecated @app.on_event).
-    Base.metadata.create_all(bind=engine)
-    ensure_db_settings()  # pragmas/indexes + idempotent column upgrades
+    run_migrations()
     print(f"Database tables ensured on startup. SOLO_MODE={SOLO_MODE}")
 
-    # Periodic CMC rank refresh for landing movers/ticker (real market caps).
-    # Runs in a worker thread so it never blocks request handling.
-    stop = asyncio.Event()
-
-    async def _cmc_loop():
-        interval = int(os.environ.get("CMC_RANK_INTERVAL_SEC", str(6 * 3600)))
-        # First run after a short delay so boot isn't blocked on CMC.
-        await asyncio.sleep(15)
-        while not stop.is_set():
-            try:
-                from cmc_ranking import run_ranking
-                result = await asyncio.to_thread(run_ranking, 2000, False, False)
-                print(f"CMC ranking refresh: {result}")
-            except Exception as e:
-                print(f"CMC ranking refresh failed: {e}")
-            try:
-                await asyncio.wait_for(stop.wait(), timeout=interval)
-            except asyncio.TimeoutError:
-                pass
-
-    task = asyncio.create_task(_cmc_loop())
+    await cmc_market.start()
     yield
-    stop.set()
-    task.cancel()
-    try:
-        await task
-    except asyncio.CancelledError:
-        pass
+    await cmc_market.stop()
+
+
+cmc_market = CmcMarketDataService()
+initialize_monitoring()
 
 
 app = FastAPI(title="Haven API", lifespan=lifespan)
@@ -65,21 +51,40 @@ app = FastAPI(title="Haven API", lifespan=lifespan)
 # CORS: locked to the web app's origin(s) in production (comma-separated
 # HAVEN_CORS_ORIGINS env), wide-open in solo/local dev.
 _cors_env = os.environ.get("HAVEN_CORS_ORIGINS", "").strip()
-_cors_origins = [o.strip() for o in _cors_env.split(",") if o.strip()] or ["*"]
+_production = os.environ.get("HAVEN_ENV", "development").lower() == "production"
+if _production and not _cors_env:
+    raise RuntimeError("HAVEN_CORS_ORIGINS is required in production")
+_cors_origins = [o.strip() for o in _cors_env.split(",") if o.strip()] or ["http://localhost:5173"]
 app.add_middleware(
     CORSMiddleware,
     allow_origins=_cors_origins,
-    allow_credentials=True,
+    allow_credentials=False,
     allow_methods=["*"],
     allow_headers=["*"],
 )
 
-# Stripe billing endpoints (dormant in solo mode; router still mounts).
+
+@app.middleware("http")
+async def security_headers(request: Request, call_next):
+    response = await call_next(request)
+    response.headers["X-Content-Type-Options"] = "nosniff"
+    response.headers["X-Frame-Options"] = "DENY"
+    response.headers["Referrer-Policy"] = "strict-origin-when-cross-origin"
+    response.headers["Permissions-Policy"] = "camera=(), geolocation=(), microphone=()"
+    response.headers["Cross-Origin-Opener-Policy"] = "same-origin-allow-popups"
+    response.headers["Cross-Origin-Resource-Policy"] = "same-site"
+    if _production:
+        response.headers["Strict-Transport-Security"] = "max-age=31536000; includeSubDomains"
+    return response
+
+# Clerk-owned subscription and entitlement endpoints.
 from api.billing import router as billing_router  # noqa: E402
 app.include_router(billing_router)
 # Public landing-page market data (unauthenticated, rate-limited, real DB).
 from api.public_market import router as public_router  # noqa: E402
 app.include_router(public_router)
+from api.owner import router as owner_router  # noqa: E402
+app.include_router(owner_router)
 
 class TokenResponse(BaseModel):
     id: str
@@ -95,11 +100,10 @@ class TokenResponse(BaseModel):
     liquidity_usd: float | None = None
     market_cap: float | None = None
     listed_at: int | None = None
-    # GoPlus Security summary (parsed from security_json). None until scanned.
+    # Cached CMC DEX security summary. None until requested.
     security: dict | None = None
 
-    class Config:
-        from_attributes = True
+    model_config = ConfigDict(from_attributes=True)
 
 
 def _token_to_response(tok) -> TokenResponse:
@@ -132,26 +136,13 @@ class SignalResponse(BaseModel):
     name: str | None = None
     display_symbol: str | None = None
     timestamp: int
-    buy_vol_1m: float
-    sell_vol_1m: float
-    net_flow_1m: float
-    buy_vol_5m: float
-    sell_vol_5m: float
-    net_flow_5m: float
-    buy_vol_15m: float = 0.0
-    sell_vol_15m: float = 0.0
-    net_flow_15m: float = 0.0
-    buy_vol_1h: float = 0.0
-    sell_vol_1h: float = 0.0
-    net_flow_1h: float = 0.0
-    trade_count: int
     price_change_24h: float
     volume_24h: float = 0.0
     market_cap: float = 0.0
-    last_price: float | None = None  # live collector price for screener
+    cmc_rank: int | None = None
+    last_price: float | None = None  # live CMC price for screener
 
-    class Config:
-        from_attributes = True
+    model_config = ConfigDict(from_attributes=True)
 
 
 # ── Marker / Trade schemas ─────────────────────────────────────────────────
@@ -180,8 +171,7 @@ class MarkerResponse(BaseModel):
     triggered_at: int | None
     metadata_json: str | None
 
-    class Config:
-        from_attributes = True
+    model_config = ConfigDict(from_attributes=True)
 
 
 class MarkerUpdate(BaseModel):
@@ -208,7 +198,6 @@ class TradeCreate(BaseModel):
     block_time: int = 0
     status: str = "FILLED"
     strategy_id: str | None = None
-    user_id: str | None = None   # honored ONLY from the service identity (paper-runner)
 
 
 class TradeResponse(BaseModel):
@@ -230,8 +219,7 @@ class TradeResponse(BaseModel):
     status: str
     strategy_id: str | None
 
-    class Config:
-        from_attributes = True
+    model_config = ConfigDict(from_attributes=True)
 
 
 # ── Marker endpoints ───────────────────────────────────────────────────────
@@ -324,6 +312,9 @@ def claim_marker(marker_id: str, db: Session = Depends(get_db),
     so it can only ever claim that user's markers — it does not change the
     exactly-once semantics (the atomic active==1 predicate still does that).
     """
+    if identity.kind not in ("engine", "solo"):
+        raise HTTPException(status_code=403, detail="Only the local engine may claim trades")
+    require_identity_scope(identity, "engine:trade")
     from datetime import datetime, timezone
     now_ms = int(datetime.now(timezone.utc).timestamp() * 1000)
     updated = (
@@ -373,16 +364,40 @@ def get_trades(symbol: str | None = None, limit: int = 50, status: str | None = 
 @app.post("/trades", response_model=TradeResponse)
 def create_trade(t: TradeCreate, db: Session = Depends(get_db),
                  identity: Identity = Depends(require_paid)):
-    """Record a filled trade from the execution engine (owned by the caller).
-
-    The cloud paper-runner (service identity) may write PAPER trades on behalf
-    of the strategy's owner — it passes the target user via t.user_id; every
-    other caller is pinned to its own identity.
-    """
+    """Idempotently record submission/finalization from the local engine."""
     import uuid
+    import math
+    if identity.kind not in ("engine", "solo"):
+        raise HTTPException(status_code=403, detail="Only the local engine may report trades")
+    require_identity_scope(identity, "engine:report")
+    if t.direction not in ("BUY", "SELL") or t.status not in ("PENDING", "FILLED", "FAILED", "PAPER"):
+        raise HTTPException(status_code=422, detail="Invalid trade direction or status")
+    numeric = (t.expected_price, t.execution_price, t.amount_in, t.amount_out,
+               t.fee_amount, t.gas_price_gwei, t.gas_cost_native)
+    if any(not math.isfinite(float(v)) or float(v) < 0 for v in numeric):
+        raise HTTPException(status_code=422, detail="Trade numeric values must be finite and non-negative")
+    is_paper = t.status == "PAPER"
+    if is_paper:
+        if not t.tx_hash.startswith("paper-"):
+            raise HTTPException(status_code=422, detail="Paper trade id must use the paper- prefix")
+    elif not (t.tx_hash.startswith("0x") and len(t.tx_hash) == 66
+              and all(c in "0123456789abcdefABCDEF" for c in t.tx_hash[2:])):
+        raise HTTPException(status_code=422, detail="Invalid blockchain transaction hash")
     owner = identity.user_id
-    if identity.is_service and t.user_id:
-        owner = t.user_id
+    existing = db.query(TradeHistory).filter(
+        TradeHistory.user_id == owner, TradeHistory.tx_hash == t.tx_hash).first()
+    if existing:
+        if (existing.symbol, existing.direction, existing.marker_id) != (t.symbol, t.direction, t.marker_id):
+            raise HTTPException(status_code=409, detail="Transaction identity does not match its submission")
+        for field in ("execution_price", "amount_in", "amount_out", "fee_token", "fee_amount",
+                      "gas_used", "gas_price_gwei", "gas_cost_native", "block_time", "status",
+                      "strategy_id"):
+            setattr(existing, field, getattr(t, field))
+        existing.confirmed_at = int(time.time() * 1000) if t.status in ("FILLED", "FAILED") else None
+        existing.reconciliation_state = "confirmed" if t.status == "FILLED" else t.status.lower()
+        db.commit()
+        db.refresh(existing)
+        return existing
     trade = TradeHistory(
         id=str(uuid.uuid4()),
         user_id=owner,
@@ -402,6 +417,9 @@ def create_trade(t: TradeCreate, db: Session = Depends(get_db),
         block_time=t.block_time,
         status=t.status,
         strategy_id=t.strategy_id,
+        submitted_at=int(time.time() * 1000),
+        confirmed_at=int(time.time() * 1000) if t.status in ("FILLED", "FAILED") else None,
+        reconciliation_state="confirmed" if t.status == "FILLED" else t.status.lower(),
     )
     db.add(trade)
     db.commit()
@@ -455,9 +473,10 @@ class StrategyListItem(BaseModel):
     updated_at: int
     last_run_at: int | None
     last_error: str | None
+    code_version: int = 1
+    live_approved_version: int | None = None
 
-    class Config:
-        from_attributes = True
+    model_config = ConfigDict(from_attributes=True)
 
 
 class StrategyResponse(StrategyListItem):
@@ -497,23 +516,16 @@ def _validate_token_selection(db: Session, user_id: str, symbol: str, finder_id:
 @app.get("/strategies", response_model=List[StrategyListItem])
 def list_strategies(db: Session = Depends(get_db),
                     identity: Identity = Depends(require_paid)):
-    """List this user's strategies without code bodies (runner + UI poll this).
-
-    The cloud paper-runner (service identity) gets EVERY user's strategies so
-    it can execute all DRY strategies centrally — it filters to mode=dry itself.
-    """
-    q = db.query(Strategy)
-    if not identity.is_service:
-        q = q.filter(Strategy.user_id == identity.user_id)
+    """List the caller's strategies; paper and live both run locally."""
+    q = db.query(Strategy).filter(Strategy.user_id == identity.user_id)
     return q.order_by(Strategy.created_at).all()
 
 
 @app.get("/strategies/{strategy_id}", response_model=StrategyResponse)
 def get_strategy(strategy_id: str, db: Session = Depends(get_db),
                  identity: Identity = Depends(require_paid)):
-    q = db.query(Strategy).filter(Strategy.id == strategy_id)
-    if not identity.is_service:
-        q = q.filter(Strategy.user_id == identity.user_id)
+    q = db.query(Strategy).filter(
+        Strategy.id == strategy_id, Strategy.user_id == identity.user_id)
     strat = q.first()
     if not strat:
         raise HTTPException(status_code=404, detail="Strategy not found")
@@ -524,10 +536,12 @@ def get_strategy(strategy_id: str, db: Session = Depends(get_db),
 def create_strategy(s: StrategyCreate, db: Session = Depends(get_db),
                     identity: Identity = Depends(require_paid)):
     import uuid
+    if identity.kind not in ("user", "solo"):
+        raise HTTPException(status_code=403, detail="Engine credentials cannot create strategies")
     _validate_strategy_fields(s.interval, None)
     _validate_token_selection(db, identity.user_id, s.symbol, s.finder_id,
                               s.max_positions, s.switch_margin_pct)
-    # Library cap (solo/service = unlimited): saved strategies per user, so one
+    # Library cap: saved strategies per user, so one
     # account can't grow the DB without bound. 409 detail is shown to the user
     # as-is by the workbench's save message.
     ent = entitlements(db, identity)
@@ -538,8 +552,7 @@ def create_strategy(s: StrategyCreate, db: Session = Depends(get_db),
             raise HTTPException(
                 status_code=409,
                 detail=(f"Strategy library full: {saved} of {ent['max_strategies']} saved. "
-                        "Delete a strategy you no longer use — larger libraries are a "
-                        "planned plan upgrade."))
+                        "Delete one you no longer use or choose a larger plan."))
     now_ms = int(time.time() * 1000)
     strat = Strategy(
         id=str(uuid.uuid4()), user_id=identity.user_id, name=s.name, code=s.code,
@@ -547,9 +560,14 @@ def create_strategy(s: StrategyCreate, db: Session = Depends(get_db),
         interval=s.interval, params_json=s.params_json, mode="off",
         finder_id=s.finder_id, max_positions=s.max_positions,
         switch_margin_pct=s.switch_margin_pct,
-        created_at=now_ms, updated_at=now_ms,
+        created_at=now_ms, updated_at=now_ms, code_version=1,
     )
     db.add(strat)
+    db.add(StrategyVersion(
+        id=str(uuid.uuid4()), strategy_id=strat.id, user_id=identity.user_id,
+        version=1, code=s.code, code_hash=hashlib.sha256(s.code.encode()).hexdigest(),
+        approved_for_live=0, created_at=now_ms,
+    ))
     db.commit()
     db.refresh(strat)
     return strat
@@ -564,15 +582,20 @@ def update_strategy(strategy_id: str, s: StrategyUpdate, db: Session = Depends(g
     symbol / interval) — the runner uses it as its hot-reload signal, and a
     mode flip or status write must not reset a running strategy's state.
 
-    The cloud paper-runner (service identity) may PATCH last_run_at/last_error
-    on any user's DRY strategy, but never its definition or mode.
+    A scoped local-engine credential may report run status, but cannot edit the
+    definition or change its mode.
     """
-    q = db.query(Strategy).filter(Strategy.id == strategy_id)
-    if not identity.is_service:
-        q = q.filter(Strategy.user_id == identity.user_id)
+    q = db.query(Strategy).filter(
+        Strategy.id == strategy_id, Strategy.user_id == identity.user_id)
     strat = q.first()
     if not strat:
         raise HTTPException(status_code=404, detail="Strategy not found")
+    if identity.kind == "engine":
+        supplied = {k for k, v in s.model_dump().items()
+                    if v not in (None, False) and k not in ("last_run_at", "last_error", "clear_error")}
+        if supplied:
+            raise HTTPException(status_code=403, detail="Engine credentials may only report strategy status")
+        require_identity_scope(identity, "engine:report")
     _validate_strategy_fields(s.interval, s.mode)
     # Validate the token selection the row will END UP with after this patch.
     next_symbol = s.symbol if s.symbol is not None else strat.symbol
@@ -581,16 +604,23 @@ def update_strategy(strategy_id: str, s: StrategyUpdate, db: Session = Depends(g
                               s.max_positions, s.switch_margin_pct)
 
     # Bot entitlements: arming a strategy (mode off → dry/live) consumes a bot
-    # slot; LIVE additionally requires a full (non-trial) subscription. The
-    # service runner only PATCHes status fields, never mode, so this path is
-    # user/engine-only. 409 = slots full, 403 = trial trying to go live; both
-    # carry a human-readable detail the UI shows as-is.
-    if s.mode in ("dry", "live") and not identity.is_service:
+    # slot. Both the automatic trial and paid plans permit LIVE. The
+    # Engine credentials only PATCH status fields, never mode. Capacity errors
+    # carry human-readable details that the UI shows directly.
+    if s.mode in ("dry", "live"):
         ent = entitlements(db, identity)
         if s.mode == "live" and not ent["live_allowed"]:
             raise HTTPException(
                 status_code=403,
-                detail="Trial accounts run paper (DRY) bots only. Subscribe to unlock live trading.")
+                detail="Your current plan does not permit live trading.")
+        if s.mode == "live" and s.code is not None and s.code != strat.code:
+            raise HTTPException(
+                status_code=409,
+                detail="Save the new code, review it, and approve that version before enabling live trading.")
+        if s.mode == "live" and strat.live_approved_version != strat.code_version:
+            raise HTTPException(
+                status_code=409,
+                detail="Approve the current strategy code version before enabling live trading.")
         # Live trading is BSC-only (DATA-ROADMAP AD-D8). Paper (DRY) bots may
         # run on any chain's data. Finder-bound strategies (symbol='') are
         # policed at slot-bind time by the runner's tradeable filter instead.
@@ -615,6 +645,7 @@ def update_strategy(strategy_id: str, s: StrategyUpdate, db: Session = Depends(g
                             "Stop one first (set it to OFF), or add bot slots to your plan."))
 
     definition_changed = False
+    code_changed = s.code is not None and s.code != strat.code
     for field in ("code", "symbol", "interval", "params_json", "finder_id",
                   "max_positions", "switch_margin_pct"):
         val = getattr(s, field)
@@ -648,6 +679,51 @@ def update_strategy(strategy_id: str, s: StrategyUpdate, db: Session = Depends(g
         strat.last_error = None
     if definition_changed:
         strat.updated_at = int(time.time() * 1000)
+    if code_changed:
+        import uuid
+        strat.code_version = int(strat.code_version or 1) + 1
+        strat.live_approved_version = None
+        strat.mode = "off"
+        db.add(StrategyVersion(
+            id=str(uuid.uuid4()), strategy_id=strat.id, user_id=strat.user_id,
+            version=strat.code_version, code=strat.code,
+            code_hash=hashlib.sha256(strat.code.encode()).hexdigest(),
+            approved_for_live=0, created_at=int(time.time() * 1000),
+        ))
+    db.commit()
+    db.refresh(strat)
+    return strat
+
+
+class LiveApproval(BaseModel):
+    version: int
+    code_hash: str
+
+
+@app.post("/strategies/{strategy_id}/approve-live", response_model=StrategyResponse)
+def approve_strategy_for_live(strategy_id: str, approval: LiveApproval,
+                              db: Session = Depends(get_db),
+                              identity: Identity = Depends(require_paid)):
+    """Approve one immutable code version; edits invalidate the approval."""
+    if identity.kind not in ("user", "solo"):
+        raise HTTPException(status_code=403, detail="Live approval requires the signed-in user")
+    strat = db.query(Strategy).filter(
+        Strategy.id == strategy_id, Strategy.user_id == identity.user_id).first()
+    if not strat:
+        raise HTTPException(status_code=404, detail="Strategy not found")
+    version = db.query(StrategyVersion).filter(
+        StrategyVersion.strategy_id == strategy_id,
+        StrategyVersion.version == approval.version,
+        StrategyVersion.user_id == identity.user_id,
+    ).first()
+    if (not version or approval.version != strat.code_version
+            or not hashlib.sha256(strat.code.encode()).hexdigest() == approval.code_hash
+            or version.code_hash != approval.code_hash):
+        raise HTTPException(status_code=409, detail="Strategy version or code hash changed; review again")
+    at = int(time.time() * 1000)
+    version.approved_for_live = 1
+    version.approved_at = at
+    strat.live_approved_version = strat.code_version
     db.commit()
     db.refresh(strat)
     return strat
@@ -685,6 +761,8 @@ def delete_strategy(strategy_id: str, db: Session = Depends(get_db),
     FAILED). FILLED rows are deliberately KEPT: they are real on-chain history
     — the wallet's avg-cost PnL walk and the dashboard trade log would corrupt
     if money that actually moved disappeared from the books."""
+    if identity.kind not in ("user", "solo"):
+        raise HTTPException(status_code=403, detail="Engine credentials cannot delete strategies")
     strat = (db.query(Strategy)
              .filter(Strategy.id == strategy_id, Strategy.user_id == identity.user_id)
              .first())
@@ -727,8 +805,7 @@ def strategy_performance(strategy_id: str, limit: int = 1000, archived: int = 0,
     the page only fetches them when the user opens the archive view.
     """
     q = db.query(Strategy).filter(Strategy.id == strategy_id)
-    if not identity.is_service:
-        q = q.filter(Strategy.user_id == identity.user_id)
+    q = q.filter(Strategy.user_id == identity.user_id)
     strat = q.first()
     if not strat:
         raise HTTPException(status_code=404, detail="Strategy not found")
@@ -842,8 +919,7 @@ class FinderListItem(BaseModel):
     last_run_at: int | None
     last_error: str | None
 
-    class Config:
-        from_attributes = True
+    model_config = ConfigDict(from_attributes=True)
 
 
 class FinderResponse(FinderListItem):
@@ -860,19 +936,15 @@ def _validate_finder_interval(interval: str | None):
 @app.get("/finders", response_model=List[FinderListItem])
 def list_finders(db: Session = Depends(get_db),
                  identity: Identity = Depends(require_paid)):
-    """List this user's finders (service identity sees all, for the FinderHub)."""
-    q = db.query(Finder)
-    if not identity.is_service:
-        q = q.filter(Finder.user_id == identity.user_id)
+    """List this user's finders."""
+    q = db.query(Finder).filter(Finder.user_id == identity.user_id)
     return q.order_by(Finder.created_at).all()
 
 
 @app.get("/finders/{finder_id}", response_model=FinderResponse)
 def get_finder(finder_id: str, db: Session = Depends(get_db),
                identity: Identity = Depends(require_paid)):
-    q = db.query(Finder).filter(Finder.id == finder_id)
-    if not identity.is_service:
-        q = q.filter(Finder.user_id == identity.user_id)
+    q = db.query(Finder).filter(Finder.id == finder_id, Finder.user_id == identity.user_id)
     f = q.first()
     if not f:
         raise HTTPException(status_code=404, detail="Finder not found")
@@ -883,7 +955,15 @@ def get_finder(finder_id: str, db: Session = Depends(get_db),
 def create_finder(f: FinderCreate, db: Session = Depends(get_db),
                   identity: Identity = Depends(require_paid)):
     import uuid
+    if identity.kind not in ("user", "solo"):
+        raise HTTPException(status_code=403, detail="Engine credentials cannot create finders")
     _validate_finder_interval(f.interval)
+    ent = entitlements(db, identity)
+    saved = db.query(Finder).filter(Finder.user_id == identity.user_id).count()
+    if ent.get("max_finders") is not None and saved >= ent["max_finders"]:
+        raise HTTPException(
+            status_code=409,
+            detail=f"Finder limit reached: {saved} of {ent['max_finders']} saved.")
     now_ms = int(time.time() * 1000)
     finder = Finder(
         id=str(uuid.uuid4()), user_id=identity.user_id, name=f.name, code=f.code,
@@ -902,14 +982,18 @@ def update_finder(finder_id: str, f: FinderUpdate, db: Session = Depends(get_db)
     """updated_at bumps ONLY on definition changes (code/params/interval) —
     status writes (last_run_at/last_error) must not reset live evaluators.
 
-    Service identity (FinderHub) may PATCH last_run_at/last_error on any finder.
+    A scoped local-engine FinderHub may report status for its user's finder.
     """
-    q = db.query(Finder).filter(Finder.id == finder_id)
-    if not identity.is_service:
-        q = q.filter(Finder.user_id == identity.user_id)
+    q = db.query(Finder).filter(Finder.id == finder_id, Finder.user_id == identity.user_id)
     finder = q.first()
     if not finder:
         raise HTTPException(status_code=404, detail="Finder not found")
+    if identity.kind == "engine":
+        supplied = {k for k, v in f.model_dump().items()
+                    if v not in (None, False) and k not in ("last_run_at", "last_error", "clear_error")}
+        if supplied:
+            raise HTTPException(status_code=403, detail="Engine credentials may only report finder status")
+        require_identity_scope(identity, "engine:report")
     _validate_finder_interval(f.interval)
 
     definition_changed = False
@@ -938,6 +1022,8 @@ def delete_finder(finder_id: str, db: Session = Depends(get_db),
                   identity: Identity = Depends(require_paid)):
     """Delete a finder — refused while any strategy still references it, so a
     running portfolio strategy can never lose its token source mid-flight."""
+    if identity.kind not in ("user", "solo"):
+        raise HTTPException(status_code=403, detail="Engine credentials cannot delete finders")
     finder = (db.query(Finder)
               .filter(Finder.id == finder_id, Finder.user_id == identity.user_id)
               .first())
@@ -962,157 +1048,89 @@ UNIVERSE_MAX_BARS = 2200      # ~7.6 days of 5m; keeps payloads browser-friendly
 UNIVERSE_MAX_TOKENS = 400
 
 
-def _grouped_ohlc(db: Session, model, symbols: list[str], start_ms: int, end_ms: int,
-                  interval_ms: int) -> dict:
-    """Resample a bucket table to interval_ms groups, SQL-side.
-
-    Returns {(symbol, group_start_ms): [o, h, l, c, buy, sell, trades]}.
-    Three grouped scans: aggregates, then open/close via SQLite's documented
-    bare-column-with-MIN/MAX behavior (the bare column comes from the row that
-    won the MIN/MAX — exactly the first/last bucket of the group).
-    """
-    # NOT `(bucket_start / interval) * interval`: SQLAlchemy 2.0 renders `/`
-    # as TRUE division (`? + 0.0`), which silently degrades the GROUP BY to
-    # one group per row. Modulo stays integer-typed on every dialect.
-    grp = model.bucket_start - (model.bucket_start % interval_ms)
-
-    def base(q):
-        return (q.filter(model.symbol.in_(symbols))
-                 .filter(model.bucket_start >= start_ms)
-                 .filter(model.bucket_start < end_ms)
-                 .group_by(model.symbol, grp))
-
-    out = {}
-    agg = base(db.query(
-        model.symbol, grp.label("g"),
-        func.max(model.high_price), func.min(model.low_price),
-        func.coalesce(func.sum(model.buy_volume), 0.0),
-        func.coalesce(func.sum(model.sell_volume), 0.0),
-        func.coalesce(func.sum(model.trade_count), 0),
-    )).all()
-    for sym, g, hi, lo, buy, sell, trades in agg:
-        out[(sym, int(g))] = [None, hi, lo, None, buy, sell, trades]
-
-    opens = base(db.query(model.symbol, grp.label("g"),
-                          func.min(model.bucket_start), model.open_price)).all()
-    for sym, g, _, o in opens:
-        row = out.get((sym, int(g)))
-        if row:
-            row[0] = o
-
-    closes = base(db.query(model.symbol, grp.label("g"),
-                           func.max(model.bucket_start), model.close_price)).all()
-    for sym, g, _, c in closes:
-        row = out.get((sym, int(g)))
-        if row:
-            row[3] = c
-    return out
-
-
-def _token_chain_map(db: Session) -> dict:
-    """symbol → chain slug ('bsc'/'ethereum'/...); legacy numeric ids mapped."""
-    out = {}
-    for t in db.query(Token).all():
-        cid = str(t.chain_id or "")
-        out[t.symbol] = LEGACY_CHAIN_ID_MAP.get(cid, cid) or None
-    return out
-
-
 @app.get("/universe")
-def get_universe(interval: str = "15m", start_ms: int | None = None,
+async def get_universe(interval: str = "15m", start_ms: int | None = None,
                  end_ms: int | None = None, min_vol_24h: float = 50_000,
                  symbols: str | None = None, chains: str | None = None,
                  db: Session = Depends(get_db),
                  identity: Identity = Depends(require_paid)):
-    """Multi-token resampled OHLC + buy/sell flow — the Token Finder dataset.
-
-    One payload with a common time axis; the UI/SDK fetch it once and re-rank
-    locally on every parameter tweak. Sources: one_min_buckets (~7 days), and
-    for intervals >= 15m the fifteen_min_buckets archive extends the range
-    (one-minute data wins where both cover a group).
-
-    `chains` (optional, comma-separated slugs e.g. "bsc,base") filters the
-    universe to those chains; each token entry carries its `chain` so the SDK
-    passes it through to finder ctxs (DATA-ROADMAP M3).
-
-    Returns { interval, times: [ms...], tokens: [{symbol, name, chain,
-    volume24h, priceChange24h, o, h, l, c, buy, sell, trades}] } with arrays
-    aligned to times and null where a token has no data for that bar.
-    """
     if interval not in UNIVERSE_INTERVALS:
         raise HTTPException(status_code=422,
                             detail=f"Invalid interval '{interval}'. Allowed: {tuple(UNIVERSE_INTERVALS)}")
     interval_ms = UNIVERSE_INTERVALS[interval]
-
-    now_ms = int(time.time() * 1000)
-    if end_ms is None:
-        end_ms = (now_ms // interval_ms) * interval_ms   # exclude the in-progress bar
-    if start_ms is None:
-        start_ms = end_ms - 3 * 24 * 3600 * 1000
-    start_ms = (start_ms // interval_ms) * interval_ms
-    n_bars = (end_ms - start_ms) // interval_ms
-    if n_bars <= 0:
+    now = int(time.time() * 1000)
+    end_ms = min(int(end_ms or now), now)
+    end_ms -= end_ms % interval_ms
+    start_ms = int(start_ms or end_ms - 3 * 86_400_000)
+    start_ms -= start_ms % interval_ms
+    if start_ms >= end_ms:
         raise HTTPException(status_code=422, detail="start_ms must be before end_ms")
-    if n_bars > UNIVERSE_MAX_BARS:
+    if (end_ms - start_ms) // interval_ms > UNIVERSE_MAX_BARS:
         start_ms = end_ms - UNIVERSE_MAX_BARS * interval_ms
-        n_bars = UNIVERSE_MAX_BARS
 
-    # Universe = tracked tokens over the volume floor (or an explicit list).
-    tickers = {t.symbol: t for t in db.query(LatestTicker).all()}
-    names = {t.symbol: t.name for t in db.query(Token).all()}
-    chain_of = _token_chain_map(db)
+    query = (db.query(Token, LatestTicker, CmcAsset)
+             .join(LatestTicker, LatestTicker.symbol == Token.symbol)
+             .join(CmcAsset, CmcAsset.cmc_id == Token.cmc_id)
+             .filter((Token.status == "active") | Token.status.is_(None))
+             .filter(LatestTicker.volume_24h >= min_vol_24h))
     if symbols:
-        wanted = [s.strip() for s in symbols.split(",") if s.strip()]
-    else:
-        wanted = [s for s, t in tickers.items()
-                  if (t.volume_24h or 0) >= min_vol_24h and s in names]
-        wanted.sort(key=lambda s: tickers[s].volume_24h or 0, reverse=True)
+        requested = [item.strip() for item in symbols.split(",") if item.strip()]
+        query = query.filter(Token.symbol.in_(requested))
     if chains:
-        allowed = {c.strip() for c in chains.split(",") if c.strip()}
-        wanted = [s for s in wanted if chain_of.get(s) in allowed]
-    wanted = wanted[:UNIVERSE_MAX_TOKENS]
-    if not wanted:
-        return {"interval": interval, "times": [], "tokens": []}
+        allowed = [item.strip() for item in chains.split(",") if item.strip()]
+        query = query.filter(Token.chain_id.in_(allowed))
+    maximum = min(UNIVERSE_MAX_TOKENS,
+                  max(1, int(os.environ.get("CMC_FINDER_ASSET_LIMIT", "50"))))
+    selected = query.order_by(LatestTicker.volume_24h.desc()).limit(maximum).all()
+    specs = [{
+        "symbol": token.symbol, "name": token.name, "chain": token.chain_id,
+        "cmc_id": token.cmc_id, "address": token.contract_address,
+        "platform": asset.platform, "volume": ticker.volume_24h or 0,
+        "change": ticker.price_change_24h or 0,
+    } for token, ticker, asset in selected if token.contract_address and asset.platform]
+    semaphore = asyncio.Semaphore(max(1, int(os.environ.get("CMC_REST_CONCURRENCY", "4"))))
 
-    # Archive first (coarser, longer retention), then 1-minute data on top.
-    grouped = {}
-    if interval_ms >= 900_000:
-        grouped.update(_grouped_ohlc(db, FifteenMinBucket, wanted, start_ms, end_ms, interval_ms))
-    grouped.update(_grouped_ohlc(db, OneMinBucket, wanted, start_ms, end_ms, interval_ms))
+    async def load(spec):
+        async with semaphore:
+            try:
+                candles = await cmc_market.candles(
+                    cmc_id=spec["cmc_id"], platform=spec["platform"],
+                    address=spec["address"], interval=interval,
+                    start_ms=start_ms, end_ms=end_ms)
+            except CmcError:
+                return spec, []
+        return spec, candles
 
+    loaded = await asyncio.gather(*(load(spec) for spec in specs))
     times = list(range(start_ms, end_ms, interval_ms))
-    index = {t: i for i, t in enumerate(times)}
-    by_symbol = defaultdict(list)                     # one pass over all groups
-    for (s, g), row in grouped.items():
-        i = index.get(g)
-        if i is not None:
-            by_symbol[s].append((i, row))
+    index = {opened: idx for idx, opened in enumerate(times)}
     tokens_out = []
-    for sym in wanted:
-        cells = by_symbol.get(sym)
-        if not cells:
-            continue        # token had no data in range — omit entirely
-        o = [None] * n_bars; h = [None] * n_bars; l = [None] * n_bars; c = [None] * n_bars
-        buy = [None] * n_bars; sell = [None] * n_bars; trades = [None] * n_bars
-        for i, row in cells:
-            o[i], h[i], l[i], c[i], buy[i], sell[i], trades[i] = row
-        t = tickers.get(sym)
+    for spec, candles in loaded:
+        o = [None] * len(times); h = [None] * len(times)
+        low = [None] * len(times); c = [None] * len(times)
+        volume = [None] * len(times)
+        for candle in candles:
+            idx = index.get(candle.open_time)
+            if idx is None or not candle.closed:
+                continue
+            o[idx], h[idx], low[idx], c[idx] = (
+                candle.open_price, candle.high_price, candle.low_price, candle.close_price)
+            volume[idx] = candle.volume or 0
+        if not any(value is not None for value in c):
+            continue
         tokens_out.append({
-            "symbol": sym, "name": names.get(sym),
-            "chain": chain_of.get(sym),
-            "volume24h": (t.volume_24h if t else 0) or 0,
-            "priceChange24h": (t.price_change_24h if t else 0) or 0,
-            "o": o, "h": h, "l": l, "c": c,
-            "buy": buy, "sell": sell, "trades": trades,
+            "symbol": spec["symbol"], "name": spec["name"], "chain": spec["chain"],
+            "volume24h": spec["volume"], "priceChange24h": spec["change"],
+            "o": o, "h": h, "l": low, "c": c,
+            "volume": volume,
         })
-
-    return {"interval": interval, "times": times, "tokens": tokens_out}
-
+    return {"interval": interval, "times": times, "tokens": tokens_out,
+            "source": "coinmarketcap"}
 
 # ── Debug log schemas ──────────────────────────────────────────────────────
 
 class LogCreate(BaseModel):
-    source: str       # collector | engine | api | wallet
+    source: str       # engine | api | wallet
     level: str        # DEBUG | ERROR | TRADE | INFO | API_REQUEST | API_RESPONSE
     message: str
     metadata_json: str | None = None
@@ -1126,8 +1144,7 @@ class LogResponse(BaseModel):
     timestamp: int
     metadata_json: str | None
 
-    class Config:
-        from_attributes = True
+    model_config = ConfigDict(from_attributes=True)
 
 
 # ── Dashboard overview schemas ─────────────────────────────────────────────
@@ -1161,7 +1178,7 @@ class DashboardOverview(BaseModel):
     open_markers: List[MarkerResponse]
     token_prices: dict  # symbol → last_price
     # symbol → last_updated (unix ms). Additive (old consumers ignore it);
-    # the engine's stale-price guard reads it so a frozen collector price can
+    # the engine's stale-price guard reads it so a frozen CMC price can
     # never drive a marker execution (DATA-ROADMAP M3).
     price_updated: dict = {}
 
@@ -1172,13 +1189,13 @@ class DashboardOverview(BaseModel):
 @app.get("/debug/logs", response_model=List[LogResponse])
 def get_debug_logs(
     level: str | None = None,       # comma-separated: "ERROR,TRADE,INFO"
-    source: str | None = None,       # comma-separated: "collector,engine"
+    source: str | None = None,       # comma-separated: "api,engine,wallet"
     limit: int = 200,
     since_ms: int | None = None,     # only return logs newer than this timestamp
     db: Session = Depends(get_db),
     identity: Identity = Depends(require_paid),
 ):
-    """Get debug logs for this user PLUS shared 'system' logs (collector/api)."""
+    """Get this user's logs plus shared API system logs."""
     q = db.query(DebugLog).filter(DebugLog.user_id.in_([identity.user_id, "system"]))
     if level:
         levels = [l.strip() for l in level.split(",") if l.strip()]
@@ -1196,10 +1213,9 @@ def get_debug_logs(
 @app.post("/debug/logs", response_model=LogResponse)
 def create_debug_log(entry: LogCreate, db: Session = Depends(get_db),
                      identity: Identity = Depends(require_paid)):
-    """Ingest a debug log entry. An engine's logs are owned by its user; the
-    shared collector/api processes (service identity) log as 'system'."""
+    """Ingest a debug log entry owned by the local engine's user."""
     import time as _time
-    owner = "system" if identity.is_service else identity.user_id
+    owner = identity.user_id
     log_entry = DebugLog(
         user_id=owner,
         source=entry.source,
@@ -1308,7 +1324,6 @@ async def debug_log_middleware(request: Request, call_next):
     """Log non-polling API requests/responses to the debug_logs table."""
     if (request.url.path in NOISY_PATHS
             or request.url.path.startswith("/klines")
-            or request.url.path.startswith("/flow")
             or request.url.path.startswith("/strategies")
             or request.url.path.startswith("/finders")      # UI + evaluator poll
             or request.url.path.startswith("/assistant")     # chat turns — no DB value, may be large
@@ -1390,6 +1405,8 @@ class ApiKeyInfo(BaseModel):
     created_at: int | None
     last_used_at: int | None
     revoked: int
+    scopes: str
+    expires_at: int | None
 
 
 class ApiKeyCreate(BaseModel):
@@ -1416,11 +1433,19 @@ def create_engine_key(body: ApiKeyCreate, db: Session = Depends(get_db),
     """
     import uuid
     import secrets
+    if identity.kind not in ("user", "solo"):
+        raise HTTPException(status_code=403, detail="Only the signed-in user may create engine keys")
+    active = db.query(ApiKey).filter(
+        ApiKey.user_id == identity.user_id, ApiKey.revoked == 0).count()
+    if active >= int(os.environ.get("HAVEN_MAX_ENGINE_KEYS", "3")):
+        raise HTTPException(status_code=409, detail="Revoke an old engine key before creating another")
+    at = int(time.time() * 1000)
     raw = "haven_" + secrets.token_urlsafe(32)
     row = ApiKey(
         id=str(uuid.uuid4()), user_id=identity.user_id,
         key_hash=hash_key(raw), label=body.label[:60] or "engine",
-        created_at=int(time.time() * 1000),
+        created_at=at, scopes="engine:read,engine:trade,engine:report",
+        expires_at=at + int(os.environ.get("HAVEN_ENGINE_KEY_DAYS", "90")) * 86_400_000,
     )
     db.add(row)
     db.commit()
@@ -1442,30 +1467,55 @@ def revoke_engine_key(key_id: str, db: Session = Depends(get_db),
 
 
 @app.get("/engine/download")
-def download_engine(identity: Identity = Depends(require_paid)):
-    """Serve the packaged desktop engine zip (paid users only).
+def download_engine(db: Session = Depends(get_db),
+                    identity: Identity = Depends(require_paid)):
+    """Serve the signed desktop engine archive to entitled users.
 
-    The zip is built by tools/build_engine_zip.py into api/static/. If it isn't
+    The zip is built by tools/build_engine_release.py into api/static/. If it isn't
     present the endpoint 404s with guidance rather than erroring cryptically.
     """
     from fastapi.responses import FileResponse
+    ent = entitlements(db, identity)
+    if not ent.get("live_allowed"):
+        raise HTTPException(status_code=403, detail="Your plan does not include the local engine")
     zip_path = os.path.join(os.path.dirname(__file__), "static", "haven-engine.zip")
-    if not os.path.exists(zip_path):
+    manifest_path = zip_path + ".manifest.json"
+    if not os.path.exists(zip_path) or not os.path.exists(manifest_path):
         raise HTTPException(status_code=404,
-                            detail="Engine build not available yet. Run tools/build_engine_zip.py.")
-    return FileResponse(zip_path, media_type="application/zip",
-                        filename="haven-engine.zip")
+                            detail="A signed engine release is not currently available.")
+    try:
+        import base64
+        from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PublicKey
+        with open(manifest_path, encoding="utf8") as handle:
+            manifest = json.load(handle)
+        signature = manifest.pop("signature")
+        public = base64.b64decode(os.environ["HAVEN_ENGINE_RELEASE_PUBLIC_KEY"])
+        Ed25519PublicKey.from_public_bytes(public).verify(
+            base64.b64decode(signature),
+            json.dumps(manifest, sort_keys=True, separators=(",", ":")).encode(),
+        )
+        with open(zip_path, "rb") as handle:
+            digest = hashlib.sha256(handle.read()).hexdigest()
+        if digest != manifest.get("sha256"):
+            raise ValueError("archive checksum mismatch")
+    except Exception:
+        raise HTTPException(status_code=503,
+                            detail="Engine release signature verification failed")
+    response = FileResponse(zip_path, media_type="application/zip",
+                            filename="haven-engine.zip")
+    response.headers["X-Haven-Release"] = str(manifest.get("version", ""))
+    response.headers["X-Haven-SHA256"] = digest
+    return response
 
 
-# Shared infrastructure processes — one instance serves everyone, so their
-# heartbeats are global. A user's own engine/runner heartbeats are namespaced
-# "{process}@{user_id}" so each account sees only its own engine dot.
-SHARED_PROCESSES = {"collector", "api"}
+# Shared API infrastructure is global. Each user's local engine heartbeat is
+# namespaced "{process}@{user_id}" so accounts see only their own engine dot.
+SHARED_PROCESSES = {"api"}
 
 
 @app.get("/health")
 def health_check(db: Session = Depends(get_db)):
-    """Live status of shared processes (collector) + engine/runner.
+    """Live status of the CMC market service and API.
 
     Public (no auth) so UptimeRobot can monitor it and the subscribe screen
     can show health dots before login. Only shared process health is exposed;
@@ -1479,7 +1529,17 @@ def health_check(db: Session = Depends(get_db)):
             return "ok"
         return "warning" if age_sec < 180 else "down"
 
-    statuses = {}
+    statuses = {"api": {"status": "ok", "last_seen_sec_ago": 0}}
+    provider = db.query(ProviderStatus).filter(ProviderStatus.provider == "coinmarketcap").first()
+    if provider:
+        age = (now_ms - (provider.last_event_at or provider.updated_at)) / 1000
+        statuses["market_data"] = {
+            "status": "ok" if provider.state == "connected" and age < 120 else
+                      "warning" if provider.state in ("starting", "reconnecting") or age < 300 else "down",
+            "last_seen_sec_ago": int(age), "provider": "CoinMarketCap",
+        }
+    else:
+        statuses["market_data"] = {"status": "down", "provider": "CoinMarketCap"}
     for row in db.query(Heartbeat).all():
         proc, _, owner = row.process.partition("@")
         if owner:                                  # a user's engine/runner
@@ -1492,16 +1552,30 @@ def health_check(db: Session = Depends(get_db)):
     return statuses
 
 
+@app.get("/engine/health")
+def engine_health(db: Session = Depends(get_db),
+                  identity: Identity = Depends(require_paid)):
+    row = db.query(Heartbeat).filter(
+        Heartbeat.process == f"execution_engine@{identity.user_id}").first()
+    if not row and SOLO_MODE:
+        row = db.query(Heartbeat).filter(Heartbeat.process == "execution_engine").first()
+    if not row:
+        return {"status": "down", "last_seen_sec_ago": None}
+    age = max(0, int((time.time() * 1000 - row.last_heartbeat) / 1000))
+    return {"status": "ok" if age < 60 else "warning" if age < 180 else "down",
+            "last_seen_sec_ago": age}
+
+
 class SecurityCheckBody(BaseModel):
     force: bool = False
 
 
 @app.post("/security/check/{symbol}")
-def security_check_token(symbol: str, body: SecurityCheckBody | None = None,
-                         force: int = 0,
-                         db: Session = Depends(get_db),
-                         identity: Identity = Depends(require_paid)):
-    """Pre-trade GoPlus gate — engine/UI call this BEFORE any approve/swap.
+async def security_check_token(symbol: str, body: SecurityCheckBody | None = None,
+                               force: int = 0,
+                               db: Session = Depends(get_db),
+                               identity: Identity = Depends(require_paid)):
+    """Pre-trade CMC DEX-security gate — called before any approve/swap.
 
     Policy (product):
       - Chart is ALWAYS allowed (research).
@@ -1510,63 +1584,73 @@ def security_check_token(symbol: str, body: SecurityCheckBody | None = None,
       - Manual trades may proceed after contract verify + risk ack; UI should
         recommend a small probe first.
     """
-    from ingest.goplus import scan_one_token
-    from ingest.chains import load_env_file
-    from cmc_discover import trade_policy_from_security
-    load_env_file()
     tok = db.query(Token).filter(Token.symbol == symbol).first()
     if not tok:
         raise HTTPException(status_code=404, detail="Token not found")
     if not tok.contract_address:
-        policy = trade_policy_from_security(
-            {"safe": False, "critical": ["no_contract"], "flags": []},
-            status=tok.status,
-        )
         return {
             "symbol": symbol, "safe": False, "blocked": True,
             "critical": ["no_contract"], "flags": [],
             "chart_allowed": True,
-            "trade_policy": policy,
+            "trade_policy": {"mode": "blocked", "auto_allowed": False},
             "message": "No contract address — cannot trade.",
         }
     do_force = bool(force) or bool(body and body.force)
-    if tok.status == "blacklisted" and not do_force:
-        # Still return cached security if present; chart allowed.
-        cached = None
-        if tok.security_json:
-            try:
-                cached = json.loads(tok.security_json)
-            except Exception:
-                cached = None
-        result = {
-            **(cached or {}),
-            "symbol": symbol,
-            "safe": False,
-            "blocked": True,
-            "critical": list(dict.fromkeys(
-                list((cached or {}).get("critical") or []) + ["blacklisted"]
-            )),
-            "flags": list(dict.fromkeys(
-                list((cached or {}).get("flags") or []) + ["blacklisted"]
-            )),
-            "status": tok.status,
-            "contract_address": tok.contract_address,
-            "chain_id": tok.chain_id,
-            "from_cache": True,
-        }
+    cached = None
+    if tok.security_json:
+        try:
+            cached = json.loads(tok.security_json)
+        except (TypeError, ValueError):
+            cached = None
+    cache_ms = int(os.environ.get("CMC_SECURITY_CACHE_SEC", "86400")) * 1000
+    if cached and not do_force and int(cached.get("scanned_at") or 0) + cache_ms > int(time.time() * 1000):
+        result = {**cached, "from_cache": True}
     else:
-        result = scan_one_token(db, tok, force=do_force, count_budget=True)
-        db.refresh(tok)
-        result["symbol"] = symbol
-        result["status"] = tok.status
-        result["contract_address"] = tok.contract_address
-        result["chain_id"] = tok.chain_id
-
-    policy = trade_policy_from_security(result, status=tok.status)
-    result["chart_allowed"] = True
-    result["trade_policy"] = policy
+        try:
+            async with CmcClient() as client:
+                response = await client.security(
+                    platform=str(tok.chain_id or ""), address=tok.contract_address)
+        except CmcError as exc:
+            raise HTTPException(status_code=503, detail=f"CMC security check unavailable: {exc}")
+        rows = response.data if isinstance(response.data, list) else [response.data]
+        raw = next((r for r in rows if isinstance(r, dict)), {})
+        hits = [x for x in (raw.get("securityItems") or [])
+                if isinstance(x, dict) and x.get("isHit") is True]
+        critical = [str(x.get("riskCode") or x.get("code") or "security_risk") for x in hits
+                    if str(x.get("riskyLevel") or "").lower() not in ("", "safe", "low")]
+        display = raw.get("evmDisplay") or raw.get("solanaDisplay") or {}
+        unsafe_display = [f"{k}:{v}" for k, v in display.items()
+                          if any(word in str(v).lower() for word in ("risk", "unsafe", "honeypot", "unverified", "mintable", "freezable"))
+                          and not any(ok in str(v).lower() for ok in ("no risk", "safe", "non-", "verified"))]
+        critical.extend(unsafe_display)
+        extra = raw.get("extra") or {}
+        if extra.get("isFlaggedByVendor") or extra.get("isReported"):
+            critical.append("vendor_flagged")
+        critical = list(dict.fromkeys(critical))
+        result = {
+            "provider": "CoinMarketCap", "scanned_at": int(time.time() * 1000),
+            "safe": bool(raw.get("exist")) and not critical,
+            "critical": critical, "flags": [str(x.get("code") or x.get("riskCode")) for x in hits],
+            "security_level": raw.get("securityLevel"), "category_level": raw.get("categoryLevel"),
+            "buy_tax": extra.get("buyTax"), "sell_tax": extra.get("sellTax"),
+            "verified": extra.get("isVerified"), "tags": raw.get("tags") or [],
+            "from_cache": False,
+        }
+        tok.security_json = json.dumps(result, separators=(",", ":"))
+        db.commit()
+    result.update({"symbol": symbol, "status": tok.status,
+                   "contract_address": tok.contract_address, "chain_id": tok.chain_id,
+                   "chart_allowed": True})
+    if tok.status == "blacklisted":
+        result["critical"] = list(dict.fromkeys([*(result.get("critical") or []), "blacklisted"]))
+        result["safe"] = False
+    result["trade_policy"] = {
+        "mode": "standard" if result.get("safe") is True else "elevated_risk",
+        "auto_allowed": result.get("safe") is True,
+        "manual_ack_required": result.get("safe") is not True,
+    }
     # `blocked` = auto/strategy path must not trade without manual risk ack.
-    if policy["mode"] == "elevated_risk":
+    if result["trade_policy"]["mode"] == "elevated_risk":
         result["blocked"] = True
         result["message"] = (
             "ELEVATED RISK — chart OK. Manual trade requires contract verification "
@@ -1575,49 +1659,22 @@ def security_check_token(symbol: str, body: SecurityCheckBody | None = None,
         )
     elif result.get("safe") is True:
         result["blocked"] = False
-        result["message"] = "GoPlus clear — exact-amount approve allowed for this trade only."
+        result["message"] = "CMC security clear — exact-amount approve allowed for this trade only."
     else:
         result["blocked"] = True
         result["message"] = "Incomplete security data — trade blocked until a clean scan or risk ack."
     return result
 
 
-@app.get("/goplus/status")
-def goplus_status(identity: Identity = Depends(require_paid)):
-    """Quota + queue state for the GoPlus scanner (visible in Settings)."""
-    from ingest.chains import load_env_file
-    from ingest.goplus import GoPlusClient, eligible_tokens
-    from database.db import SessionLocal as _SL
-    load_env_file()
-    client = GoPlusClient()
-    usage = client._load_usage()
-    db = _SL()
-    try:
-        need = len(eligible_tokens(db))
-        scanned = db.query(Token).filter(Token.security_json.isnot(None)).count()
-        blacklisted = db.query(Token).filter(Token.status == "blacklisted").count()
-    finally:
-        db.close()
+@app.get("/security/status")
+def security_status(db: Session = Depends(get_db),
+                    identity: Identity = Depends(require_paid)):
     return {
-        "configured": client.configured,
-        "daily_budget": client.daily_budget,
-        "day_used": int(usage.get("addresses") or 0),
-        "remaining": client.remaining_budget(),
-        "batch_size": client.batch_size,
-        "min_interval_sec": client.min_interval,
-        "refresh_days": client.refresh_days,
-        "need_scan": need,
-        "scanned_total": scanned,
-        "blacklisted": blacklisted,
-        "provider": "GoPlus Security",
-        "docs": "https://gopluslabs.io/",
-        # Clarify: this counter is Haven's self-limit, not GoPlus CU on the portal.
-        "budget_kind": "local_address_cap",
-        "budget_note": (
-            "daily_budget/day_used count token addresses Haven allows itself to scan "
-            "per UTC day (GOPLUS_DAILY_BUDGET). This is separate from GoPlus Compute "
-            "Units (CU) shown in the GoPlus dashboard."
-        ),
+        "configured": bool(os.environ.get("CMC_API_KEY")),
+        "provider": "CoinMarketCap DEX Security",
+        "scanned_total": db.query(Token).filter(Token.security_json.isnot(None)).count(),
+        "blocked_total": db.query(Token).filter(Token.status == "blacklisted").count(),
+        "cache_seconds": int(os.environ.get("CMC_SECURITY_CACHE_SEC", "86400")),
     }
 
 
@@ -1685,14 +1742,13 @@ def write_heartbeat(hb: HeartbeatCreate, db: Session = Depends(get_db),
                     identity: Identity = Depends(get_identity)):
     """Record a liveness heartbeat for a process.
 
-    A user's own engine/runner is namespaced "{process}@{user_id}" so each
-    account tracks its own engine; shared infra (collector via the service key,
-    or anything in solo mode) heartbeats under its plain process name.
+    A user's engine/runner is namespaced "{process}@{user_id}" so each account
+    sees only its own local engine state.
     """
     from datetime import datetime, timezone
     now_ms = int(datetime.now(timezone.utc).timestamp() * 1000)
     proc = hb.process
-    if not identity.is_service and not SOLO_MODE and proc not in SHARED_PROCESSES:
+    if not SOLO_MODE and proc not in SHARED_PROCESSES:
         proc = f"{proc}@{identity.user_id}"
     existing = db.query(Heartbeat).filter_by(process=proc).first()
     if existing:
@@ -1703,9 +1759,7 @@ def write_heartbeat(hb: HeartbeatCreate, db: Session = Depends(get_db),
     return {"ok": True, "process": proc, "last_heartbeat": now_ms}
 
 
-# Product-facing quality bar (matches chain liquidity floors after 2026-07-10).
-# Tokens below this are retired by the collector; this is a hard API belt-and-
-# suspenders filter so /signals and /tokens never re-surface thin junk.
+# Optional CMC DEX-liquidity floor for operator-curated token views.
 MIN_TOKEN_LIQUIDITY_USD = float(os.environ.get("HAVEN_MIN_TOKEN_LIQUIDITY_USD", "100000"))
 # Reject absurd market caps on the product surface (fake supply × price scams).
 MAX_PRODUCT_MARKET_CAP = float(os.environ.get("HAVEN_MAX_PRODUCT_MCAP", str(50_000_000_000)))
@@ -1744,18 +1798,13 @@ def get_tokens(skip: int = 0, limit: int = 100, status: str = "active",
                quality: bool = True,
                db: Session = Depends(get_db),
                identity: Identity = Depends(require_paid)):
-    """Retrieve the list of tracked tokens (shared market data).
-
-    `status=active` (default) hides staged/retired rows. By default also
-    requires liquidity_usd >= $100k and blocks absurd/fake market caps.
-    Pass min_liquidity=0&quality=false for wallet balance scans.
-    """
+    """Retrieve supported CMC-identified trading contracts."""
     q = db.query(Token)
     if status != "all":
         # Legacy rows predate the status column; NULL counts as active.
         q = q.filter((Token.status == status) | (Token.status.is_(None))) \
             if status == "active" else q.filter(Token.status == status)
-    floor = MIN_TOKEN_LIQUIDITY_USD if min_liquidity is None else float(min_liquidity)
+    floor = 0.0 if min_liquidity is None else float(min_liquidity)
     # Wallet scans need every contract; product lists need quality.
     enforce = quality and floor > 0
     q = _product_token_filters(q, floor=floor, enforce_quality=enforce)
@@ -1784,18 +1833,41 @@ class TokenSearchHit(BaseModel):
 def search_tokens_endpoint(
     q: str = "",
     limit: int = 12,
+    db: Session = Depends(get_db),
     identity: Identity = Depends(require_paid),
 ):
-    """Typeahead for screener — local DB first, then CMC public search."""
-    from cmc_discover import search_tokens
+    """Search Haven's licensed, server-cached CMC asset catalogue."""
     q = (q or "").strip()
     if len(q) < 1:
         return []
     limit = max(1, min(int(limit or 12), 25))
-    try:
-        return search_tokens(q, limit=limit)
-    except Exception as e:
-        raise HTTPException(status_code=502, detail=f"Search failed: {e}")
+    needle = f"%{q.lower()}%"
+    assets = (db.query(CmcAsset)
+              .filter((func.lower(CmcAsset.symbol).like(needle)) |
+                      (func.lower(CmcAsset.name).like(needle)) |
+                      (func.lower(CmcAsset.slug).like(needle)))
+              .order_by(CmcAsset.rank.asc().nullslast()).limit(limit).all())
+    tokens = {t.cmc_id: t for t in db.query(Token).filter(
+        Token.cmc_id.in_([a.cmc_id for a in assets])).all()} if assets else {}
+    hits = []
+    for asset in assets:
+        tok = tokens.get(asset.cmc_id)
+        metadata = {}
+        try:
+            metadata = json.loads(asset.metadata_json or "{}")
+        except (ValueError, TypeError):
+            pass
+        hits.append(TokenSearchHit(
+            source="coinmarketcap", in_db=bool(tok),
+            symbol=tok.symbol if tok else None, display=asset.symbol,
+            name=asset.name, chain=tok.chain_id if tok else None,
+            contract_address=asset.contract_address, cmc_id=asset.cmc_id,
+            cmc_rank=asset.rank, cmc_slug=asset.slug,
+            logo_url=metadata.get("logo"), status=tok.status if tok else None,
+            market_cap=tok.market_cap if tok else None,
+            liquidity_usd=tok.liquidity_usd if tok else None,
+        ))
+    return hits
 
 
 class TokenEnsureBody(BaseModel):
@@ -1815,41 +1887,38 @@ class TokenEnsureBody(BaseModel):
 
 
 @app.post("/tokens/ensure")
-def ensure_token_endpoint(
+async def ensure_token_endpoint(
     body: TokenEnsureBody,
+    db: Session = Depends(get_db),
     identity: Identity = Depends(require_paid),
 ):
-    """Add/refresh a CMC (or contract) token, backfill chart history, GoPlus scan.
-
-    Chart is always allowed. Elevated risk is returned in trade_policy — UI
-    still opens the chart and only gates trading with acknowledgments.
-    """
-    from cmc_discover import ensure_token, trade_policy_from_security
-    try:
-        result = ensure_token(
-            cmc_id=body.cmc_id,
-            chain=body.chain,
-            contract_address=body.contract_address,
-            display=body.display,
-            name=body.name,
-            cmc_slug=body.cmc_slug,
-            cmc_rank=body.cmc_rank,
-            market_cap=body.market_cap,
-            price=body.price,
-            volume_24h=body.volume_24h,
-            price_change_24h=body.price_change_24h,
-            backfill=body.backfill,
-            scan_security=body.scan_security,
-        )
-    except ValueError as e:
-        raise HTTPException(status_code=400, detail=str(e))
-    except Exception as e:
-        raise HTTPException(status_code=502, detail=f"Ensure failed: {e}")
-
-    sec = result.get("security") if isinstance(result.get("security"), dict) else None
-    result["trade_policy"] = trade_policy_from_security(sec, status=result.get("status"))
-    result["chart_allowed"] = True
-    return result
+    """Make a supported cached CMC contract available to charts/trading."""
+    asset = db.get(CmcAsset, body.cmc_id) if body.cmc_id else None
+    if not asset and body.contract_address:
+        asset = db.query(CmcAsset).filter(
+            func.lower(CmcAsset.contract_address) == body.contract_address.lower()).first()
+    if not asset:
+        raise HTTPException(status_code=404, detail="Asset is not in the cached CMC catalogue")
+    tok = db.query(Token).filter(Token.cmc_id == asset.cmc_id).first()
+    if not tok:
+        raise HTTPException(status_code=422, detail=(
+            "This CMC asset does not expose a contract on a Haven-supported trading chain"))
+    security = None
+    if body.scan_security and tok.contract_address and asset.platform:
+        try:
+            async with CmcClient() as client:
+                response = await client.security(
+                    platform=asset.platform, address=tok.contract_address)
+            security = response.data if isinstance(response.data, dict) else None
+            tok.security_json = json.dumps(security, separators=(",", ":")) if security else None
+            db.commit()
+        except CmcError:
+            security = None
+    return {
+        "symbol": tok.symbol, "display": tok.display_symbol, "name": tok.name,
+        "status": tok.status, "security": security, "trade_policy": None,
+        "chart_allowed": True, "source": "coinmarketcap",
+    }
 
 
 @app.get("/tokens/{symbol}", response_model=TokenResponse)
@@ -1862,178 +1931,75 @@ def get_token(symbol: str, db: Session = Depends(get_db),
     return _token_to_response(tok)
 
 
+@app.get("/market/prices")
+def market_prices(symbols: str, db: Session = Depends(get_db),
+                  identity: Identity = Depends(require_paid)):
+    """Small CMC-backed quote lookup for first-party UI valuation."""
+    requested = [s.strip().upper() for s in symbols.split(",") if s.strip()][:50]
+    rows = db.query(LatestTicker).filter(LatestTicker.symbol.in_(requested)).all()
+    return {
+        "source": "coinmarketcap",
+        "prices": {row.symbol: {"price": row.last_price, "change_24h": row.price_change_24h,
+                                "volume_24h": row.volume_24h, "updated_at": row.last_updated}
+                   for row in rows},
+    }
+
+
 @app.get("/chains")
 def get_chains(identity: Identity = Depends(require_paid)):
-    """Chain registry for UI filters/badges (DATA-ROADMAP M1, AD-D3)."""
-    from ingest.chains import chain_public_info
+    """Trading chains supported by the current local engine."""
     return chain_public_info()
 
 @app.get("/signals", response_model=List[SignalResponse])
-def get_top_signals(limit: int = 400, sort_by: str = "flow_1m", db: Session = Depends(get_db),
+def get_top_signals(limit: int = 400, sort_by: str = "vol_24h", db: Session = Depends(get_db),
                     identity: Identity = Depends(require_paid)):
-    """Retrieve signals computed from 1-minute buckets + latest tickers.
+    """Return a compact CMC-backed trading watchlist.
 
-    Aggregation happens in SQL (one GROUP BY over the last hour of buckets)
-    instead of pulling every row into Python. Tokens without recent activity
-    return zero flows.
+    Ranking uses licensed CMC volume, change and market-cap data.
     """
-    from datetime import datetime, timezone
-
-    now_ms = int(datetime.now(timezone.utc).timestamp() * 1000)
-    current_minute = (now_ms // 60_000) * 60_000
-
-    # Completed minutes only (exclude the in-progress bucket)
-    one_min_ago = current_minute - 60_000
-    five_min_ago = current_minute - 5 * 60_000
-    fifteen_min_ago = current_minute - 15 * 60_000
-    one_hour_ago = current_minute - 60 * 60_000
-
-    def window_sum(col, threshold):
-        """SUM(col) over buckets at/after threshold, 0 elsewhere — SQLite side."""
-        return func.coalesce(func.sum(case((OneMinBucket.bucket_start >= threshold, col), else_=0.0)), 0.0)
-
-    # One grouped scan of the last hour, all four windows via conditional sums.
-    agg_rows = (
-        db.query(
-            OneMinBucket.symbol.label("symbol"),
-            window_sum(OneMinBucket.buy_volume, one_min_ago).label("buy_1m"),
-            window_sum(OneMinBucket.sell_volume, one_min_ago).label("sell_1m"),
-            window_sum(OneMinBucket.buy_volume, five_min_ago).label("buy_5m"),
-            window_sum(OneMinBucket.sell_volume, five_min_ago).label("sell_5m"),
-            window_sum(OneMinBucket.buy_volume, fifteen_min_ago).label("buy_15m"),
-            window_sum(OneMinBucket.sell_volume, fifteen_min_ago).label("sell_15m"),
-            window_sum(OneMinBucket.buy_volume, one_hour_ago).label("buy_1h"),
-            window_sum(OneMinBucket.sell_volume, one_hour_ago).label("sell_1h"),
-            func.coalesce(func.sum(OneMinBucket.trade_count), 0).label("trade_count"),
-        )
-        .filter(OneMinBucket.bucket_start >= one_hour_ago)
-        .filter(OneMinBucket.bucket_start < current_minute)
-        .group_by(OneMinBucket.symbol)
-        .all()
-    )
-    agg_map = {r.symbol: r for r in agg_rows}
-
-    # Tickers + names + market caps. Only quality tokens: active + min liquidity
-    # + no absurd fake mcap (retired/thin/scam rows stay out of the screener).
-    ticker_rows = {t.symbol: t for t in db.query(LatestTicker).all()}
-    token_q = db.query(Token).filter(
-        (Token.status == "active") | (Token.status.is_(None))
-    )
-    token_q = _product_token_filters(
-        token_q, floor=MIN_TOKEN_LIQUIDITY_USD, enforce_quality=True)
-    token_rows = token_q.all()
-    token_map = {t.symbol: t for t in token_rows}
-
-    signals = []
-    for symbol, tok in token_map.items():
-        a = agg_map.get(symbol)
-        ticker = ticker_rows.get(symbol)
-        buy_1m = a.buy_1m if a else 0.0
-        sell_1m = a.sell_1m if a else 0.0
-        buy_5m = a.buy_5m if a else 0.0
-        sell_5m = a.sell_5m if a else 0.0
-        buy_15m = a.buy_15m if a else 0.0
-        sell_15m = a.sell_15m if a else 0.0
-        buy_1h = a.buy_1h if a else 0.0
-        sell_1h = a.sell_1h if a else 0.0
-
-        last_px = ticker.last_price if ticker and (ticker.last_price or 0) > 0 else None
-        signals.append(
-            SignalResponse(
-                symbol=symbol,
-                name=tok.name,
-                display_symbol=tok.display_symbol,
-                timestamp=current_minute,
-                buy_vol_1m=buy_1m,
-                sell_vol_1m=sell_1m,
-                net_flow_1m=buy_1m - sell_1m,
-                buy_vol_5m=buy_5m,
-                sell_vol_5m=sell_5m,
-                net_flow_5m=buy_5m - sell_5m,
-                buy_vol_15m=buy_15m,
-                sell_vol_15m=sell_15m,
-                net_flow_15m=buy_15m - sell_15m,
-                buy_vol_1h=buy_1h,
-                sell_vol_1h=sell_1h,
-                net_flow_1h=buy_1h - sell_1h,
-                trade_count=a.trade_count if a else 0,
-                price_change_24h=ticker.price_change_24h if ticker else 0.0,
-                volume_24h=ticker.volume_24h if ticker else 0.0,
-                market_cap=tok.market_cap or 0.0,
-                last_price=last_px,
-            )
-        )
-
-    # Sort
-    if sort_by == "vol_spike":
-        # Tokens with >$10M 24h volume, sorted by (1h Total Vol) / (Average Hourly Vol)
-        signals = [
-            s for s in signals if s.volume_24h > 10_000_000
-        ]
-        signals.sort(
-            key=lambda s: (s.buy_vol_1h + s.sell_vol_1h) / (s.volume_24h / 24) if s.volume_24h > 0 else 0,
-            reverse=True,
-        )
-    elif sort_by == "vol_24h":
-        signals.sort(key=lambda s: s.volume_24h, reverse=True)
-    elif sort_by == "price_change_24h":
-        signals.sort(key=lambda s: s.price_change_24h, reverse=True)
+    current_minute = (int(time.time() * 1000) // 60_000) * 60_000
+    limit = max(1, min(limit, 500))
+    rows = (db.query(Token, LatestTicker, CmcAsset)
+            .join(LatestTicker, LatestTicker.symbol == Token.symbol)
+            .join(CmcAsset, CmcAsset.cmc_id == Token.cmc_id)
+            .filter((Token.status == "active") | Token.status.is_(None))
+            .filter(LatestTicker.last_price.isnot(None))
+            .all())
+    signals = [SignalResponse(
+        symbol=tok.symbol, name=tok.name, display_symbol=tok.display_symbol,
+        timestamp=ticker.last_updated or current_minute,
+        price_change_24h=ticker.price_change_24h or 0,
+        volume_24h=ticker.volume_24h or 0, market_cap=tok.market_cap or 0,
+        last_price=ticker.last_price, cmc_rank=asset.rank,
+    ) for tok, ticker, asset in rows]
+    if sort_by == "price_change_24h":
+        signals.sort(key=lambda item: item.price_change_24h, reverse=True)
     elif sort_by == "market_cap":
-        # Tokens with no trusted mcap sink to the bottom (not the top as zeros
-        # would if we reverse-sorted missing as 0 — we put missing last).
-        signals.sort(
-            key=lambda s: (s.market_cap is not None and s.market_cap > 0, s.market_cap or 0.0),
-            reverse=True,
-        )
+        signals.sort(key=lambda item: item.market_cap, reverse=True)
     elif sort_by == "mcap_vol":
-        # Composite score: log(market_cap) + log(volume_24h) — rewards tokens
-        # that are both large and actively traded.
-        import math
-        signals.sort(
-            key=lambda s: (math.log10(s.market_cap + 1) + math.log10(s.volume_24h + 1)
-                           if s.market_cap and s.market_cap > 0 else 0.0),
-            reverse=True,
-        )
-    elif sort_by == "flow_15m":
-        signals.sort(key=lambda s: s.net_flow_15m, reverse=True)
+        signals.sort(key=lambda item: (item.market_cap or 0) * (item.volume_24h or 0), reverse=True)
     else:
-        # Default: flow_1m
-        signals.sort(key=lambda s: s.net_flow_1m, reverse=True)
-
+        signals.sort(key=lambda item: item.volume_24h, reverse=True)
     return signals[:limit]
 
 # ── In-app coding assistant (DeepSeek proxy) ─────────────────────────────────
 # The chart UI embeds a chat window under the code editor on the Strategies and
-# Token Finder pages. The DeepSeek key stays server-side (repo-root .env); the
+# Token Finder pages. The DeepSeek key stays in the server secret manager; the
 # browser only ever talks to this proxy. Scoped by `mode` to helping the user
 # write the strategy/finder JS for the page it is on.
 
 _DEEPSEEK_KEY = None            # cached once found
 _SDK_DOC_CACHE = {}
 DEEPSEEK_URL = "https://api.deepseek.com/chat/completions"
-DEEPSEEK_MODEL = "deepseek-v4-flash"
+DEEPSEEK_MODEL = os.environ.get("DEEPSEEK_MODEL", "deepseek-v4-flash")
 
 
 def _load_deepseek_key():
-    """Read `deepseek_v4_flash_key` from the repo-root .env (env var wins)."""
+    """Read the AI credential from the process environment only."""
     global _DEEPSEEK_KEY
     if _DEEPSEEK_KEY:
         return _DEEPSEEK_KEY
-    key = os.environ.get("deepseek_v4_flash_key") or os.environ.get("DEEPSEEK_V4_FLASH_KEY")
-    if not key:
-        env_path = os.path.join(os.path.dirname(__file__), "..", "..", ".env")
-        try:
-            with open(env_path, "r", encoding="utf-8") as f:
-                for line in f:
-                    line = line.strip()
-                    if not line or line.startswith("#") or "=" not in line:
-                        continue
-                    k, _, v = line.partition("=")
-                    if k.strip().lower() == "deepseek_v4_flash_key":
-                        key = v.strip().strip('"').strip("'")
-                        break
-        except OSError:
-            key = None
+    key = os.environ.get("DEEPSEEK_API_KEY")
     if key:
         _DEEPSEEK_KEY = key
     return key or None
@@ -2056,13 +2022,13 @@ def _read_sdk_doc(name):
 def _assistant_system_prompt(mode, code):
     if mode == "finder":
         role = ("You are a coding assistant embedded in the Token Finder page of the "
-                "Alpha Terminal trading app. Your ONLY job is to help the user write and "
+                "Haven trading app. Your ONLY job is to help the user write and "
                 "debug the JavaScript for a Token Finder — a `finder` object that ranks "
                 "tokens (params, optional filter(ctx), required score(ctx)).")
         contract = _read_sdk_doc("finder-contract.md")
     else:
-        role = ("You are a coding assistant embedded in the Strategies page of the Alpha "
-                "Terminal trading app. Your ONLY job is to help the user write and debug "
+        role = ("You are a coding assistant embedded in Haven's Strategies page. "
+                "Your ONLY job is to help the user write and debug "
                 "the JavaScript for a trading strategy — a `strategy` object with params, "
                 "optional init(ctx), and an onBar(bar, ctx) handler.")
         contract = _read_sdk_doc("strategy-contract.md")
@@ -2095,16 +2061,14 @@ class AssistantChatRequest(BaseModel):
 
 @app.post("/assistant/chat")
 async def assistant_chat(req: AssistantChatRequest,
+                         db: Session = Depends(get_db),
                          identity: Identity = Depends(require_paid)):
-    """Proxy a coding-assistant chat turn to DeepSeek (key stays server-side).
-
-    Paid-gated: each call costs us DeepSeek tokens, so it's Pro-only (there is
-    no free tier anyway — require_paid covers it)."""
+    """Proxy a plan-limited coding-assistant turn (key stays server-side)."""
     key = _load_deepseek_key()
     if not key:
         raise HTTPException(
             status_code=503,
-            detail="AI assistant not configured: set deepseek_v4_flash_key in the .env file.")
+            detail="AI assistant is not configured on the Haven server.")
     mode = req.mode if req.mode in ("strategy", "finder") else "strategy"
     # We own the system prompt; only forward user/assistant turns from the client.
     convo = [{"role": m.role, "content": m.content}
@@ -2113,6 +2077,27 @@ async def assistant_chat(req: AssistantChatRequest,
     if not convo:
         raise HTTPException(status_code=422, detail="No message to send.")
     convo = convo[-20:]   # cap history length
+    entitlement = entitlements(db, identity)
+    allowance = entitlement.get("ai_daily")
+    if allowance is not None:
+        from datetime import datetime, timezone
+        today = datetime.now(timezone.utc).date().isoformat()
+        at = int(time.time() * 1000)
+        stmt = dialect_insert(AiDailyUsage).values(
+            user_id=identity.user_id, usage_date=today, requests=1, updated_at=at)
+        stmt = stmt.on_conflict_do_update(
+            index_elements=["user_id", "usage_date"],
+            set_={"requests": AiDailyUsage.requests + 1, "updated_at": at})
+        db.execute(stmt)
+        usage = db.query(AiDailyUsage).filter(
+            AiDailyUsage.user_id == identity.user_id,
+            AiDailyUsage.usage_date == today,
+        ).one()
+        if usage.requests > allowance:
+            db.rollback()
+            raise HTTPException(status_code=429,
+                                detail=f"Daily AI allowance reached ({allowance}).")
+        db.commit()
 
     payload = {
         "model": DEEPSEEK_MODEL,
@@ -2148,40 +2133,19 @@ KLINE_INTERVALS = {"1m": 60_000, "3m": 180_000, "5m": 300_000, "15m": 900_000,
 KLINES_MAX_LIMIT = 1500
 
 
-def _resolve_bucket_symbol(db: Session, symbol: str) -> str:
-    """Symbols are used as-is (slugs post-cutover); a legacy caller passing an
-    un-prefixed Binance name still resolves via the historical ALPHA_ prefix."""
-    if db.query(LatestTicker).filter(LatestTicker.symbol == symbol).first():
-        return symbol
-    if not symbol.startswith("ALPHA_"):
-        legacy = f"ALPHA_{symbol}"
-        if db.query(LatestTicker).filter(LatestTicker.symbol == legacy).first():
-            return legacy
-    return symbol
-
-
 @app.get("/klines/{symbol}")
-def get_klines(symbol: str, interval: str = "5m", limit: int = 500,
-               end_ms: int | None = None, include_open: int = 0,
-               db: Session = Depends(get_db),
-               identity: Identity = Depends(require_paid)):
-    """Historical klines served from OUR buckets (DATA-ROADMAP AD-D9).
+async def get_klines(symbol: str, interval: str = "5m", limit: int = 500,
+                     end_ms: int | None = None, include_open: int = 0,
+                     db: Session = Depends(get_db),
+                     identity: Identity = Depends(require_paid)):
+    """CMC historical candles with durable closed-candle caching.
 
-    Same array layout the Binance proxy returned — {data: [[open_time_ms, o, h,
-    l, c, volume, close_time_ms], ...]} with string prices — so the chart, the
-    workbench backtester, and the strategy runner stay byte-compatible
-    consumers. `volume` is buy+sell USD (our buckets carry no token-qty
-    volume). Interior/trailing gaps are forward-filled flat with volume 0,
-    matching the continuous-bar series Binance emitted.
+    Returns {data: [[open_time_ms, open, high, low, close, USD volume,
+    close_time_ms], ...]}. Closed CMC REST candles are durable; an active CMC
+    on-chain WebSocket candle may be included explicitly.
 
     end_ms: return candles at/before that timestamp (performance-chart jumps).
-    include_open=1: append the still-forming bar (built from the current
-    interval's 1m buckets + the live ticker price) — Chart.jsx polls this
-    every ~3s as the replacement for the old Binance kline WebSocket.
-
-    Sources: one_min_buckets (~7-day retention) resampled SQL-side, plus the
-    fifteen_min_buckets archive for >=15m intervals (1m data wins where both
-    cover a group — same rule as /universe).
+    include_open=1 appends the currently forming server-side CMC candle.
     """
     if interval not in KLINE_INTERVALS:
         raise HTTPException(status_code=422,
@@ -2189,113 +2153,32 @@ def get_klines(symbol: str, interval: str = "5m", limit: int = 500,
     interval_ms = KLINE_INTERVALS[interval]
     limit = max(1, min(limit, KLINES_MAX_LIMIT))
 
-    now_ms = int(time.time() * 1000)
-    current_group = now_ms - (now_ms % interval_ms)
-    last_group = current_group - interval_ms          # newest CLOSED bar
-    if end_ms is not None:
-        last_group = min((end_ms // interval_ms) * interval_ms, last_group)
-    start_group = last_group - (limit - 1) * interval_ms
+    sym = symbol
+    tok = db.query(Token).filter(Token.symbol == sym).first()
+    if not tok:
+        raise HTTPException(status_code=404, detail="Token not found")
+    if not os.environ.get("CMC_API_KEY"):
+        raise HTTPException(status_code=503, detail="CoinMarketCap market data is not configured")
+    asset = db.get(CmcAsset, tok.cmc_id) if tok.cmc_id else None
+    if not tok.cmc_id or not tok.contract_address or not asset or not asset.platform:
+        raise HTTPException(status_code=422, detail="Token is missing its CMC ID, platform, or contract address")
 
-    sym = _resolve_bucket_symbol(db, symbol)
-    grouped = {}
-    if interval_ms >= 86_400_000:
-        grouped.update(_grouped_ohlc(db, DailyBucket, [sym], start_group,
-                                     last_group + interval_ms, interval_ms))
-    if interval_ms >= 900_000:
-        grouped.update(_grouped_ohlc(db, FifteenMinBucket, [sym], start_group,
-                                     last_group + interval_ms, interval_ms))
-    grouped.update(_grouped_ohlc(db, OneMinBucket, [sym], start_group,
-                                 last_group + interval_ms, interval_ms))
-
-    # Fallback: if no data in the time-based window (collector was down or
-    # data is older than the requested window), anchor to the most recent
-    # available bucket instead of leaving the chart empty. Skip when the
-    # caller gave an explicit end_ms (performance-chart jump-back).
-    if not grouped and end_ms is None:
-        latest = db.query(func.max(OneMinBucket.bucket_start)).filter(
-            OneMinBucket.symbol == sym).scalar()
-        if latest:
-            last_group = latest - (latest % interval_ms)
-            start_group = last_group - (limit - 1) * interval_ms
-            if interval_ms >= 86_400_000:
-                grouped.update(_grouped_ohlc(db, DailyBucket, [sym],
-                                             start_group,
-                                             last_group + interval_ms, interval_ms))
-            if interval_ms >= 900_000:
-                grouped.update(_grouped_ohlc(db, FifteenMinBucket, [sym],
-                                             start_group,
-                                             last_group + interval_ms, interval_ms))
-            grouped.update(_grouped_ohlc(db, OneMinBucket, [sym], start_group,
-                                         last_group + interval_ms, interval_ms))
-
-    data = []
-    prev_close = None
-    if grouped:
-        first_group = min(g for (_, g) in grouped)
-        for g in range(first_group, last_group + interval_ms, interval_ms):
-            row = grouped.get((sym, g))
-            if row:
-                o, h, l, c, buy, sell, _ = row
-                vol = (buy or 0.0) + (sell or 0.0)
-                prev_close = c
-            elif prev_close is not None:
-                o = h = l = c = prev_close                 # quiet bar — flat fill
-                vol = 0.0
-            else:
-                continue
-            data.append([g, str(o), str(h), str(l), str(c), str(vol),
-                         g + interval_ms - 1])
-
-    if include_open:
-        forming = _grouped_ohlc(db, OneMinBucket, [sym], current_group,
-                                current_group + interval_ms, interval_ms
-                                ).get((sym, current_group))
-        ticker = (db.query(LatestTicker)
-                  .filter(LatestTicker.symbol == sym).first())
-        live = ticker.last_price if ticker and (ticker.last_price or 0) > 0 else None
-        o = h = l = c = None
-        vol = 0.0
-        if forming:
-            o, h, l, c, buy, sell, _ = forming
-            vol = (buy or 0.0) + (sell or 0.0)
-        if live is not None:
-            c = live
-            o = o if o is not None else (prev_close if prev_close is not None else live)
-            h = max(h, live) if h is not None else max(o, live)
-            l = min(l, live) if l is not None else min(o, live)
-        elif forming is None and prev_close is not None:
-            o = h = l = c = prev_close
-        if c is not None:
-            data.append([current_group, str(o), str(h), str(l), str(c),
-                         str(vol), current_group + interval_ms - 1])
-
-    return {"code": "000000", "message": None, "symbol": sym,
-            "interval": interval, "data": data}
-
-
-@app.get("/flow/{symbol}")
-def get_flow(symbol: str, start_ms: int | None = None, end_ms: int | None = None,
-             limit: int = 10080, db: Session = Depends(get_db),
-             identity: Identity = Depends(require_paid)):
-    """Raw 1-minute buy/sell USD flow buckets for strategy backtests.
-
-    Returns ascending [[bucket_start_ms, buy_volume, sell_volume, trade_count], ...].
-    The collector prunes buckets after ~7 days (= 10080 minutes), so this is the
-    maximum honest lookback for flow-based strategies.
-    """
-    alpha_symbol = _resolve_bucket_symbol(db, symbol)
-    q = db.query(OneMinBucket).filter(OneMinBucket.symbol == alpha_symbol)
-    if start_ms is not None:
-        q = q.filter(OneMinBucket.bucket_start >= start_ms)
-    if end_ms is not None:
-        q = q.filter(OneMinBucket.bucket_start < end_ms)
-    limit = max(1, min(limit, 10080))
-    # Newest N rows, then flip ascending — a plain ascending LIMIT would return
-    # the oldest window instead of the most recent one.
-    rows = q.order_by(desc(OneMinBucket.bucket_start)).limit(limit).all()
-    rows.reverse()
+    requested_end = int(end_ms or time.time() * 1000)
+    requested_start = requested_end - (limit + 2) * interval_ms
+    try:
+        rows = await cmc_market.candles(
+            cmc_id=int(tok.cmc_id), platform=str(asset.platform),
+            address=str(tok.contract_address), interval=interval,
+            start_ms=requested_start, end_ms=requested_end,
+        )
+    except (CmcError, ValueError) as exc:
+        raise HTTPException(status_code=503, detail=f"CMC candle data unavailable: {exc}")
+    rows = [r for r in rows if include_open or r.closed == 1]
+    rows = rows[-limit:]
     return {
-        "symbol": alpha_symbol,
-        "data": [[r.bucket_start, r.buy_volume, r.sell_volume, r.trade_count] for r in rows],
+        "code": "000000", "message": None, "symbol": sym, "interval": interval,
+        "source": "coinmarketcap",
+        "data": [[r.open_time, str(r.open_price), str(r.high_price),
+                  str(r.low_price), str(r.close_price), str(r.volume or 0),
+                  r.close_time] for r in rows],
     }
-

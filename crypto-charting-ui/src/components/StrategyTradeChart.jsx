@@ -144,7 +144,7 @@ export default function StrategyTradeChart({ symbol, interval, trades, selectedT
     if (pendingFocusRef.current != null) {
       const ok = focusTime(pendingFocusRef.current);
       if (!ok && bars.length > 0) {
-        setNote('This trade is older than the candle history Binance keeps at this interval.');
+        setNote('This trade is older than the CMC history available for this interval and plan.');
       }
       pendingFocusRef.current = null;
     } else {

@@ -32,19 +32,6 @@ if (ctx.crossover(ctx.ema(9), ctx.ema(21))) ctx.buy(50);   // fast crossed above
 if (ctx.crossunder(ctx.rsi(14), 70)) ctx.sell({ pct: 50 }); // arrays or numbers
 ```
 
-## Flow series
-
-`ctx.flow.buy` / `.sell` / `.net` / `.trades` — per-bar taker USD volume from
-the collector's tick-rule classifier. This is the dataset TradingView doesn't
-have; it is also only ~7 days deep at 1-minute resolution, so **guard for
-`null`** and expect early bars of long backtests to lack it.
-
-```js
-const nf = ctx.flow.net[ctx.i];
-if (nf == null) return;                 // outside flow retention
-if (nf > 5000) ctx.buy(50);             // $5k net taker buying this bar
-```
-
 ## Series access
 
 `ctx.open/high/low/close/volume/time` are plain arrays (guarded against

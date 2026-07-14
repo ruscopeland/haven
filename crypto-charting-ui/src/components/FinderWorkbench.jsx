@@ -7,9 +7,9 @@ import { useState, useEffect, useRef, useCallback, useMemo } from 'react';
 import CodeMirror from '@uiw/react-codemirror';
 import { javascript } from '@codemirror/lang-javascript';
 import {
-  loadFinder, normalizeUniverse, runRanking,
-  computeForwardReturns, finderQuality, FINDER_TEMPLATES,
+  normalizeUniverse, FINDER_TEMPLATES,
 } from '@sdk/index.js';
+import { runStrategyWorker } from '../workers/strategyWorkerClient.js';
 import RankingRiver, { QualityStrip, colorMap } from './RankingRiver';
 import GuidePanel from './GuidePanel';
 import AssistantPanel from './AssistantPanel';
@@ -27,7 +27,7 @@ const DRAFT_KEY = 'finderDraft';
 const prettySymbol = (sym, name) => {
   if (!sym) return '';
   if (name && name !== sym) return name;
-  return sym.replace(/^ALPHA_/, '').replace(/USDT$/, '');
+  return sym.replace(/_\d+_bsc$/, '');
 };
 
 const newDraftFromTemplate = (tpl) => ({
@@ -63,9 +63,16 @@ export default function FinderWorkbench() {
   const [pinnedGi, setPinnedGi] = useState(null);
   const universeCache = useRef(new Map());         // key → { normalized, at }
 
-  const { finder: parsedFinder, error: codeError } = useMemo(
-    () => loadFinder(draft.code), [draft.code]);
-  const paramDefaults = parsedFinder?.params || {};
+  const [validation, setValidation] = useState({ error: null, params: {} });
+  useEffect(() => {
+    let active = true;
+    runStrategyWorker('validateFinder', { code: draft.code }, 2_000)
+      .then(value => { if (active) setValidation(value); })
+      .catch(error => { if (active) setValidation({ error: error.message, params: {} }); });
+    return () => { active = false; };
+  }, [draft.code]);
+  const codeError = validation.error;
+  const paramDefaults = validation.params || {};
 
   // ── Saved finders list ───────────────────────────────────────────────────
   const fetchList = useCallback(async () => {
@@ -170,20 +177,19 @@ export default function FinderWorkbench() {
   }, [draft.interval, lookbackDays, minVol]);
 
   // ── Debounced local re-rank (no refetch) ─────────────────────────────────
-  const paramsKey = JSON.stringify(draft.params);
   useEffect(() => {
     if (!universe || codeError) return;
     let cancelled = false;
-    const timer = setTimeout(() => {
-      const ranked = runRanking({ code: draft.code, universe, params: draft.params });
+    const timer = setTimeout(async () => {
+      const ranked = await runStrategyWorker('finderAnalysis', {
+        code: draft.code, universe, params: draft.params, horizon, topN,
+      });
       if (cancelled) return;
-      const fwd = computeForwardReturns(universe, horizon);
-      const quality = finderQuality(ranked.rankings, fwd, topN);
-      setResult({ rankings: ranked.rankings, logs: ranked.logs, error: ranked.error, fwd, quality });
+      setResult({ rankings: ranked.rankings, logs: ranked.logs, error: ranked.error, quality: ranked.quality });
       setPinnedGi(p => (p != null && p < ranked.rankings.length ? p : null));
     }, 400);
     return () => { cancelled = true; clearTimeout(timer); };
-  }, [universe, draft.code, paramsKey, topN, horizon, codeError]);
+  }, [universe, draft.code, draft.params, topN, horizon, codeError]);
 
   // ── Derived view data ────────────────────────────────────────────────────
   const nameOf = useMemo(() => {

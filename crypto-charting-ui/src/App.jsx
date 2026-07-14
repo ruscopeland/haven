@@ -1,8 +1,6 @@
-import { useState, useEffect, useRef } from 'react'
+import { lazy, Suspense, useState, useEffect, useRef, useCallback } from 'react'
 import Screener from './components/Screener'
 import Chart from './components/Chart'
-import StrategyWorkbench from './components/StrategyWorkbench'
-import FinderWorkbench from './components/FinderWorkbench'
 import DashboardView from './components/DashboardView'
 import SettingsView from './components/SettingsView'
 import TokenDetailView from './components/TokenDetailView'
@@ -15,6 +13,10 @@ import LegalDocView from './components/LegalDoc'
 import LegalFooter from './components/LegalFooter'
 import UpgradeBanner from './components/UpgradeBanner'
 import { RISK_SUMMARY_SHORT } from './legal/content.js'
+
+const StrategyWorkbench = lazy(() => import('./components/StrategyWorkbench.jsx'));
+const FinderWorkbench = lazy(() => import('./components/FinderWorkbench.jsx'));
+const OwnerOperations = lazy(() => import('./components/OwnerOperations.jsx'));
 
 const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:8000';
 const LAYOUT_NAMES_KEY = 'chartLayoutNames';
@@ -62,12 +64,13 @@ function App() {
   const [tempChartActive, setTempChartActive] = useState(false);
   const savedChartsRef = useRef(null);
   const [signals, setSignals] = useState([]);
-  const [sortBy, setSortBy] = useState("flow_15m");
-  const [health, setHealth] = useState({ collector: 'unknown', execution_engine: 'unknown' });
+  const [sortBy, setSortBy] = useState("vol_24h");
+  const [health, setHealth] = useState({ market_data: 'unknown', execution_engine: 'unknown' });
   const [signalError, setSignalError] = useState(false);
   const [layoutNames, setLayoutNames] = useState(loadLayoutNames);
   const [gridMode, setGridMode] = useState(null); // null = auto, or 1/2/4/6
   const [legalDoc, setLegalDoc] = useState(null); // terms | privacy | risk | null (docs is a main view)
+  const [ownerAccess, setOwnerAccess] = useState(false);
 
   const [presets, setPresets] = useState(() => {
     const saved = localStorage.getItem('chartPresets');
@@ -90,19 +93,30 @@ function App() {
     }
   }, []);
 
-  const fetchHealth = async () => {
+  useEffect(() => {
+    let active = true;
+    fetch(`${API_URL}/owner/overview`)
+      .then(r => { if (active && r.ok) setOwnerAccess(true); })
+      .catch(() => {});
+    return () => { active = false; };
+  }, []);
+
+  const fetchHealth = useCallback(async () => {
     try {
-      const res = await fetch(`${API_URL}/health`);
+      const [res, engineRes] = await Promise.all([
+        fetch(`${API_URL}/health`), fetch(`${API_URL}/engine/health`),
+      ]);
       const data = await res.json();
       const statuses = {};
       Object.entries(data).forEach(([k, v]) => { statuses[k] = v.status; });
+      if (engineRes.ok) statuses.execution_engine = (await engineRes.json()).status;
       setHealth(prev => ({ ...prev, ...statuses }));
     } catch {
-      setHealth({ collector: 'unknown', execution_engine: 'unknown' });
+      setHealth({ market_data: 'unknown', execution_engine: 'unknown' });
     }
-  };
+  }, []);
 
-  const fetchSignals = async () => {
+  const fetchSignals = useCallback(async () => {
     try {
       const res = await fetch(`${API_URL}/signals?limit=400&sort_by=${sortBy}`);
       if (!res.ok) throw new Error(res.statusText);
@@ -113,7 +127,7 @@ function App() {
       console.error("Failed to fetch signals", err);
       setSignalError(true);
     }
-  };
+  }, [sortBy]);
 
   useEffect(() => {
     fetchHealth();
@@ -121,7 +135,7 @@ function App() {
     const healthInterval = setInterval(fetchHealth, 15000);
     const pollInterval = setInterval(fetchSignals, 15000);
     return () => { clearInterval(healthInterval); clearInterval(pollInterval); };
-  }, [sortBy]);
+  }, [fetchHealth, fetchSignals]);
 
   const toggleToken = (tokenObj) => {
     setSelectedTokens((prev) => {
@@ -258,7 +272,7 @@ function App() {
         flexShrink: 0,
       }}>
         <HavenLogo size={26} />
-        {NAV.map(([key, label]) => {
+        {[...NAV, ...(ownerAccess ? [['owner', 'Owner Ops']] : [])].map(([key, label]) => {
           const active = view === key
             || (view === 'token' && (key === 'dashboard' || key === 'portfolio'))
             || (view === 'strategy' && key === 'dashboard');
@@ -284,7 +298,7 @@ function App() {
 
         <div style={{ display: 'flex', alignItems: 'center', gap: '10px', marginRight: 8 }}>
           <HealthDot label="API" status={signalError ? 'down' : 'ok'} />
-          <HealthDot label="Collector" status={health.collector || 'unknown'} />
+          <HealthDot label="Market feed" status={health.market_data || 'unknown'} />
           <HealthDot label="Engine" status={health.execution_engine || 'unknown'} />
         </div>
 
@@ -349,6 +363,7 @@ function App() {
           </div>
         )}
 
+        <Suspense fallback={<div className="charts-empty" aria-busy="true">Loading…</div>}>
         {view === 'dashboard' ? (
           <DashboardView
             signals={signals}
@@ -396,6 +411,8 @@ function App() {
             onOpenStrategyPage={openStrategyPage} />
         ) : view === 'finder' ? (
           <FinderWorkbench />
+        ) : view === 'owner' ? (
+          <OwnerOperations />
         ) : (
           <div
             className="charts-grid"
@@ -410,7 +427,7 @@ function App() {
             {count === 0 ? (
               <div className="charts-empty">
                 <h3>No charts open</h3>
-                <p>Select tokens from the screener, load a saved layout, or open the top flow names.</p>
+                <p>Select tokens from the screener, load a saved layout, or open the most active markets.</p>
                 <div className="charts-empty-actions">
                   <button className="btn-primary" style={{ padding: '8px 14px', fontSize: 13 }}
                     onClick={() => loadPreset(1)} disabled={!presets[1]?.length}>
@@ -418,7 +435,7 @@ function App() {
                   </button>
                   <button className="btn-secondary" style={{ padding: '8px 14px', fontSize: 13 }}
                     onClick={openTopFlow} disabled={!signals.length}>
-                    Open top 15m flow
+                    Open top volume
                   </button>
                 </div>
               </div>
@@ -437,6 +454,7 @@ function App() {
             )}
           </div>
         )}
+        </Suspense>
 
         {view !== 'charts' && (
           <div className="app-legal-bar">

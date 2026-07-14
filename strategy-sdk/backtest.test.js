@@ -136,19 +136,6 @@ test('look-ahead guard: reading beyond ctx.i returns undefined', () => {
   assert.deepEqual(seen, [1, undefined, undefined, undefined]);
 });
 
-test('flow arrays reach the strategy aligned to bars, null outside coverage', () => {
-  const bars = mkBars([[1, 1, 1, 1], [1, 1, 1, 1]]);
-  // Only bar 0's minute has a bucket (times are i*60 sec → 0 ms and 60000 ms).
-  const flowRows = [[0, 500, 200, 5]];
-  const seen = [];
-  const strategy = {
-    params: {},
-    onBar(bar, ctx) { seen.push(ctx.flow.net[ctx.i]); },
-  };
-  runBacktest({ strategy, bars, flowRows, intervalSec: 60, ...noCosts });
-  assert.deepEqual(seen, [300, null]);
-});
-
 test('a throwing strategy reports the error with its bar index, keeps prior trades', () => {
   const bars = mkBars([[10, 10, 10, 10], [10, 10, 10, 10], [10, 10, 10, 10]]);
   const strategy = {

@@ -8,7 +8,6 @@
   "scripts": {
     "start": "node index.js",
     "setup": "node setup.js",
-    "paper-runner": "node paper-runner-service.js",
     "test": "node --test"
   },
   "dependencies": {

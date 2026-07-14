@@ -25,11 +25,10 @@ export function loadStrategy(code) {
 // token metadata; finders can't trade). The driver advances the bar cursor
 // with ctx.__setBar(i) and supplies:
 //   bars     [{time (unix sec), open, high, low, close, volume}], oldest first
-//   flow     { buy, sell, net, trades } aligned to bars (nulls where no data)
 //   params   defaults merged with user overrides
 //   state    persistent object (ctx.state)
 //   log      (msg) => void
-export function createBaseCtx({ bars, flow, params, state, log }) {
+export function createBaseCtx({ bars, params, state, log }) {
   const cursor = { i: -1 };
 
   // Look-ahead guard: reads at indices beyond the current bar return undefined.
@@ -82,16 +81,11 @@ export function createBaseCtx({ bars, flow, params, state, log }) {
     return cached(`${name}:${src === close ? 'c' : srcId(src)}:${len}`, () => guard(fn(src, len)));
   };
 
-  const flowGuarded = flow
-    ? guardObj(flow)
-    : { buy: guard([]), sell: guard([]), net: guard([]), trades: guard([]) };
-
   const ctx = {
     get i() { return cursor.i; },
     bars: guard(bars),
     open: guard(open), high: guard(high), low: guard(low),
     close: guard(close), volume: guard(volume), time: guard(time),
-    flow: flowGuarded,
     params,
     state,
 
@@ -132,8 +126,8 @@ export function createBaseCtx({ bars, flow, params, state, log }) {
 // Full strategy ctx: the base plus the trading surface. Same signature and
 // behavior as before the finder refactor — position is a live getter, buy/sell
 // forward to the driver's emit sinks.
-export function createCtx({ bars, flow, params, state, position, emit, log }) {
-  const ctx = createBaseCtx({ bars, flow, params, state, log });
+export function createCtx({ bars, params, state, position, emit, log }) {
+  const ctx = createBaseCtx({ bars, params, state, log });
   Object.defineProperty(ctx, 'position', {
     get() { return position; },
     enumerable: true,

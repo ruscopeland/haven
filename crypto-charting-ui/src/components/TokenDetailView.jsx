@@ -3,7 +3,7 @@ import { formatUnits } from 'ethers';
 import Chart from './Chart';
 import { getSavedAddress } from '../hooks/useWalletData';
 import { fmtUsd, fmtQty, fmtPrice, fmtTime, tokenColor, tradeUsd } from '../utils/format';
-import GoPlusSecurity from './GoPlusSecurity';
+import CmcSecurity from './CmcSecurity';
 import ManualTradePanel from './ManualTradePanel';
 import RiskTradeBanner from './RiskTradeBanner';
 import '../dashboard.css';
@@ -186,7 +186,7 @@ export default function TokenDetailView({
         symbol={displayName}
       />
 
-      <GoPlusSecurity
+      <CmcSecurity
         security={meta?.security}
         chain={meta?.chain_id}
         address={contract}

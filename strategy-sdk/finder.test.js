@@ -9,7 +9,7 @@ import {
 } from './src/finder.js';
 
 // ── Synthetic /universe payload builder ─────────────────────────────────────
-// tokensSpec: { SYM: { closes: [...|null], buy?: [...], sell?: [...], vol24h? } }
+// tokensSpec: { SYM: { closes: [...|null], volume?: [...], vol24h? } }
 function makePayload(tokensSpec, intervalMs = 60_000) {
   const n = Math.max(...Object.values(tokensSpec).map(t => t.closes.length));
   const times = Array.from({ length: n }, (_, i) => 1_700_000_000_000 + i * intervalMs);
@@ -22,9 +22,7 @@ function makePayload(tokensSpec, intervalMs = 60_000) {
       h: c.map(v => (v == null ? null : v * 1.002)),
       l: c.map(v => (v == null ? null : v * 0.998)),
       c,
-      buy: c.map((v, i) => (v == null ? null : (spec.buy?.[i] ?? 100))),
-      sell: c.map((v, i) => (v == null ? null : (spec.sell?.[i] ?? 50))),
-      trades: c.map(v => (v == null ? null : 5)),
+      volume: c.map((v, i) => (v == null ? null : (spec.volume?.[i] ?? 150))),
     };
   });
   return { interval: '1m', times, tokens };
@@ -36,7 +34,7 @@ test('loadFinder: requires score()', () => {
   assert.ok(loadFinder('syntax error {{{').error);
 });
 
-test('normalizeUniverse: offset, seconds conversion, forward-fill, flow nulls', () => {
+test('normalizeUniverse: offset, seconds conversion, and volume gaps', () => {
   const u = normalizeUniverse(makePayload({
     AAA: { closes: [null, null, 10, 11, null, 13] },
   }));
@@ -45,11 +43,10 @@ test('normalizeUniverse: offset, seconds conversion, forward-fill, flow nulls', 
   assert.equal(t.bars.length, 4);                 // from offset to end
   assert.equal(u.times[0] * 1000, 1_700_000_000_000);
   assert.equal(u.intervalSec, 60);
-  // interior gap at global index 4 → bars[2]: flat fill at previous close, flow null
+  // interior gap at global index 4 → bars[2]: flat fill at previous close
   assert.equal(t.bars[2].close, 11);
   assert.equal(t.bars[2].volume, 0);
-  assert.equal(t.flow.buy[2], null);
-  assert.equal(t.flow.net[1], 50);                // 100 buy − 50 sell on covered bars
+  assert.equal(t.bars[1].volume, 150);
 });
 
 test('normalizeUniverse: token with no coverage is dropped', () => {

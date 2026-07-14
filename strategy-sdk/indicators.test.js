@@ -5,7 +5,6 @@ import {
   sma, ema, wma, rsi, macd, bollinger, atr, stochastic, vwap, obv,
   highest, lowest, stddev, roc, crossover, crossunder,
 } from './src/indicators.js';
-import { aggregateFlow, flowCoverage } from './src/flow.js';
 
 const approx = (a, b, eps = 1e-9) => assert.ok(Math.abs(a - b) < eps, `${a} !~ ${b}`);
 
@@ -87,25 +86,4 @@ test('crossover/crossunder: needs a genuine side change, handles constants and n
   assert.equal(crossunder([3, 1], 2, 1), true);        // constant side
   assert.equal(crossover([null, 3], [2, 2], 1), false); // warm-up null → no signal
   assert.equal(crossover([1, 3], [2, 2], 0), false);   // first bar
-});
-
-test('aggregateFlow: sums covered minutes, null (not 0) where no buckets exist', () => {
-  const rows = [
-    [120_000, 100, 40, 3],   // minute 2
-    [180_000, 50, 10, 1],    // minute 3
-  ];
-  // Two 5-minute bars: [0, 300) covered, [300, 600) not covered at all.
-  const f = aggregateFlow(rows, [0, 300], 300);
-  assert.equal(f.buy[0], 150);
-  assert.equal(f.sell[0], 50);
-  assert.equal(f.net[0], 100);
-  assert.equal(f.trades[0], 4);
-  assert.equal(f.buy[1], null);   // absence ≠ zero flow
-  assert.equal(flowCoverage(f), 1);
-});
-
-test('aggregateFlow: a covered zero-volume minute yields 0, not null', () => {
-  const f = aggregateFlow([[0, 0, 0, 0]], [0], 60);
-  assert.equal(f.buy[0], 0);
-  assert.equal(f.net[0], 0);
 });

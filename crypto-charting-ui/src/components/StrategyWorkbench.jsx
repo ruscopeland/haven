@@ -2,8 +2,9 @@ import { useState, useEffect, useRef, useCallback, useMemo } from 'react';
 import CodeMirror from '@uiw/react-codemirror';
 import { javascript } from '@codemirror/lang-javascript';
 import {
-  loadStrategy, runBacktest, runPortfolioBacktest, normalizeUniverse, TEMPLATES,
+  normalizeUniverse, TEMPLATES,
 } from '@sdk/index.js';
+import { runStrategyWorker } from '../workers/strategyWorkerClient.js';
 import BacktestChart from './BacktestChart';
 import BacktestResults from './BacktestResults';
 import SlotTimeline from './SlotTimeline';
@@ -15,16 +16,16 @@ const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:8000';
 const INTERVALS = ['1m', '5m', '15m', '30m', '1h', '4h', '1d'];
 const INTERVAL_SEC = { '1m': 60, '5m': 300, '15m': 900, '30m': 1800, '1h': 3600, '4h': 14400, '1d': 86400 };
 // Finder-bound (portfolio) backtests rank on /universe data, which only
-// exists at these intervals — the API resamples the collector's 1m buckets.
+// is available at these intervals from the server-side CMC candle cache.
 const PORTFOLIO_INTERVALS = ['5m', '15m', '30m', '1h'];
 const DRAFT_KEY = 'strategyDraft';
 
-// Human-readable ticker: prefer the collector's display name ("BSB (Block
-// Street)"), else strip the ALPHA_ prefix and USDT suffix off the raw symbol.
+// Human-readable ticker: prefer the CMC display name ("BSB (Block
+// Street)"), else strip Haven's internal CMC-id/chain suffix.
 const prettySymbol = (sym, name) => {
   if (!sym) return '';
   if (name && name !== sym) return name;
-  return sym.replace(/^ALPHA_/, '').replace(/USDT$/, '');
+  return sym.replace(/_\d+_bsc$/, '');
 };
 
 const newDraftFromTemplate = (tpl, symbol) => ({
@@ -53,7 +54,6 @@ export default function StrategyWorkbench({ signals = [], initialSelectId = null
   const [dirty, setDirty] = useState(false);
   const [btResult, setBtResult] = useState(null);
   const [btLoading, setBtLoading] = useState(false);
-  const [flowInfo, setFlowInfo] = useState(null);
   const [feePct, setFeePct] = useState('0.25');
   const [slippagePct, setSlippagePct] = useState('0.1');
   const [showEquity, setShowEquity] = useState(true);
@@ -69,7 +69,7 @@ export default function StrategyWorkbench({ signals = [], initialSelectId = null
   const [editorMode, setEditorMode] = useState(() => {
     try { return localStorage.getItem('strategyEditorMode') || 'simple'; } catch { return 'simple'; }
   });
-  const dataCache = useRef(new Map());   // `${symbol}|${interval}` → { bars, flowRows, at }
+  const dataCache = useRef(new Map());   // `${symbol}|${interval}` → { bars, at }
   const universeCache = useRef(new Map()); // `${interval}` → { normalized, at }
   const finderCache = useRef(new Map());   // finderId → { code, params, updatedAt }
 
@@ -79,9 +79,16 @@ export default function StrategyWorkbench({ signals = [], initialSelectId = null
   const selectedRow = useMemo(() => list.find(s => s.id === draft.id) || null, [list, draft.id]);
 
   // Strategy defaults drive the params form; re-parsed as the code changes.
-  const { strategy: parsedStrategy, error: codeError } = useMemo(
-    () => loadStrategy(draft.code), [draft.code]);
-  const paramDefaults = parsedStrategy?.params || {};
+  const [validation, setValidation] = useState({ error: null, params: {} });
+  useEffect(() => {
+    let active = true;
+    runStrategyWorker('validateStrategy', { code: draft.code }, 2_000)
+      .then(result => { if (active) setValidation(result); })
+      .catch(error => { if (active) setValidation({ error: error.message, params: {} }); });
+    return () => { active = false; };
+  }, [draft.code]);
+  const codeError = validation.error;
+  const paramDefaults = validation.params || {};
 
   // ── Strategy list (poll for runner status updates) ─────────────────────
   const fetchList = useCallback(async () => {
@@ -271,7 +278,7 @@ export default function StrategyWorkbench({ signals = [], initialSelectId = null
     poll();
     const t = setInterval(poll, 10000);
     return () => { stop = true; clearInterval(t); };
-  }, [draft.id, selectedRow?.mode]);
+  }, [draft.id, selectedRow]);
 
   // ── Debounced backtest loop ─────────────────────────────────────────────
   const paramsKey = JSON.stringify(draft.params);
@@ -319,7 +326,7 @@ export default function StrategyWorkbench({ signals = [], initialSelectId = null
           }
           if (cancelled) return;
 
-          const result = runPortfolioBacktest({
+          const result = await runStrategyWorker('portfolioBacktest', {
             strategyCode: draft.code,
             finderCode: fdef.code,
             universe: cached.normalized,
@@ -334,7 +341,6 @@ export default function StrategyWorkbench({ signals = [], initialSelectId = null
           setBars(null);
           setPfUniverse(cached.normalized);
           setBtResult(result);
-          setFlowInfo(null);
         } catch (err) {
           if (!cancelled) setBtResult({ trades: [], equity: [], pending: [], logs: [], stats: null, error: err.message });
         } finally {
@@ -346,13 +352,9 @@ export default function StrategyWorkbench({ signals = [], initialSelectId = null
       // ── Single-symbol path (unchanged) ───────────────────────────────────
       try {
         const key = `${draft.symbol}|${draft.interval}`;
-        const needsFlow = /ctx\.flow/.test(draft.code);
         let cached = dataCache.current.get(key);
-        if (!cached || Date.now() - cached.at > 60_000 || (needsFlow && !cached.flowRows)) {
-          const [klinesRes, flowRes] = await Promise.all([
-            fetch(`${API_URL}/klines/${draft.symbol}?interval=${draft.interval}&limit=500`),
-            needsFlow ? fetch(`${API_URL}/flow/${draft.symbol}?limit=10080`) : Promise.resolve(null),
-          ]);
+        if (!cached || Date.now() - cached.at > 60_000) {
+          const klinesRes = await fetch(`${API_URL}/klines/${draft.symbol}?interval=${draft.interval}&limit=500`);
           const klines = await klinesRes.json();
           const fetchedBars = (klines.data || []).map(d => ({
             time: d[0] / 1000,
@@ -360,8 +362,7 @@ export default function StrategyWorkbench({ signals = [], initialSelectId = null
             low: parseFloat(d[3]), close: parseFloat(d[4]),
             volume: parseFloat(d[5]),
           }));
-          const flowRows = flowRes ? (await flowRes.json()).data : null;
-          cached = { bars: fetchedBars, flowRows, at: Date.now() };
+          cached = { bars: fetchedBars, at: Date.now() };
           dataCache.current.set(key, cached);
         }
         if (cancelled) return;
@@ -371,10 +372,9 @@ export default function StrategyWorkbench({ signals = [], initialSelectId = null
           return;
         }
 
-        const result = runBacktest({
+        const result = await runStrategyWorker('backtest', {
           code: draft.code,
           bars: cached.bars,
-          flowRows: needsFlow ? cached.flowRows : null,
           params: draft.params,
           feePct: parseFloat(feePct) || 0,
           slippagePct: parseFloat(slippagePct) || 0,
@@ -383,15 +383,6 @@ export default function StrategyWorkbench({ signals = [], initialSelectId = null
         if (cancelled) return;
         setBars(cached.bars);
         setBtResult(result);
-        if (needsFlow && cached.flowRows) {
-          setFlowInfo({
-            used: true,
-            covered: flowCoverageOf(cached.flowRows, cached.bars, INTERVAL_SEC[draft.interval] || 300),
-            total: cached.bars.length,
-          });
-        } else {
-          setFlowInfo(null);
-        }
       } catch (err) {
         if (!cancelled) setBtResult({ trades: [], equity: [], pending: [], logs: [], stats: null, error: err.message });
       } finally {
@@ -400,8 +391,8 @@ export default function StrategyWorkbench({ signals = [], initialSelectId = null
     }, 600);
 
     return () => { cancelled = true; clearTimeout(timer); };
-  }, [draft.code, draft.symbol, draft.interval, paramsKey, feePct, slippagePct, codeError,
-      isPortfolio, draft.finderId, draft.maxPositions, draft.switchMarginPct, finderVersion]);  // eslint-disable-line react-hooks/exhaustive-deps
+  }, [draft.code, draft.symbol, draft.interval, draft.params, paramsKey, feePct, slippagePct, codeError,
+      isPortfolio, draft.finderId, draft.maxPositions, draft.switchMarginPct, finderVersion, finders]);
 
   // ── Render ──────────────────────────────────────────────────────────────
   const symbolOptions = useMemo(() => {
@@ -424,11 +415,11 @@ export default function StrategyWorkbench({ signals = [], initialSelectId = null
           <span className="wb-title">Strategies</span>
           <div className="wb-mode-toggle" title="Simple hides the code editor; Code shows full JS">
             <button type="button" className={editorMode === 'simple' ? 'active' : ''}
-              onClick={() => { setEditorMode('simple'); try { localStorage.setItem('strategyEditorMode', 'simple'); } catch {} }}>
+              onClick={() => { setEditorMode('simple'); try { localStorage.setItem('strategyEditorMode', 'simple'); } catch { /* storage may be disabled */ } }}>
               Simple
             </button>
             <button type="button" className={editorMode === 'code' ? 'active' : ''}
-              onClick={() => { setEditorMode('code'); try { localStorage.setItem('strategyEditorMode', 'code'); } catch {} }}>
+              onClick={() => { setEditorMode('code'); try { localStorage.setItem('strategyEditorMode', 'code'); } catch { /* storage may be disabled */ } }}>
               Code
             </button>
           </div>
@@ -673,7 +664,7 @@ export default function StrategyWorkbench({ signals = [], initialSelectId = null
           )}
         </div>
 
-        <BacktestResults result={btResult} flowInfo={flowInfo} />
+        <BacktestResults result={btResult} />
 
         {draft.id && selectedRow && selectedRow.mode !== 'off' && (
           <div className="wb-activity">
@@ -751,12 +742,4 @@ export default function StrategyWorkbench({ signals = [], initialSelectId = null
       )}
     </div>
   );
-}
-
-// Bars whose window overlaps at least one 1m flow bucket.
-function flowCoverageOf(flowRows, bars, intervalSec) {
-  if (!flowRows || flowRows.length === 0) return 0;
-  const firstMs = flowRows[0][0];
-  const lastMs = flowRows[flowRows.length - 1][0] + 60_000;
-  return bars.filter(b => b.time * 1000 + intervalSec * 1000 > firstMs && b.time * 1000 < lastMs).length;
 }

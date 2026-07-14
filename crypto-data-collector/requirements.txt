@@ -1,10 +1,10 @@
-fastapi==0.109.2
+fastapi==0.139.0
+starlette==1.3.1
 uvicorn==0.27.0.post1
-SQLAlchemy==2.0.25
-websockets>=12.0
+SQLAlchemy==2.0.51
+alembic>=1.16,<2
+websockets>=12.0,<14
 aiohttp>=3.9
-# Haven SaaS additions (2026-07-06)
 psycopg2-binary>=2.9        # Postgres driver (cloud DB)
 PyJWT[crypto]>=2.8          # verify Clerk session tokens (JWKS/RS256)
-stripe>=9.0                 # subscriptions/billing
-python-multipart>=0.0.9     # Stripe webhook raw-body / form parsing
+sentry-sdk[fastapi]>=2.0    # production exception and performance monitoring

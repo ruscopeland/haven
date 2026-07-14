@@ -43,14 +43,13 @@ const strategy = {
 | `ctx.params` | Defaults merged with your overrides from the params form. |
 | `ctx.state` | Your persistent scratch object. |
 | `ctx.open/high/low/close/volume/time` | Full series arrays (look-ahead-guarded). |
-| `ctx.flow.buy/sell/net/trades` | USD flow per bar; `null` = no data. |
 
 Indicators are on the Indicator reference page. All of them are cached — call
 `ctx.ema(21)` every bar for free.
 
 ## Sizing reality check (live)
 
-`ctx.buy(50)` live means ~$50 of BNB swapped through OpenOcean. The engine
+`ctx.buy(50)` live means ~$50 of BNB swapped through the configured execution route. The engine
 aborts sized buys when the BNB price is unavailable, aborts anything above
 `max_trade_usd`, and aborts when the quoted price impact exceeds the limit.
 A backtest fill is guaranteed; a live fill is not — dry-run first.

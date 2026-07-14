@@ -2,7 +2,7 @@ import { useEffect, useRef, useState, useCallback } from 'react';
 import { createChart, ColorType, CandlestickSeries, HistogramSeries } from 'lightweight-charts';
 
 const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:8000';
-const LIVE_POLL_MS = 3000;   // forming-bar poll — replaced the Binance kline WS (M4)
+const LIVE_POLL_MS = 3000;   // poll Haven's server-managed CMC forming candle
 
 // Chain registry (GET /chains) — fetched once per app, drives the chain badge
 // and explorer links. Failure is harmless: the badge simply doesn't render.
@@ -180,7 +180,6 @@ export default function Chart({ token, onClose, onIntervalChange, signals = [], 
     const step = (hi - lo) / (n - 1);
     for (let i = 0; i < n; i++) {
       const price = lo + step * i;
-      // eslint-disable-next-line no-await-in-loop
       await postMarker(price, markerType, usdPerLine, { ...opts, skipReload: true });
     }
     await loadMarkers();
@@ -225,7 +224,8 @@ export default function Chart({ token, onClose, onIntervalChange, signals = [], 
       }
     };
 
-    const chart = createChart(chartContainerRef.current, chartOptions);
+    const chartContainer = chartContainerRef.current;
+    const chart = createChart(chartContainer, chartOptions);
     chartRef.current = chart;
 
     const candlestickSeries = chart.addSeries(CandlestickSeries, {
@@ -293,7 +293,7 @@ export default function Chart({ token, onClose, onIntervalChange, signals = [], 
     // on is the one removed, even when grid lines are tightly spaced.
     const handleContext = (e) => {
       e.preventDefault();
-      const rect = chartContainerRef.current.getBoundingClientRect();
+      const rect = chartContainer.getBoundingClientRect();
       const clickY = e.clientY - rect.top;
       let nearest = null;
       let nearestDist = Infinity;
@@ -310,11 +310,11 @@ export default function Chart({ token, onClose, onIntervalChange, signals = [], 
         deleteMarker(nearest.id);
       }
     };
-    chartContainerRef.current?.addEventListener('contextmenu', handleContext);
+    chartContainer?.addEventListener('contextmenu', handleContext);
 
     // Live candles: poll OUR /klines forming bar every ~3s. Same feed the
-    // engine and dashboard read — the separate Binance kline WebSocket died at
-    // the M4 cutover, so a moving chart now MEANS the collector is alive.
+    // engine and dashboard read. A moving chart confirms the server-side CMC
+    // feed is current without exposing the provider key to the browser.
     let stopped = false;
     let pollTimer = null;
     const pollLive = async () => {
@@ -340,10 +340,10 @@ export default function Chart({ token, onClose, onIntervalChange, signals = [], 
     return () => {
       stopped = true;
       if (pollTimer) clearTimeout(pollTimer);
-      chartContainerRef.current?.removeEventListener('contextmenu', handleContext);
+      chartContainer?.removeEventListener('contextmenu', handleContext);
       chart.remove();
     };
-  }, [symbol, interval]);  // ONLY symbol/interval — no markers/trades
+  }, [symbol, interval, deleteMarker]);
 
   // ── Effect 2: Load markers on mount + re-fetch after changes ──────────
   useEffect(() => {
