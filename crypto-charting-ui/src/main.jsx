@@ -1,6 +1,6 @@
 import { StrictMode } from 'react'
 import { createRoot } from 'react-dom/client'
-import { ClerkProvider, SignedIn, SignedOut } from '@clerk/clerk-react'
+import { ClerkLoading, ClerkProvider, SignedIn, SignedOut } from '@clerk/clerk-react'
 import './index.css'
 import './haven-saas.css'
 import App from './App.jsx'
@@ -21,6 +21,14 @@ function Root() {
   if (!CLERK_KEY) return <App />
   return (
     <ClerkProvider publishableKey={CLERK_KEY} afterSignOutUrl="/">
+      <ClerkLoading>
+        <main style={{ minHeight: '100vh', display: 'grid', placeItems: 'center', padding: 24 }}>
+          <div role="status" style={{ textAlign: 'center', color: '#cbd5e1' }}>
+            <h1 style={{ marginBottom: 8, color: '#f8fafc' }}>Haven</h1>
+            <p>Secure account service is loading…</p>
+          </div>
+        </main>
+      </ClerkLoading>
       <SignedOut><Landing /></SignedOut>
       <SignedIn><Gate /></SignedIn>
     </ClerkProvider>
