@@ -34,25 +34,17 @@ export default function FirstRunChecklist({ wallet, onGoSettings, onGoStrategies
   const engineOk = engine != null; // settings reachable
   const engineLive = engine && !engine.paused;
   const botsRunning = (billing?.bots_running || 0) > 0;
-  const isTrial = billing?.trial || billing?.plan === 'paper' || billing?.live_allowed === false;
+  const isTrial = billing?.trial === true;
 
   const items = [
-    { done: botsRunning, label: isTrial ? 'Try a paper (DRY) bot' : 'Deploy a paper or live bot', action: onGoStrategies },
-    ...(isTrial
-      ? [{
-          done: false,
-          label: 'Upgrade (banner or Settings → Subscription — Clerk plans)',
-          action: onGoSettings,
-        }]
-      : [
-          { done: walletOk, label: 'Set wallet address for portfolio display', action: null },
-          { done: engineOk, label: 'Download & connect desktop engine (Settings)', action: onGoSettings },
-          {
-            done: engineLive,
-            label: engine?.paused ? 'Engine is paused — resume when ready' : 'Engine running (not paused)',
-            action: null,
-          },
-        ]),
+    { done: botsRunning, label: 'Create and run a paper or live bot', action: onGoStrategies },
+    { done: walletOk, label: 'Set wallet address for portfolio display', action: onGoSettings },
+    { done: engineOk, label: 'Download & connect desktop engine (Settings)', action: onGoSettings },
+    {
+      done: engineLive,
+      label: engine?.paused ? 'Engine is paused — resume when ready' : 'Engine running (not paused)',
+      action: null,
+    },
   ];
 
   const allDone = items.every(i => i.done);
@@ -80,7 +72,7 @@ export default function FirstRunChecklist({ wallet, onGoSettings, onGoStrategies
       </ul>
       {isTrial && (
         <p className="dash-muted" style={{ fontSize: 11, marginTop: 10 }}>
-          You are on a paper trial — LIVE trading unlocks when you subscribe.
+          Your seven-day trial includes both paper and live trading. Private keys stay in the desktop engine on your computer.
         </p>
       )}
       <button type="button" className="first-run-dismiss"

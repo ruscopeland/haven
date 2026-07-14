@@ -1,4 +1,4 @@
-// Signed-in gate. Haven grants the automatic trial; Clerk is paid-plan authority.
+// Signed-in gate. Clerk owns plan selection, card collection, trials, and billing.
 import App from '../App.jsx';
 import Subscribe from './Subscribe.jsx';
 import HavenLogo from './HavenLogo.jsx';

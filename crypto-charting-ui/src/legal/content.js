@@ -274,7 +274,7 @@ export const DOCS_SECTIONS = [
     id: 'quickstart',
     title: 'Quick start',
     body: [
-      '1. Create an account and start the automatic seven-day paper and live trial (no card).',
+      '1. Create an account, choose a plan, and add a card to start the seven-day paper and live trial. You are not billed until the trial ends and may cancel beforehand.',
       '2. Open Dashboard — set a watch address if you want portfolio balances.',
       '3. Open Charts — search or select tokens from Alpha Screener; open layouts.',
       '4. Open Strategies — load a template or write rules; backtest; arm paper first.',
@@ -345,9 +345,9 @@ export const DOCS_SECTIONS = [
   },
   {
     id: 'subscription',
-    title: 'Paper trial & subscription',
+    title: 'Trial & subscription',
     body: [
-      'Paper trial: learn the product and run simulated bots without live execution rights.',
+      'Seven-day trial: after choosing a plan and adding a card, use the paper and live workflow within the trial capacity limits. Billing begins only after the trial ends unless you cancel beforehand.',
       'Paid plan: unlocks live path and full bot entitlements as shown at checkout.',
       'Fees fund shared data + product development — not “alpha signals as advice.”',
       'Manage or cancel a paid plan through the Clerk billing portal when offered.',

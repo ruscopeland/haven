@@ -7,9 +7,7 @@ from sqlalchemy.orm import Session
 
 from database.db import get_db
 from database.models import Finder, Strategy, Subscription
-from api.auth import (
-    Identity, SOLO_MODE, entitlements, ensure_automatic_trial, get_identity,
-)
+from api.auth import Identity, SOLO_MODE, entitlements, get_identity
 from api.plans import PLANS, TRIAL, TRIAL_DAYS
 
 
@@ -46,14 +44,10 @@ def status(db: Session = Depends(get_db), identity: Identity = Depends(get_ident
 
 @router.post("/start-paper-trial")
 def start_trial(db: Session = Depends(get_db), identity: Identity = Depends(get_identity)):
-    """Compatibility route; trials now start automatically on first sign-in."""
-    if identity.kind != "user" and not SOLO_MODE:
-        raise HTTPException(status_code=403, detail="Sign in to start a trial")
+    """Retired compatibility route; Clerk checkout owns card-backed trials."""
     if SOLO_MODE:
         return {"ok": True, "status": "active", "plan": "solo"}
-    sub = ensure_automatic_trial(db, identity.user_id)
-    return {
-        "ok": True, "status": sub.status, "plan": sub.plan,
-        "current_period_end": sub.current_period_end,
-        "message": "Your seven-day Haven trial starts automatically on first sign-in.",
-    }
+    raise HTTPException(
+        status_code=410,
+        detail="Choose a plan in Clerk checkout to start the seven-day card-backed trial",
+    )

@@ -14,9 +14,9 @@ Three ways a request proves who it is, checked in this order:
    Clerk's JWKS (public keys fetched once and cached by PyJWT); the token's
    `sub` claim is the user id.
 
-Payment gate: full data access requires a paid subscription or an unexpired
-automatic trial. The trial permits both paper and live local-engine workflows,
-with smaller capacity limits. Public marketing endpoints are unauthenticated.
+Payment gate: full data access requires a paid subscription or a Clerk-managed
+trial started through checkout with a payment method. Public marketing
+endpoints are unauthenticated.
 """
 import hashlib
 import os
@@ -91,17 +91,22 @@ def hash_key(raw: str) -> str:
     return hashlib.sha256(raw.encode("utf-8")).hexdigest()
 
 
+def is_owner_user(user_id: str) -> bool:
+    owners = {x.strip() for x in os.environ.get("HAVEN_OWNER_USER_IDS", "").split(",") if x.strip()}
+    return user_id in owners
+
+
 def subscription_active(db: Session, user_id: str) -> bool:
+    if is_owner_user(user_id):
+        return True
     if clerk_billing_configured():
         ent = get_clerk_entitlements(user_id)
         if ent.get("app_access"):
             return True
 
-        sub = db.query(Subscription).filter(Subscription.user_id == user_id).first()
-        # Clerk is authoritative for paid access. The only local fallback is
-        # Haven's own one-time trial, never a stale paid row.
-        if not sub or sub.plan != "trial":
-            return False
+        # Clerk is authoritative for paid access and trials. A local row must
+        # never bypass checkout or card collection.
+        return False
     else:
         sub = db.query(Subscription).filter(Subscription.user_id == user_id).first()
     if not sub or sub.status not in ACTIVE_STATUSES:
@@ -183,7 +188,6 @@ def get_identity(request: Request, db: Session = Depends(get_db)) -> Identity:
     auth = request.headers.get("Authorization", "")
     if auth.startswith("Bearer "):
         user_id = _verify_clerk_jwt(auth[7:])
-        ensure_automatic_trial(db, user_id)
         _rate_check(f"u:{user_id}")
         return Identity(user_id=user_id, kind="user",
                         paid=subscription_active(db, user_id))
@@ -208,15 +212,14 @@ def require_identity_scope(identity: Identity, scope: str):
 
 
 def require_owner(identity: Identity = Depends(require_paid)) -> Identity:
-    owners = {x.strip() for x in os.environ.get("HAVEN_OWNER_USER_IDS", "").split(",") if x.strip()}
-    if identity.kind == "solo" or identity.user_id in owners:
+    if identity.kind == "solo" or is_owner_user(identity.user_id):
         return identity
     raise HTTPException(status_code=403, detail="Owner access required")
 
 
 # ── Bot + library entitlements ───────────────────────────────────────────────
 # A "bot" is a strategy armed DRY or LIVE (mode != off). Plan allowances:
-# Paid plans and the automatic trial use the central configurable catalogue.
+# Paid plans and Clerk-managed trials use the central configurable catalogue.
 BASE_BOTS = PLANS["starter"].bots
 TRIAL_BOTS = TRIAL.bots
 MAX_STRATEGIES = PLANS["starter"].strategies
@@ -231,6 +234,12 @@ def entitlements(db: Session, identity: Identity) -> dict:
         return {"max_bots": None, "live_allowed": True, "trial": False,
                 "max_strategies": None, "max_finders": None, "ai_daily": None,
                 "plan": "solo"}
+
+    if is_owner_user(identity.user_id):
+        return {"max_bots": None, "live_allowed": True, "trial": False,
+                "max_strategies": None, "max_finders": None, "ai_daily": None,
+                "plan": "owner", "status": "active", "source": "haven",
+                "app_access": True, "owner": True}
 
     # Preferred path: Clerk Billing owns free vs paid.
     if clerk_billing_configured() and identity.kind in ("user", "engine"):
@@ -247,6 +256,12 @@ def entitlements(db: Session, identity: Identity) -> dict:
             sub.updated_at = at
             db.commit()
             return paid
+
+    if clerk_billing_configured():
+        return {"max_bots": 0, "live_allowed": False, "trial": False,
+                "max_strategies": 0, "max_finders": 0, "ai_daily": 0,
+                "plan": None, "app_access": False, "status": "none",
+                "source": "clerk"}
 
     sub = db.query(Subscription).filter(Subscription.user_id == identity.user_id).first()
     if sub and sub.status == "trialing" and subscription_active(db, identity.user_id):

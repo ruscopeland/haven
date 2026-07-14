@@ -36,7 +36,7 @@ const FEATURES = [
 ];
 
 const STEPS = [
-  ['Start a seven-day trial', 'No card. Learn with paper bots, then test the same local workflow live if you choose.'],
+  ['Start a seven-day trial', 'Choose a plan and add a card. You are not billed until the seven-day trial ends, and you can cancel beforehand.'],
   ['Build your own process', 'Templates or your code. Backtest on history you can access in-product.'],
   ['Keys on your desk for live', 'The desktop engine and your encrypted key stay on your PC in trial or paid mode.'],
 ];
@@ -109,7 +109,7 @@ export default function Landing() {
               <button className="btn-primary btn-lg">Start seven-day trial</button>
             </SignUpButton>
             <span className="landing-early" style={{ color: 'var(--warning, #f59e0b)' }}>
-              {trialDays}-day paper + live trial · no card · private keys stay on your PC
+              {trialDays}-day paper + live trial · card required · no charge until the trial ends
             </span>
           </div>
         </section>
@@ -152,7 +152,7 @@ export default function Landing() {
             <div className="pricing-card">
               <div className="pricing-name">Seven-day trial</div>
               <div className="pricing-amount">$0<span>/{trialDays}d</span></div>
-              <div className="pricing-note">1 bot · 3 strategies · 1 finder · paper + live</div>
+              <div className="pricing-note">Card required · no charge for 7 days · 1 bot · 3 strategies · 1 finder · paper + live</div>
               <SignUpButton mode="modal"><button className="btn-secondary">Start free</button></SignUpButton>
             </div>
             {plans.map((plan, index) => (

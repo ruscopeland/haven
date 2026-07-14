@@ -12,7 +12,7 @@ import urllib.request
 import json
 import threading
 from datetime import datetime
-from api.plans import plan_for_slug, entitlement_payload
+from api.plans import TRIAL, plan_for_slug, entitlement_payload
 
 CLERK_SECRET_KEY = os.environ.get("CLERK_SECRET_KEY", "")
 _cache: dict[str, tuple[float, dict]] = {}
@@ -77,8 +77,8 @@ def _period_end_ms(item: dict, subscription: dict) -> int | None:
 def get_clerk_entitlements(user_id: str) -> dict:
     """Return a paid entitlement only after exact user and plan validation.
 
-    Trial access is owned by Haven's database, not inferred from a free Clerk
-    account. Provider errors therefore fail closed instead of granting access.
+    Trial access is accepted only when Clerk marks a configured paid Plan's
+    subscription item as a free trial. Provider errors fail closed.
     """
     now = time.time()
     with _cache_lock:
@@ -121,7 +121,11 @@ def get_clerk_entitlements(user_id: str) -> dict:
         status = str(it.get("status") or subscription_status).lower()
         plan = plan_for_slug(_item_plan_slug(it))
         if plan and status in ("active", "past_due"):
-            result = entitlement_payload(plan, trial=False, status=status, source="clerk")
+            is_trial = bool(it.get("isFreeTrial") or it.get("is_free_trial"))
+            capacity = TRIAL if is_trial else plan
+            result = entitlement_payload(capacity, trial=is_trial, status=status, source="clerk")
+            if is_trial:
+                result["selected_plan"] = plan.key
             result["current_period_end"] = _period_end_ms(it, subscription)
             break
 

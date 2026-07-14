@@ -22,7 +22,7 @@ export default function Subscribe({ onActivated }) {
       <div className="subscribe-card">
         <h1>Choose your plan</h1>
         <p className="subscribe-sub">
-          Your automatic seven-day trial includes paper and live trading. Choose a plan to keep access.
+          Choose a plan and add a card to start your seven-day trial. You will not be billed until the trial ends, and you can cancel beforehand.
         </p>
         <p className="landing-risk-line" style={{ marginBottom: 20 }}>{RISK_SUMMARY_SHORT}</p>
         <div className="clerk-pricing-wrap">

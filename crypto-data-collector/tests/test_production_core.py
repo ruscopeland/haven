@@ -34,7 +34,7 @@ def test_trial_and_paid_capacity_progression():
     assert len({p.clerk_slug for p in PLANS.values()}) == 3
 
 
-def test_automatic_trial_is_one_time_and_live_enabled(monkeypatch):
+def test_local_trial_capacity_is_live_enabled_for_unconfigured_development(monkeypatch):
     monkeypatch.setattr(auth, "SOLO_MODE", False)
     monkeypatch.setattr(auth, "clerk_billing_configured", lambda: False)
     with SessionLocal() as db:
@@ -178,6 +178,21 @@ def test_clerk_billing_requires_exact_payer_and_configured_plan(monkeypatch):
     result = clerk_billing.get_clerk_entitlements("user-1")
     assert result["app_access"] is True and result["max_bots"] == starter.bots
     assert result["current_period_end"] == 1_800_000_000_000
+
+
+def test_clerk_free_trial_uses_hobbled_capacity(monkeypatch):
+    monkeypatch.setattr(clerk_billing, "CLERK_SECRET_KEY", "test-key")
+    clerk_billing._cache.clear()
+    starter = PLANS["starter"]
+    monkeypatch.setattr(clerk_billing, "_http_get", lambda *_args, **_kwargs: {
+        "payerId": "user-1", "status": "active", "subscriptionItems": [
+            {"status": "active", "isFreeTrial": True, "periodEnd": 1_800_000_000,
+             "plan": {"slug": starter.clerk_slug}},
+        ]})
+    result = clerk_billing.get_clerk_entitlements("user-1")
+    assert result["app_access"] is True and result["trial"] is True
+    assert result["selected_plan"] == "starter"
+    assert (result["max_bots"], result["max_strategies"], result["max_finders"]) == (1, 3, 1)
 
 
 def test_clerk_billing_rejects_unconfigured_plan(monkeypatch):
