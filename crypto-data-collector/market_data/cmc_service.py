@@ -42,6 +42,9 @@ CMC_PLATFORM_TO_CHAIN = {
     "bnb": "bsc", "bsc": "bsc", "binance-smart-chain": "bsc",
     "bnb-smart-chain": "bsc",
 }
+CMC_PLATFORM_TO_DEX_API = {
+    "bnb": "bsc", "binance-smart-chain": "bsc", "bnb-smart-chain": "bsc",
+}
 CMC_CHAIN_TO_PLATFORM_ID = {"bsc": 14}
 WS_TO_REST_INTERVAL = {"1m": "1min", "3m": "3min", "5m": "5min", "15m": "15min", "30m": "30min"}
 REST_TO_WS_INTERVAL = {value: key for key, value in WS_TO_REST_INTERVAL.items()}
@@ -605,7 +608,8 @@ class CmcMarketDataService:
         rolling = end_ms >= now_ms() - 2 * width
         async with CmcClient(self.api_key) as client:
             response = await client.dex_candles(
-                platform=platform, address=address, interval=interval,
+                platform=CMC_PLATFORM_TO_DEX_API.get(platform, platform),
+                address=address, interval=interval,
                 start_s=None if rolling else start_ms // 1000,
                 end_s=None if rolling else end_ms // 1000,
                 limit=requested_count,
