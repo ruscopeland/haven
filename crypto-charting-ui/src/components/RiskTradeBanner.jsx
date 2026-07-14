@@ -1,5 +1,5 @@
 // Elevated-risk banner: always allow charting; warn clearly before any trade.
-// Data from the server-side CMC security summary.
+// Data from the server-side Binance Alpha security summary.
 
 export default function RiskTradeBanner({ policy, security, contract, chain, symbol }) {
   if (!policy || policy.mode === 'clear') return null;
@@ -53,7 +53,7 @@ export default function RiskTradeBanner({ policy, security, contract, chain, sym
       </ul>
       {symbol && (
         <div className="risk-trade-banner-foot">
-          Token: <b>{symbol}</b> · Security data via CoinMarketCap when available · Not investment advice
+          Token: <b>{symbol}</b> · Security data via Binance Alpha when available · Not investment advice
         </div>
       )}
     </div>

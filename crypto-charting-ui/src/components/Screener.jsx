@@ -19,7 +19,7 @@ function formatScreenerPrice(p) {
 
 function hitKey(hit) {
   if (hit.symbol) return `sym:${hit.symbol}`;
-  if (hit.cmc_id) return `cmc:${hit.cmc_id}`;
+  if (hit.alpha_id) return `alpha:${hit.alpha_id}`;
   if (hit.contract_address) return `addr:${hit.chain}:${hit.contract_address}`;
   return `name:${hit.display}:${hit.name}`;
 }
@@ -44,7 +44,7 @@ export default function Screener({ onToggle, selectedTokens, signals = [], sortB
     return sym.includes(qLower) || name.includes(qLower) || disp.includes(qLower);
   });
 
-  // Debounced CMC + local typeahead (beyond client-side signal filter)
+  // Debounced Binance Alpha + local typeahead (beyond client-side signal filter)
   useEffect(() => {
     if (debounceRef.current) clearTimeout(debounceRef.current);
     if (q.length < 2) {
@@ -102,13 +102,12 @@ export default function Screener({ onToggle, selectedTokens, signals = [], sortB
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          cmc_id: hit.cmc_id || null,
+          alpha_id: hit.alpha_id || null,
           chain: hit.chain || null,
           contract_address: hit.contract_address || null,
           display: hit.display || null,
           name: hit.name || null,
-          cmc_slug: hit.cmc_slug || null,
-          cmc_rank: hit.cmc_rank || null,
+          alpha_rank: hit.alpha_rank || null,
           market_cap: hit.market_cap || null,
           price: hit.price || null,
           volume_24h: hit.volume_24h || null,
@@ -148,13 +147,13 @@ export default function Screener({ onToggle, selectedTokens, signals = [], sortB
           <input
             type="text"
             className="screener-search"
-            placeholder="Search CMC or local tokens…"
+            placeholder="Search Binance Alpha or local tokens…"
             value={searchQuery}
             onChange={(e) => setSearchQuery(e.target.value)}
             autoComplete="off"
             spellCheck={false}
           />
-          {searching && <div className="screener-search-hint">Searching CMC…</div>}
+          {searching && <div className="screener-search-hint">Searching Binance Alpha…</div>}
           {ensuringKey && <div className="screener-search-hint">Downloading data + security scan…</div>}
           {searchError && <div className="screener-search-err">{searchError}</div>}
         </div>
@@ -163,15 +162,15 @@ export default function Screener({ onToggle, selectedTokens, signals = [], sortB
       {q.length >= 2 && extraHits.length > 0 && (
         <div className="screener-typeahead">
           <div className="screener-typeahead-label">
-            CMC / not in feed yet — select to download &amp; chart
+            Binance Alpha / not in feed yet — select to download &amp; chart
           </div>
           {extraHits.map((hit) => {
             const key = hitKey(hit);
             const busy = ensuringKey === key;
             const label = hit.display || hit.name || 'Token';
             const chain = hit.chain || '—';
-            // cmc_id alone is enough — ensure() resolves contract via CMC detail
-            const canLoad = !!(hit.symbol || hit.cmc_id || hit.contract_address);
+            // alpha_id alone is enough — ensure() resolves contract via Binance Alpha detail
+            const canLoad = !!(hit.symbol || hit.alpha_id || hit.contract_address);
             return (
               <button
                 type="button"
@@ -179,7 +178,7 @@ export default function Screener({ onToggle, selectedTokens, signals = [], sortB
                 className="screener-typeahead-row"
                 disabled={busy || !canLoad}
                 onClick={() => ensureAndToggle(hit)}
-                title={canLoad ? 'Load CMC token details and chart history' : 'Cannot load this entry'}
+                title={canLoad ? 'Load Binance Alpha token details and chart history' : 'Cannot load this entry'}
               >
                 <div className="screener-typeahead-main">
                   {hit.logo_url ? (
@@ -190,12 +189,12 @@ export default function Screener({ onToggle, selectedTokens, signals = [], sortB
                   <div style={{ minWidth: 0, textAlign: 'left' }}>
                     <div className="screener-typeahead-title">
                       <b>{label}</b>
-                      {hit.cmc_rank != null && <span className="muted">#{hit.cmc_rank}</span>}
+                      {hit.alpha_rank != null && <span className="muted">#{hit.alpha_rank}</span>}
                     </div>
                     <div className="muted" style={{ fontSize: 11 }}>
                       {(hit.name && hit.name !== label) ? hit.name + ' · ' : ''}
                       {chain}
-                      {hit.in_db ? ' · in DB' : ' · CMC'}
+                      {hit.in_db ? ' · in DB' : ' · Binance Alpha'}
                     </div>
                   </div>
                 </div>
@@ -230,14 +229,14 @@ export default function Screener({ onToggle, selectedTokens, signals = [], sortB
         {signals.length === 0 ? (
           <div style={{ padding: 20, textAlign: 'center', color: 'var(--text-muted)' }}>
             <div className="mkt-ticker-empty">Loading scanner…</div>
-            <div style={{ fontSize: 11, marginTop: 8 }}>Waiting for live signal feed — or search CMC above</div>
+            <div style={{ fontSize: 11, marginTop: 8 }}>Waiting for live signal feed — or search Binance Alpha above</div>
           </div>
         ) : filteredSignals.length === 0 ? (
           <div style={{ padding: 20, textAlign: 'center', color: 'var(--text-muted)' }}>
             No tokens match in the live feed.
             {q.length >= 2 && extraHits.length === 0 && !searching
-              ? ' Try another spelling, or wait for CMC results.'
-              : ' Check CMC results above if shown.'}
+              ? ' Try another spelling, or wait for Binance Alpha results.'
+              : ' Check Binance Alpha results above if shown.'}
           </div>
         ) : (
           filteredSignals.map((sig) => {
@@ -280,8 +279,8 @@ export default function Screener({ onToggle, selectedTokens, signals = [], sortB
                   <div style={{ minWidth: 0 }}>
                     <div className="token-symbol-row">
                       <span className="token-symbol">{label}</span>
-                      {sig.cmc_rank && <span className="flow-label">CMC #{sig.cmc_rank}</span>}
-                      <span className="token-live-price" title="Live CoinMarketCap price">
+                      {sig.alpha_rank && <span className="flow-label">Binance Alpha #{sig.alpha_rank}</span>}
+                      <span className="token-live-price" title="Live Binance Alpha price">
                         {formatScreenerPrice(sig.last_price)}
                       </span>
                     </div>

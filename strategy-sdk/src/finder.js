@@ -11,7 +11,7 @@
 //   }
 // ctx is the strategy ctx minus trading (no position/buy/sell) plus
 // ctx.token = { symbol, name, volume24h, priceChange24h }. In finder ctxs,
-// ctx.volume is CMC's USD OHLCV volume for the candle.
+// ctx.volume is Binance Alpha's USD OHLCV volume for the candle.
 
 import { createBaseCtx, mergeParams } from './runtime.js';
 

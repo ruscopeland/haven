@@ -36,7 +36,7 @@ export const TERMS = {
       p: [
         'Haven provides software tools and access to shared market-oriented data to help you research digital assets, design strategies, backtest, paper-trade, and optionally execute trades using software that runs under your control.',
         'Haven is not a broker, dealer, exchange, investment adviser, commodity trading advisor, bank, custodian, or money transmitter. Haven does not manage your money, pick trades for you as a fiduciary, or guarantee outcomes.',
-        'Nothing in the Service is financial, investment, legal, or tax advice. Content (including charts, rankings, CoinMarketCap security flags, examples, templates, and AI/assistant text if any) is informational and educational tooling only.',
+        'Nothing in the Service is financial, investment, legal, or tax advice. Content (including charts, rankings, Binance Alpha security flags, examples, templates, and AI/assistant text if any) is informational and educational tooling only.',
         'You alone decide what to trade, when, and whether to use any feature.',
       ],
     },
@@ -68,7 +68,7 @@ export const TERMS = {
     {
       h: '6. Third-party services',
       p: [
-        'The Service relies on third parties including blockchains, RPCs, DEX aggregators, licensed CoinMarketCap market and security data, authentication, billing, and hosting. Their terms and availability apply. We are not responsible for third-party outages, errors, or policy changes.',
+        'The Service relies on third parties including blockchains, RPCs, DEX aggregators, licensed Binance Alpha market and security data, authentication, billing, and hosting. Their terms and availability apply. We are not responsible for third-party outages, errors, or policy changes.',
         'On-chain activity is irreversible when confirmed. Network fees, slippage, MEV, and contract behavior are outside our control.',
       ],
     },
@@ -234,7 +234,7 @@ export const RISK = {
     {
       h: 'Token & contract risk',
       p: [
-        'Tokens may be honeypots, high-tax, pausable, mintable, upgradeable, or able to blacklist wallets after you buy. CoinMarketCap security data is a partial snapshot and can miss issues or go stale.',
+        'Tokens may be honeypots, high-tax, pausable, mintable, upgradeable, or able to blacklist wallets after you buy. Binance Alpha security data is a partial snapshot and can miss issues or go stale.',
         'Haven may still chart risky tokens so you can research them. Charting is not an endorsement. If you insist on trading a flagged token, start small if at all, verify the contract yourself, and accept that a successful small trade does not prove the next trade is safe.',
       ],
     },
@@ -297,7 +297,7 @@ export const DOCS_SECTIONS = [
     body: [
       'Nav tabs stay full width. On Charts, Alpha Screener sits under the tabs beside Layouts.',
       'Sort the live feed by market cap, volume, or 24-hour performance.',
-      'Search by name or symbol: cached CoinMarketCap results can add a supported contract, fetch its history once, and open a chart.',
+      'Search by name or symbol: cached Binance Alpha results can add a supported contract, fetch its history once, and open a chart.',
       'Layouts 1–5 save chart sets; Grid controls multi-chart layout.',
       'Markers on the chart plan levels; live execution goes through the engine.',
     ],
@@ -307,7 +307,7 @@ export const DOCS_SECTIONS = [
     title: 'Risky tokens',
     body: [
       'Haven charts first, lectures second: elevated-risk tokens still open charts.',
-      'CoinMarketCap security flags may show honeypot, tax, blacklist functions, and related risks.',
+      'Binance Alpha security flags may show honeypot, tax, blacklist functions, and related risks.',
       'Manual trade requires: verify contract on the explorer, accept warnings, prefer a ~$1 probe first. Larger size needs an extra acknowledgment. Creators can still block wallets later.',
       'Strategy/auto paths stay blocked without a clean security posture — intentional.',
     ],
@@ -340,7 +340,7 @@ export const DOCS_SECTIONS = [
     body: [
       'Shows balances for an address you configure, using chain reads + Haven token metadata.',
       'Manual swap UI goes through the engine path — same security gates.',
-      'Open Token pages for a chart, trade ticket, and CoinMarketCap security panel.',
+      'Open Token pages for a chart, trade ticket, and Binance Alpha security panel.',
     ],
   },
   {
@@ -358,7 +358,7 @@ export const DOCS_SECTIONS = [
     title: 'Settings',
     body: [
       'Engine risk limits: max trades/day, max trade USD, max price impact, retries.',
-      'Market status shows the server-side CoinMarketCap REST and WebSocket condition.',
+      'Market status shows the server-side Binance Alpha REST and WebSocket condition.',
       'Subscription panel for plan status.',
     ],
   },

@@ -2,7 +2,7 @@ import { useEffect, useRef, useState, useCallback } from 'react';
 import { createChart, ColorType, CandlestickSeries, HistogramSeries } from 'lightweight-charts';
 
 const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:8000';
-const LIVE_POLL_MS = 3000;   // poll Haven's server-managed CMC forming candle
+const LIVE_POLL_MS = 3000;   // poll Haven's server-managed Binance Alpha forming candle
 
 // Chain registry (GET /chains) — fetched once per app, drives the chain badge
 // and explorer links. Failure is harmless: the badge simply doesn't render.
@@ -313,7 +313,7 @@ export default function Chart({ token, onClose, onIntervalChange, signals = [], 
     chartContainer?.addEventListener('contextmenu', handleContext);
 
     // Live candles: poll OUR /klines forming bar every ~3s. Same feed the
-    // engine and dashboard read. A moving chart confirms the server-side CMC
+    // engine and dashboard read. A moving chart confirms the server-side Binance Alpha
     // feed is current without exposing the provider key to the browser.
     let stopped = false;
     let pollTimer = null;

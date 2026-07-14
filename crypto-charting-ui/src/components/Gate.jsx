@@ -18,7 +18,7 @@ export default function Gate() {
 
   const params = new URLSearchParams(window.location.search);
   if (params.get('subscribe') === '1' || data?.app_access === false) {
-    return <Subscribe onActivated={() => { window.location.href = '/'; }} />;
+    return <Subscribe access={data} onActivated={() => { window.location.href = '/'; }} />;
   }
   if (error || !data) {
     return (

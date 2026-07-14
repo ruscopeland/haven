@@ -13,7 +13,7 @@ import { loadIsolatedFinder as loadFinder } from './sandbox-runtime.js';
 
 const LIST_REFRESH_MS = 15_000;
 const UNIVERSE_BARS = 300;           // enough history for typical finder warm-ups
-const EVAL_LAG_MS = 25_000;          // allow CMC's closed candle to settle
+const EVAL_LAG_MS = 25_000;          // allow Binance Alpha's closed candle to settle
 const RETRY_MS = 30_000;
 const INTERVAL_SEC = { '5m': 300, '15m': 900, '30m': 1800, '1h': 3600 };
 

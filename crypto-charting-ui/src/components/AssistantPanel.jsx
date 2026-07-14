@@ -46,7 +46,7 @@ export default function AssistantPanel({ mode = 'strategy', code = '', onInsertC
 
   const label = mode === 'finder' ? 'finder' : 'strategy';
   const example = mode === 'finder'
-    ? 'rank tokens by CMC volume momentum and relative strength'
+    ? 'rank tokens by Binance Alpha volume momentum and relative strength'
     : 'buy when RSI(14) crosses below 30, sell at +5%';
 
   useEffect(() => {

@@ -83,7 +83,7 @@ export class MarkerEngine {
     const priceUpdated = overview.price_updated || {};
     this.openMarkers = markers; // snapshot for OCO sibling lookup at fill time
 
-    // Fresh BNB/USD from Haven's server-side CMC feed. No fallback provider.
+    // Fresh BNB/USD from Haven's server-side Binance Alpha feed. No fallback provider.
     this.apiBnbPrice = this.isStale('BNB', prices, priceUpdated)
       ? 0 : (prices.BNB || 0);
 
@@ -117,7 +117,7 @@ export class MarkerEngine {
         continue;
       }
       // Stale-price guard (DATA-ROADMAP M3, owner decision M0.1): a price the
-      // CMC feed hasn't refreshed within stalePriceMs must never drive an
+      // Binance Alpha feed hasn't refreshed within stalePriceMs must never drive an
       // execution — data outage = loud log + safe pause, not a trade against
       // a frozen price. Skipped immediate markers age out via the TTL above.
       if (price > 0 && this.isStale(marker.symbol, prices, priceUpdated)) {
@@ -189,9 +189,9 @@ export class MarkerEngine {
     }
   }
 
-  // True when CMC's last_updated for the symbol is older than the
+  // True when Binance Alpha's last_updated for the symbol is older than the
   // configured threshold. Symbols with no freshness info (old API, or a price
-  // that never came from CMC are NOT considered stale — the guard
+  // that never came from Binance Alpha are NOT considered stale — the guard
   // only acts on positive evidence of a frozen feed.
   isStale(symbol, prices, priceUpdated) {
     if (!(prices[symbol] > 0)) return false;
@@ -207,7 +207,7 @@ export class MarkerEngine {
     const ageSec = Math.round((now - updatedAt) / 1000);
     const limitSec = Math.round((this.config.stalePriceMs || 180_000) / 1000);
     this.log('ERROR',
-      `STALE PRICE: ${this.sym(symbol)} last CMC update ${ageSec}s ago ` +
+      `STALE PRICE: ${this.sym(symbol)} last Binance Alpha update ${ageSec}s ago ` +
       `(limit ${limitSec}s) — marker evaluation for this token is PAUSED until data resumes.`,
       { symbol });
   }
@@ -290,7 +290,7 @@ export class MarkerEngine {
     return false;
   }
 
-  // CMC DEX security gate — MUST pass before any approve() or swap.
+  // Binance Alpha DEX security gate — MUST pass before any approve() or swap.
   // Chart is always allowed (API). Strategy/auto markers are blocked on risk.
   // Manual markers may carry an explicit risk acknowledgment (user warned +
   // verified contract) so research trades can still probe carefully.
@@ -303,7 +303,7 @@ export class MarkerEngine {
     } catch (e) {
       throw new Error(
         `Security check unavailable for ${name} (${e.message}). ` +
-        `Refuse to approve/swap until CoinMarketCap security data is reachable.`);
+        `Refuse to approve/swap until Binance Alpha security data is reachable.`);
     }
 
     const elevated = !!(sec.blocked || (sec.critical && sec.critical.length)
@@ -387,7 +387,7 @@ export class MarkerEngine {
     const toAddr = isBuy ? tokenAddress : ethers.ZeroAddress;
     const quote = await getOpenOceanSwap(fromAddr, toAddr, amountInStr, slippagePct, w.address, gasPriceGwei);
 
-    // Price-impact guard: compare the quoted output to the CMC market price.
+    // Price-impact guard: compare the quoted output to the Binance Alpha market price.
     const outDecimals = isBuy ? Number(quote.outToken?.decimals ?? 18) : 18;
     const quotedOut = parseFloat(ethers.formatUnits(BigInt(quote.outAmount), outDecimals));
     const impactPct = priceImpactPct({ isBuy, usdNotional, currentPrice, bnbPrice, quotedOut });

@@ -16,7 +16,7 @@ from sqlalchemy.orm import Session
 from api.auth import Identity, require_owner
 from database.db import DATABASE_URL, IS_SQLITE, get_db
 from database.models import (
-    ApiKey, BackupRun, CmcAsset, MarketCandle, OperationAlert, ProviderStatus,
+    ApiKey, BackupRun, AlphaAsset, MarketCandle, OperationAlert, ProviderStatus,
     ProviderUsage, Strategy, Subscription, TradeHistory,
 )
 
@@ -27,7 +27,7 @@ router = APIRouter(prefix="/owner", tags=["owner"])
 def _links() -> dict:
     return {
         "deployment": os.environ.get("HAVEN_DEPLOYMENT_DASHBOARD_URL"),
-        "coinmarketcap": os.environ.get("HAVEN_CMC_DASHBOARD_URL", "https://pro.coinmarketcap.com/account"),
+        "binance_alpha": "https://www.binance.com/en/alpha",
         "clerk": os.environ.get("HAVEN_CLERK_DASHBOARD_URL", "https://dashboard.clerk.com"),
         "monitoring": os.environ.get("HAVEN_MONITORING_DASHBOARD_URL"),
         "backups": os.environ.get("HAVEN_BACKUP_DASHBOARD_URL"),
@@ -58,16 +58,11 @@ def _json_object(value: str | None) -> dict:
 @router.get("/overview")
 def overview(db: Session = Depends(get_db), identity: Identity = Depends(require_owner)):
     now = int(time.time() * 1000)
-    provider = db.query(ProviderStatus).filter(ProviderStatus.provider == "coinmarketcap").first()
-    usage = db.query(ProviderUsage).filter(
-        ProviderUsage.provider == "coinmarketcap").order_by(ProviderUsage.captured_at.desc()).first()
+    provider = db.query(ProviderStatus).filter(ProviderStatus.provider == "binance_alpha").first()
     backup = (db.query(BackupRun).filter(BackupRun.status == "succeeded")
               .order_by(BackupRun.completed_at.desc()).first())
     migration = _migration_state(db)
     alerts = []
-    if not os.environ.get("CMC_API_KEY"):
-        alerts.append({"severity": "critical", "code": "cmc_not_configured",
-                       "message": "CoinMarketCap is not configured."})
     if not (os.environ.get("HAVEN_MONITORING_DSN") or
             os.environ.get("HAVEN_MONITORING_DASHBOARD_URL")):
         alerts.append({"severity": "warning", "code": "monitoring_not_configured",
@@ -77,16 +72,16 @@ def overview(db: Session = Depends(get_db), identity: Identity = Depends(require
                        "message": "Previously exposed service credentials still need rotation."})
     if os.environ.get("HAVEN_DATA_LICENSE_CONFIRMED") != "1":
         alerts.append({"severity": "critical", "code": "data_license_unconfirmed",
-                       "message": "CMC product data licensing has not been acknowledged."})
+                       "message": "Binance Alpha market-data terms have not been acknowledged."})
     if not os.environ.get("HAVEN_ENGINE_RELEASE_PUBLIC_KEY"):
         alerts.append({"severity": "critical", "code": "release_signing_missing",
                        "message": "Engine release signature verification is not configured."})
     if not provider or provider.state != "connected":
-        alerts.append({"severity": "critical", "code": "cmc_stream_down",
-                       "message": "CMC WebSocket is not connected."})
+        alerts.append({"severity": "critical", "code": "binance_alpha_down",
+                       "message": "Binance Alpha catalogue polling is not connected."})
     elif not provider.last_event_at or now - provider.last_event_at > 120_000:
-        alerts.append({"severity": "warning", "code": "cmc_stream_stale",
-                       "message": "CMC WebSocket has not delivered a recent event."})
+        alerts.append({"severity": "warning", "code": "binance_alpha_stale",
+                       "message": "Binance Alpha catalogue polling has not refreshed recently."})
     if not migration["up_to_date"]:
         alerts.append({"severity": "critical", "code": "migration_drift",
                        "message": "Database migrations are not at the deployed revision."})
@@ -129,20 +124,18 @@ def overview(db: Session = Depends(get_db), identity: Identity = Depends(require
         "generated_at": now, "alerts": alerts,
         "service": {"status": "ok" if not any(a["severity"] == "critical" for a in alerts) else "degraded"},
         "provider": {
-            "name": "CoinMarketCap", "state": provider.state if provider else "unknown",
+            "name": "Binance Alpha", "state": provider.state if provider else "unknown",
             "last_event_at": provider.last_event_at if provider else None,
             "last_reconciled_at": provider.last_reconciled_at if provider else None,
             "reconnect_count": provider.reconnect_count if provider else 0,
             "gap_count": provider.gap_count if provider else 0,
             "error": provider.error if provider else None,
             "details": _json_object(provider.details_json) if provider else {},
-            "usage": ({"captured_at": usage.captured_at, "credits_used": usage.credits_used,
-                       "credits_left": usage.credits_left,
-                       "requests_left_minute": usage.requests_left_minute} if usage else None),
+            "usage": None,
         },
         "database": {
             "engine": configured_db, "size_bytes": db_size, "migrations": migration,
-            "assets": db.query(CmcAsset).count(), "candles": db.query(MarketCandle).count(),
+            "assets": db.query(AlphaAsset).count(), "candles": db.query(MarketCandle).count(),
             "pending_reconciliation": pending,
         },
         "trading": {

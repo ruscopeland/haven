@@ -34,6 +34,7 @@ def _http_get(path: str, params: dict | None = None) -> dict | list | None:
         headers={
             "Authorization": f"Bearer {CLERK_SECRET_KEY}",
             "Content-Type": "application/json",
+            "User-Agent": "Haven/1.0",
         },
         method="GET",
     )
@@ -50,12 +51,6 @@ def _item_plan_slug(item: dict) -> str:
     if isinstance(plan, dict):
         return str(plan.get("slug") or plan.get("name") or "").lower()
     return ""
-
-
-def _payer_id(subscription: dict) -> str:
-    payer = subscription.get("payer") or {}
-    nested = payer.get("id") if isinstance(payer, dict) else ""
-    return str(subscription.get("payerId") or subscription.get("payer_id") or nested or "")
 
 
 def _period_end_ms(item: dict, subscription: dict) -> int | None:
@@ -102,10 +97,9 @@ def get_clerk_entitlements(user_id: str) -> dict:
     if isinstance(subscription.get("data"), dict):
         subscription = subscription["data"]
 
-    # Clerk's endpoint is user-scoped, and we additionally verify the payer
-    # returned by Clerk before accepting any paid entitlement.
-    if _payer_id(subscription) != user_id:
-        subscription = {}
+    # This endpoint is already scoped to the authenticated Clerk user in its
+    # URL. Clerk's `payer_id` is a separate billing-customer ID (`cpayer_...`),
+    # not the Clerk user ID, so it must not be compared with `user_id`.
 
     items = (
         subscription.get("subscriptionItems")

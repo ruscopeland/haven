@@ -1,6 +1,6 @@
 # Practical recipes
 
-These examples use only the licensed CMC OHLCV series available in backtests,
+These examples use only the licensed Binance Alpha OHLCV series available in backtests,
 paper mode, and live mode.
 
 ## Strategy: RSI dip with a volume floor

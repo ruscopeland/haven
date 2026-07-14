@@ -5,7 +5,7 @@ import { SignInButton, SignUpButton } from '@clerk/clerk-react';
 import { API_URL } from '../authFetch.js';
 import MarketTicker from './MarketTicker.jsx';
 import LandingMovers from './LandingMovers.jsx';
-import { CmcBadge } from './CmcSecurity.jsx';
+import { AlphaBadge } from './AlphaRisk.jsx';
 import HavenLogo from './HavenLogo.jsx';
 import LegalFooter from './LegalFooter.jsx';
 import LegalDocView from './LegalDoc.jsx';
@@ -31,7 +31,7 @@ const FEATURES = [
   ],
   [
     'Risk tools, not green lights',
-    'CoinMarketCap contract-security flags help you inspect tokens. They can be wrong or incomplete. You remain responsible.',
+    'Binance Alpha contract-security flags help you inspect tokens. They can be wrong or incomplete. You remain responsible.',
   ],
 ];
 
@@ -176,10 +176,10 @@ export default function Landing() {
             Not financial advice. Operators may also be members using the same software.
           </p>
           <div style={{ marginTop: 28, display: 'flex', justifyContent: 'center' }}>
-            <CmcBadge />
+            <AlphaBadge />
           </div>
           <p className="landing-fineprint" style={{ marginTop: 8 }}>
-            Token risk checks use licensed CoinMarketCap security data where available. Incomplete by nature.
+            Token risk checks use licensed Binance Alpha security data where available. Incomplete by nature.
           </p>
         </section>
 

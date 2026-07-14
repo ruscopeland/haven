@@ -23,7 +23,7 @@ dry run.
 ## Bars, warm-up, and `null`
 
 - `bar` / `ctx.bars[i]` = `{ time, open, high, low, close, volume }`. `time`
-  is Unix **seconds** and `volume` is licensed CMC USD OHLCV volume.
+  is Unix **seconds** and `volume` is licensed Binance Alpha USD OHLCV volume.
 - Indicators need history: `ctx.rsi(14)[ctx.i]` is `null` for the first ~14
   bars. **Always guard**: `if (x == null) return;` — this is the single most
   common authoring bug.

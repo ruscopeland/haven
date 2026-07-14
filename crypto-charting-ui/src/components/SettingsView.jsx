@@ -2,7 +2,7 @@ import { useState, useEffect } from 'react';
 import '../dashboard.css';
 import SubscriptionPanel from './SubscriptionPanel.jsx';
 import EngineConnect from './EngineConnect.jsx';
-import { CmcBadge } from './CmcSecurity.jsx';
+import { AlphaBadge } from './AlphaRisk.jsx';
 
 const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:8000';
 
@@ -12,7 +12,7 @@ const FIELDS = [
   { key: 'max_trade_usd', label: 'Max trade size (USD)', step: 10, min: 0,
     help: 'Any single trade above this is aborted before it reaches the chain.' },
   { key: 'max_price_impact_pct', label: 'Max price impact (%)', step: 0.5, min: 0,
-    help: 'Swap quotes implying a worse price than this versus the CMC feed are rejected.' },
+    help: 'Swap quotes implying a worse price than this versus the Binance Alpha feed are rejected.' },
   { key: 'max_retry_attempts', label: 'Max retry attempts', step: 1, min: 0,
     help: 'Failed marker fires re-arm this many times, then the marker is disabled.' },
 ];
@@ -85,13 +85,13 @@ export default function SettingsView({ onOpenLegal }) {
       <section className="settings-section" id="settings-security">
         <div style={{ display: 'flex', alignItems: 'center', gap: 12, marginBottom: 8, flexWrap: 'wrap' }}>
           <h2 style={{ margin: 0 }}>Token security</h2>
-          <CmcBadge compact />
+          <AlphaBadge compact />
         </div>
         {!securityStatus ? (
           <p className="dash-muted" style={{ fontSize: 12 }}>Loading security status…</p>
         ) : !securityStatus.configured ? (
           <p className="dash-error" style={{ fontSize: 12 }}>
-            CoinMarketCap is not configured on the Haven server.
+            Binance Alpha is not configured on the Haven server.
           </p>
         ) : (
           <div className="dash-muted" style={{ fontSize: 12, lineHeight: 1.6 }}>
@@ -99,7 +99,7 @@ export default function SettingsView({ onOpenLegal }) {
             <div>Cached checks: {securityStatus.scanned_total} · blocked tokens: {securityStatus.blocked_total}</div>
             <div style={{ marginTop: 8, color: 'var(--text-bright)' }}>
               <b>Trade safety:</b> the engine never unlimited-approves tokens. Before any approve/swap it
-              uses CoinMarketCap DEX security information. Elevated risk still charts; manual trades require
+              uses Binance Alpha DEX security information. Elevated risk still charts; manual trades require
               contract verification and an explicit risk acknowledgment.
             </div>
           </div>

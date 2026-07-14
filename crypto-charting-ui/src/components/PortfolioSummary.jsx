@@ -5,7 +5,7 @@ import usePortfolioStats from '../hooks/usePortfolioStats';
 // row inside one panel, sized to the right dash-col (directly above
 // AssetAllocation). Was three separate stacked cards; this is far more
 // compact for three single numbers. Fed by the key-free data sources: RPC
-// balances, CMC prices, and local-engine trades.
+// balances, Binance Alpha prices, and local-engine trades.
 export default function PortfolioSummary({ wallet, prices, tokenMap, pnlBySymbol, openOrdersCount, filledCount }) {
   const stats = usePortfolioStats({ wallet, prices, tokenMap, pnlBySymbol });
 

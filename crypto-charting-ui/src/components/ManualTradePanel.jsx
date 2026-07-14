@@ -110,7 +110,7 @@ export default function ManualTradePanel({
   const send = async (dir, usdNum) => {
     setBusy(true); setMsg(null);
     try {
-      // Refresh the CMC security gate — chart stays open when risk is elevated.
+      // Refresh the Binance Alpha security gate — chart stays open when risk is elevated.
       const secRes = await fetch(`${API_URL}/security/check/${encodeURIComponent(symbol)}`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -268,7 +268,7 @@ export default function ManualTradePanel({
       )}
 
       <div className="trade-line" style={{ maxWidth: '100%' }}>
-        <span className="l">Market (CoinMarketCap)</span>
+        <span className="l">Market (Binance Alpha)</span>
         <span className="v">{price ? `$${fmtPrice(price)}` : '…'}</span>
       </div>
       <div className="trade-line" style={{ maxWidth: '100%' }}>

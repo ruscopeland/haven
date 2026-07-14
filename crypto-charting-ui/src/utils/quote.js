@@ -1,10 +1,10 @@
 // Pre-trade quote preview for the token page — mirrors the marker engine's
 // execution path so what the user sees is what the engine will do:
 //   sizing   = marker-engine/pure.js sizeTrade  (buy: usd/bnbPrice BNB in;
-//              sell: usd/CMC market price tokens, capped at balance)
+//              sell: usd/Binance Alpha market price tokens, capped at balance)
 //   quote    = OpenOcean v4 aggregator (the engine's router, chain.js)
 //   impact   = marker-engine/pure.js priceImpactPct (quoted out vs what the
-//              CMC market price predicts)
+//              Binance Alpha market price predicts)
 // The engine re-quotes at execution; this preview is informational. Keep it
 // ON-DEMAND only (no polling) — OpenOcean allows ~1 req/1.6s per IP and the
 // engine quotes from this same machine when a trade fires.
@@ -15,7 +15,7 @@ const OO_NATIVE = '0xEeeeeEeeeEeEeeEeEeEeeEEEeeeeEeeeeeeeEEeE';
 export const ENGINE_SLIPPAGE_PCT = 0.5;
 export const ENGINE_GAS_GWEI = 1;
 
-// Same server-side CoinMarketCap source used by the engine and charts.
+// Same server-side Binance Alpha source used by the engine and charts.
 export async function fetchBnbPriceUsd() {
   const api = import.meta.env.VITE_API_URL || 'http://localhost:8000';
   const r = await fetch(`${api}/market/prices?symbols=BNB`);
@@ -45,10 +45,10 @@ function extractRoute(data) {
 }
 
 // side: 'BUY' | 'SELL'. usd: user's USD intent. contract: token address.
-// marketPrice: the live CMC price the chart/engine use. heldQty: wallet
+// marketPrice: the live Binance Alpha price the chart/engine use. heldQty: wallet
 // balance for sells (null = unknown, no cap applied).
 export async function fetchSwapPreview({ side, usd, contract, marketPrice, heldQty }) {
-  if (!(marketPrice > 0)) throw new Error('No live market price from CoinMarketCap');
+  if (!(marketPrice > 0)) throw new Error('No live market price from Binance Alpha');
   const bnbPrice = await fetchBnbPriceUsd();
   const isBuy = side === 'BUY';
 

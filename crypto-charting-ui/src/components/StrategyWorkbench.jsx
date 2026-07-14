@@ -16,12 +16,12 @@ const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:8000';
 const INTERVALS = ['1m', '5m', '15m', '30m', '1h', '4h', '1d'];
 const INTERVAL_SEC = { '1m': 60, '5m': 300, '15m': 900, '30m': 1800, '1h': 3600, '4h': 14400, '1d': 86400 };
 // Finder-bound (portfolio) backtests rank on /universe data, which only
-// is available at these intervals from the server-side CMC candle cache.
+// is available at these intervals from the server-side Binance Alpha candle cache.
 const PORTFOLIO_INTERVALS = ['5m', '15m', '30m', '1h'];
 const DRAFT_KEY = 'strategyDraft';
 
-// Human-readable ticker: prefer the CMC display name ("BSB (Block
-// Street)"), else strip Haven's internal CMC-id/chain suffix.
+// Human-readable ticker: prefer the Binance Alpha display name ("BSB (Block
+// Street)"), else strip Haven's internal Binance Alpha-id/chain suffix.
 const prettySymbol = (sym, name) => {
   if (!sym) return '';
   if (name && name !== sym) return name;

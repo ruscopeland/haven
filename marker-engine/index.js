@@ -1,6 +1,6 @@
 // Marker engine daemon — headless executor for chart markers.
 //
-// Watches server-side CMC prices via the Haven API and fires real swaps when a
+// Watches server-side Binance Alpha prices via the Haven API and fires real swaps when a
 // price crosses a marker line. This replaces the old in-browser wallet engine:
 // no browser tab, no HMR duplicate loops, no background-tab throttling.
 //
@@ -39,7 +39,7 @@ const config = {
   quickBuyPercent: parseFloat(process.env.QUICK_BUY_PERCENT || '5'),
   quickSellPercent: parseFloat(process.env.QUICK_SELL_PERCENT || '100'),
   // Stale-price guard (DATA-ROADMAP M3): skip marker evaluation for a token
-  // whose CMC price is older than this — never trade a frozen price.
+  // whose Binance Alpha price is older than this — never trade a frozen price.
   stalePriceMs: parseInt(process.env.STALE_PRICE_MS || '180000', 10),
 };
 

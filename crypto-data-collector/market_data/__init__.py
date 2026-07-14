@@ -1,5 +1,4 @@
-"""Licensed server-side CoinMarketCap market-data integration."""
+"""Server-side Binance Alpha market-data integration."""
+from .alpha_service import BinanceAlphaMarketDataService
 
-from .cmc_service import CmcMarketDataService
-
-__all__ = ["CmcMarketDataService"]
+__all__ = ["BinanceAlphaMarketDataService"]

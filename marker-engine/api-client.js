@@ -26,7 +26,7 @@ export class ApiClient {
   // limit must clear it or the engine/runner token maps silently truncate.
   getTokens() { return this.#json('/tokens?limit=20000&min_liquidity=0&quality=false'); }
   getEngineSettings() { return this.#json('/engine/settings'); }
-  // CMC DEX security gate before approve/swap. force=true refreshes when needed.
+  // Binance Alpha DEX security gate before approve/swap. force=true refreshes when needed.
   checkTokenSecurity(symbol, { force = false } = {}) {
     const q = force ? '?force=1' : '';
     return this.#json(`/security/check/${encodeURIComponent(symbol)}${q}`, {

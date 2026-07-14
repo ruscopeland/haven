@@ -24,7 +24,7 @@ The subscription helps cover **shared market data**, development, hosting, and u
 
 1. Sign up → automatic seven-day trial for paper or live workflows.
 2. **Dashboard** — optional wallet address for balances.
-3. **Charts** — pick tokens from the licensed CoinMarketCap catalogue.
+3. **Charts** — pick tokens from the licensed Binance Alpha catalogue.
 4. **Strategies** — template or code → backtest → **paper** first.
 5. **Live** — download the signed engine; your private key stays encrypted on your PC.
 6. Read **Risk disclosure** before live size.
@@ -34,7 +34,7 @@ The subscription helps cover **shared market data**, development, hosting, and u
 ## Charts & Alpha Screener
 
 - Main nav stays full width; screener sits **under** the tabs next to Layouts.
-- Search: Haven's server-side CoinMarketCap cache; the provider key never reaches the browser.
+- Search: Haven's server-side Binance Alpha cache; the provider key never reaches the browser.
 - Layouts 1–5 save chart sets.
 - Elevated-risk tokens: **still chart**; trading needs contract verify + risk acknowledgments; ~$1 probe recommended.
 

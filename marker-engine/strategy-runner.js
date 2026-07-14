@@ -30,7 +30,7 @@ import { loadIsolatedStrategy as loadStrategy } from './sandbox-runtime.js';
 
 const LIST_REFRESH_MS = 15_000;
 const HEARTBEAT_MS = 30_000;
-const BAR_FETCH_LAG_MS = 5_000;      // let CMC finalize and persist the bar first
+const BAR_FETCH_LAG_MS = 5_000;      // let Binance Alpha finalize and persist the bar first
 const RETRY_MS = 30_000;             // transient fetch failures
 const MAX_BARS = 600;                // rolling history window per strategy
 const PAPER_SLIPPAGE_PCT = 0.1;
@@ -244,7 +244,7 @@ export class StrategyRunner {
       const fresh = await this.fetchBars(sub, 3);
       const newBars = fresh.filter(b => b.time > sub.lastBarTime);
       if (newBars.length === 0) {
-        sub.nextCheck = Date.now() + BAR_FETCH_LAG_MS;  // CMC reconciliation lagging — retry shortly
+        sub.nextCheck = Date.now() + BAR_FETCH_LAG_MS;  // Binance Alpha reconciliation lagging — retry shortly
         continue;
       }
       if (!posMap) posMap = await this.reloadPositionsBySymbol(r.id, r.mode).catch(() => null);
@@ -330,7 +330,7 @@ export class StrategyRunner {
     const fresh = await this.fetchBars(r, 3);
     const newBars = fresh.filter(b => b.time > r.lastBarTime);
     if (newBars.length === 0) {
-      r.nextCheck = Date.now() + BAR_FETCH_LAG_MS;    // CMC reconciliation lagging — retry shortly
+      r.nextCheck = Date.now() + BAR_FETCH_LAG_MS;    // Binance Alpha reconciliation lagging — retry shortly
       return;
     }
 

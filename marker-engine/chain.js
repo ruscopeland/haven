@@ -176,7 +176,7 @@ export async function parseSwapFill(receipt, tokenAddress, tokenDecimals, wallet
   return fill;
 }
 
-// BNB/USD comes only from Haven's server-side licensed CMC feed.
+// BNB/USD comes only from Haven's server-side licensed Binance Alpha feed.
 let bnbCache = { price: 0, ts: 0 };
 export async function getBnbPriceUsd(_provider, apiPriceUsd = 0) {
   if (apiPriceUsd > 0) {

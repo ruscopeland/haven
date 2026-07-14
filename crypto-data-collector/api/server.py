@@ -5,7 +5,7 @@ from database.db import get_db, run_migrations, dialect_insert
 from database.models import (
     Token, LatestTicker, Heartbeat, ChartMarker, TradeHistory,
     DebugLog, EngineSetting, Strategy, StrategyVersion, Finder,
-    AiDailyUsage, CmcAsset, MarketCandle, ProviderStatus,
+    AiDailyUsage, AlphaAsset, MarketCandle, ProviderStatus,
     MARKER_TYPES, STRATEGY_MODES, FINDER_INTERVALS,
 )
 from api.auth import (
@@ -19,8 +19,8 @@ from typing import List, Any
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi import Request
 from contextlib import asynccontextmanager
-from market_data import CmcMarketDataService
-from market_data.cmc_client import CmcClient, CmcError
+from market_data import BinanceAlphaMarketDataService
+from market_data.alpha_client import AlphaError
 from api.config import validate_production_config
 from api.monitoring import initialize_monitoring
 import asyncio
@@ -37,12 +37,12 @@ async def lifespan(app: FastAPI):
     run_migrations()
     print(f"Database tables ensured on startup. SOLO_MODE={SOLO_MODE}")
 
-    await cmc_market.start()
+    await alpha_market.start()
     yield
-    await cmc_market.stop()
+    await alpha_market.stop()
 
 
-cmc_market = CmcMarketDataService()
+alpha_market = BinanceAlphaMarketDataService()
 initialize_monitoring()
 
 
@@ -100,7 +100,7 @@ class TokenResponse(BaseModel):
     liquidity_usd: float | None = None
     market_cap: float | None = None
     listed_at: int | None = None
-    # Cached CMC DEX security summary. None until requested.
+    # Cached Binance Alpha DEX security summary. None until requested.
     security: dict | None = None
 
     model_config = ConfigDict(from_attributes=True)
@@ -139,8 +139,8 @@ class SignalResponse(BaseModel):
     price_change_24h: float
     volume_24h: float = 0.0
     market_cap: float = 0.0
-    cmc_rank: int | None = None
-    last_price: float | None = None  # live CMC price for screener
+    alpha_rank: int | None = None
+    last_price: float | None = None  # live Binance Alpha price for screener
 
     model_config = ConfigDict(from_attributes=True)
 
@@ -1068,9 +1068,9 @@ async def get_universe(interval: str = "15m", start_ms: int | None = None,
     if (end_ms - start_ms) // interval_ms > UNIVERSE_MAX_BARS:
         start_ms = end_ms - UNIVERSE_MAX_BARS * interval_ms
 
-    query = (db.query(Token, LatestTicker, CmcAsset)
+    query = (db.query(Token, LatestTicker, AlphaAsset)
              .join(LatestTicker, LatestTicker.symbol == Token.symbol)
-             .join(CmcAsset, CmcAsset.cmc_id == Token.cmc_id)
+             .join(AlphaAsset, AlphaAsset.alpha_id == Token.alpha_id)
              .filter((Token.status == "active") | Token.status.is_(None))
              .filter(LatestTicker.volume_24h >= min_vol_24h))
     if symbols:
@@ -1080,24 +1080,21 @@ async def get_universe(interval: str = "15m", start_ms: int | None = None,
         allowed = [item.strip() for item in chains.split(",") if item.strip()]
         query = query.filter(Token.chain_id.in_(allowed))
     maximum = min(UNIVERSE_MAX_TOKENS,
-                  max(1, int(os.environ.get("CMC_FINDER_ASSET_LIMIT", "50"))))
+                  max(1, int(os.environ.get("BINANCE_ALPHA_FINDER_ASSET_LIMIT", "50"))))
     selected = query.order_by(LatestTicker.volume_24h.desc()).limit(maximum).all()
     specs = [{
         "symbol": token.symbol, "name": token.name, "chain": token.chain_id,
-        "cmc_id": token.cmc_id, "address": token.contract_address,
-        "platform": asset.platform, "volume": ticker.volume_24h or 0,
+        "alpha_id": token.alpha_id, "volume": ticker.volume_24h or 0,
         "change": ticker.price_change_24h or 0,
-    } for token, ticker, asset in selected if token.contract_address and asset.platform]
-    semaphore = asyncio.Semaphore(max(1, int(os.environ.get("CMC_REST_CONCURRENCY", "4"))))
+    } for token, ticker, asset in selected if token.alpha_id]
+    semaphore = asyncio.Semaphore(max(1, int(os.environ.get("BINANCE_ALPHA_REST_CONCURRENCY", "4"))))
 
     async def load(spec):
         async with semaphore:
             try:
-                candles = await cmc_market.candles(
-                    cmc_id=spec["cmc_id"], platform=spec["platform"],
-                    address=spec["address"], interval=interval,
-                    start_ms=start_ms, end_ms=end_ms)
-            except CmcError:
+                candles = await alpha_market.candles(alpha_id=spec["alpha_id"], interval=interval,
+                                                     limit=UNIVERSE_MAX_BARS)
+            except AlphaError:
                 return spec, []
         return spec, candles
 
@@ -1125,7 +1122,7 @@ async def get_universe(interval: str = "15m", start_ms: int | None = None,
             "volume": volume,
         })
     return {"interval": interval, "times": times, "tokens": tokens_out,
-            "source": "coinmarketcap"}
+            "source": "binance_alpha"}
 
 # ── Debug log schemas ──────────────────────────────────────────────────────
 
@@ -1178,7 +1175,7 @@ class DashboardOverview(BaseModel):
     open_markers: List[MarkerResponse]
     token_prices: dict  # symbol → last_price
     # symbol → last_updated (unix ms). Additive (old consumers ignore it);
-    # the engine's stale-price guard reads it so a frozen CMC price can
+    # the engine's stale-price guard reads it so a frozen Binance Alpha price can
     # never drive a marker execution (DATA-ROADMAP M3).
     price_updated: dict = {}
 
@@ -1515,7 +1512,7 @@ SHARED_PROCESSES = {"api"}
 
 @app.get("/health")
 def health_check(db: Session = Depends(get_db)):
-    """Live status of the CMC market service and API.
+    """Live status of the Binance Alpha market service and API.
 
     Public (no auth) so UptimeRobot can monitor it and the subscribe screen
     can show health dots before login. Only shared process health is exposed;
@@ -1530,16 +1527,16 @@ def health_check(db: Session = Depends(get_db)):
         return "warning" if age_sec < 180 else "down"
 
     statuses = {"api": {"status": "ok", "last_seen_sec_ago": 0}}
-    provider = db.query(ProviderStatus).filter(ProviderStatus.provider == "coinmarketcap").first()
+    provider = db.query(ProviderStatus).filter(ProviderStatus.provider == "binance_alpha").first()
     if provider:
         age = (now_ms - (provider.last_event_at or provider.updated_at)) / 1000
         statuses["market_data"] = {
             "status": "ok" if provider.state == "connected" and age < 120 else
                       "warning" if provider.state in ("starting", "reconnecting") or age < 300 else "down",
-            "last_seen_sec_ago": int(age), "provider": "CoinMarketCap",
+            "last_seen_sec_ago": int(age), "provider": "Binance Alpha",
         }
     else:
-        statuses["market_data"] = {"status": "down", "provider": "CoinMarketCap"}
+        statuses["market_data"] = {"status": "down", "provider": "Binance Alpha"}
     for row in db.query(Heartbeat).all():
         proc, _, owner = row.process.partition("@")
         if owner:                                  # a user's engine/runner
@@ -1575,15 +1572,7 @@ async def security_check_token(symbol: str, body: SecurityCheckBody | None = Non
                                force: int = 0,
                                db: Session = Depends(get_db),
                                identity: Identity = Depends(require_paid)):
-    """Pre-trade CMC DEX-security gate — called before any approve/swap.
-
-    Policy (product):
-      - Chart is ALWAYS allowed (research).
-      - Auto/strategy execution is blocked when risk is elevated (`blocked=true`)
-        unless the marker carries a manual risk acknowledgment.
-      - Manual trades may proceed after contract verify + risk ack; UI should
-        recommend a small probe first.
-    """
+    """Pre-trade Alpha catalogue gate; Binance Alpha does not provide an audit."""
     tok = db.query(Token).filter(Token.symbol == symbol).first()
     if not tok:
         raise HTTPException(status_code=404, detail="Token not found")
@@ -1595,49 +1584,16 @@ async def security_check_token(symbol: str, body: SecurityCheckBody | None = Non
             "trade_policy": {"mode": "blocked", "auto_allowed": False},
             "message": "No contract address — cannot trade.",
         }
-    do_force = bool(force) or bool(body and body.force)
-    cached = None
-    if tok.security_json:
-        try:
-            cached = json.loads(tok.security_json)
-        except (TypeError, ValueError):
-            cached = None
-    cache_ms = int(os.environ.get("CMC_SECURITY_CACHE_SEC", "86400")) * 1000
-    if cached and not do_force and int(cached.get("scanned_at") or 0) + cache_ms > int(time.time() * 1000):
-        result = {**cached, "from_cache": True}
-    else:
-        try:
-            async with CmcClient() as client:
-                response = await client.security(
-                    platform=str(tok.chain_id or ""), address=tok.contract_address)
-        except CmcError as exc:
-            raise HTTPException(status_code=503, detail=f"CMC security check unavailable: {exc}")
-        rows = response.data if isinstance(response.data, list) else [response.data]
-        raw = next((r for r in rows if isinstance(r, dict)), {})
-        hits = [x for x in (raw.get("securityItems") or [])
-                if isinstance(x, dict) and x.get("isHit") is True]
-        critical = [str(x.get("riskCode") or x.get("code") or "security_risk") for x in hits
-                    if str(x.get("riskyLevel") or "").lower() not in ("", "safe", "low")]
-        display = raw.get("evmDisplay") or raw.get("solanaDisplay") or {}
-        unsafe_display = [f"{k}:{v}" for k, v in display.items()
-                          if any(word in str(v).lower() for word in ("risk", "unsafe", "honeypot", "unverified", "mintable", "freezable"))
-                          and not any(ok in str(v).lower() for ok in ("no risk", "safe", "non-", "verified"))]
-        critical.extend(unsafe_display)
-        extra = raw.get("extra") or {}
-        if extra.get("isFlaggedByVendor") or extra.get("isReported"):
-            critical.append("vendor_flagged")
-        critical = list(dict.fromkeys(critical))
-        result = {
-            "provider": "CoinMarketCap", "scanned_at": int(time.time() * 1000),
-            "safe": bool(raw.get("exist")) and not critical,
-            "critical": critical, "flags": [str(x.get("code") or x.get("riskCode")) for x in hits],
-            "security_level": raw.get("securityLevel"), "category_level": raw.get("categoryLevel"),
-            "buy_tax": extra.get("buyTax"), "sell_tax": extra.get("sellTax"),
-            "verified": extra.get("isVerified"), "tags": raw.get("tags") or [],
-            "from_cache": False,
-        }
-        tok.security_json = json.dumps(result, separators=(",", ":"))
-        db.commit()
+    asset = db.get(AlphaAsset, tok.alpha_id) if tok.alpha_id else None
+    # Inclusion in the current BSC Alpha catalogue proves the exact pair we chart,
+    # but is not a contract-security audit. It remains elevated-risk: no automatic
+    # strategy execution, while manual execution retains its acknowledgement gate.
+    result = {"provider": "Binance Alpha", "scanned_at": int(time.time() * 1000),
+              "safe": False, "critical": ["security_audit_unavailable"], "flags": [],
+              "verified": bool(asset and asset.contract_address.lower() == tok.contract_address.lower()),
+              "from_cache": False}
+    if not asset:
+        result["critical"].append("not_in_alpha_catalogue")
     result.update({"symbol": symbol, "status": tok.status,
                    "contract_address": tok.contract_address, "chain_id": tok.chain_id,
                    "chart_allowed": True})
@@ -1657,12 +1613,6 @@ async def security_check_token(symbol: str, body: SecurityCheckBody | None = Non
             "and risk acknowledgment; start with a small probe. "
             f"Flags: {', '.join(result.get('critical') or result.get('flags') or [])}"
         )
-    elif result.get("safe") is True:
-        result["blocked"] = False
-        result["message"] = "CMC security clear — exact-amount approve allowed for this trade only."
-    else:
-        result["blocked"] = True
-        result["message"] = "Incomplete security data — trade blocked until a clean scan or risk ack."
     return result
 
 
@@ -1670,11 +1620,11 @@ async def security_check_token(symbol: str, body: SecurityCheckBody | None = Non
 def security_status(db: Session = Depends(get_db),
                     identity: Identity = Depends(require_paid)):
     return {
-        "configured": bool(os.environ.get("CMC_API_KEY")),
-        "provider": "CoinMarketCap DEX Security",
+        "configured": True,
+        "provider": "Binance Alpha catalogue (not a security audit)",
         "scanned_total": db.query(Token).filter(Token.security_json.isnot(None)).count(),
         "blocked_total": db.query(Token).filter(Token.status == "blacklisted").count(),
-        "cache_seconds": int(os.environ.get("CMC_SECURITY_CACHE_SEC", "86400")),
+        "cache_seconds": 0,
     }
 
 
@@ -1759,12 +1709,12 @@ def write_heartbeat(hb: HeartbeatCreate, db: Session = Depends(get_db),
     return {"ok": True, "process": proc, "last_heartbeat": now_ms}
 
 
-# Optional CMC DEX-liquidity floor for operator-curated token views.
+# Optional Binance Alpha DEX-liquidity floor for operator-curated token views.
 MIN_TOKEN_LIQUIDITY_USD = float(os.environ.get("HAVEN_MIN_TOKEN_LIQUIDITY_USD", "100000"))
 # Reject absurd market caps on the product surface (fake supply × price scams).
 MAX_PRODUCT_MARKET_CAP = float(os.environ.get("HAVEN_MAX_PRODUCT_MCAP", str(50_000_000_000)))
-# Prefer CMC-identified tokens; non-CMC allowed only with sane/unknown mcap.
-REQUIRE_CMC_OR_SANE_MCAP = os.environ.get("HAVEN_REQUIRE_CMC_OR_SANE", "1") == "1"
+# Prefer Binance Alpha-identified tokens; non-Binance Alpha allowed only with sane/unknown mcap.
+REQUIRE_ALPHA_CATALOGUE = os.environ.get("HAVEN_REQUIRE_ALPHA_CATALOGUE", "1") == "1"
 
 
 def _product_token_filters(q, *, floor: float, enforce_quality: bool = True):
@@ -1779,14 +1729,14 @@ def _product_token_filters(q, *, floor: float, enforce_quality: bool = True):
     q = q.filter(
         (Token.market_cap.is_(None)) | (Token.market_cap <= MAX_PRODUCT_MARKET_CAP)
     )
-    if REQUIRE_CMC_OR_SANE_MCAP:
-        # Market-cap figures without cmc_id are untrusted — force NULL at write
+    if REQUIRE_ALPHA_CATALOGUE:
+        # Market-cap figures without alpha_id are untrusted — force NULL at write
         # time (apply_quality_filter). Here we also hide rows that still claim
         # an absurd mcap (belt and suspenders).
         from sqlalchemy import or_
         q = q.filter(or_(
             Token.market_cap.is_(None),
-            Token.cmc_id.isnot(None),
+            Token.alpha_id.isnot(None),
             Token.market_cap <= 1_000_000_000,
         ))
     return q
@@ -1798,7 +1748,7 @@ def get_tokens(skip: int = 0, limit: int = 100, status: str = "active",
                quality: bool = True,
                db: Session = Depends(get_db),
                identity: Identity = Depends(require_paid)):
-    """Retrieve supported CMC-identified trading contracts."""
+    """Retrieve supported Binance Alpha-identified trading contracts."""
     q = db.query(Token)
     if status != "all":
         # Legacy rows predate the status column; NULL counts as active.
@@ -1820,9 +1770,8 @@ class TokenSearchHit(BaseModel):
     name: str | None = None
     chain: str | None = None
     contract_address: str | None = None
-    cmc_id: int | None = None
-    cmc_rank: int | None = None
-    cmc_slug: str | None = None
+    alpha_id: str | None = None
+    alpha_rank: int | None = None
     market_cap: float | None = None
     logo_url: str | None = None
     status: str | None = None
@@ -1836,34 +1785,33 @@ def search_tokens_endpoint(
     db: Session = Depends(get_db),
     identity: Identity = Depends(require_paid),
 ):
-    """Search Haven's licensed, server-cached CMC asset catalogue."""
+    """Search Haven's server-cached Binance Alpha BSC catalogue."""
     q = (q or "").strip()
     if len(q) < 1:
         return []
     limit = max(1, min(int(limit or 12), 25))
     needle = f"%{q.lower()}%"
-    assets = (db.query(CmcAsset)
-              .filter((func.lower(CmcAsset.symbol).like(needle)) |
-                      (func.lower(CmcAsset.name).like(needle)) |
-                      (func.lower(CmcAsset.slug).like(needle)))
-              .order_by(CmcAsset.rank.asc().nullslast()).limit(limit).all())
-    tokens = {t.cmc_id: t for t in db.query(Token).filter(
-        Token.cmc_id.in_([a.cmc_id for a in assets])).all()} if assets else {}
+    assets = (db.query(AlphaAsset)
+              .filter((func.lower(AlphaAsset.symbol).like(needle)) |
+                      (func.lower(AlphaAsset.name).like(needle)) |
+                      (func.lower(AlphaAsset.alpha_id).like(needle)))
+              .order_by(AlphaAsset.rank.asc().nullslast()).limit(limit).all())
+    tokens = {t.alpha_id: t for t in db.query(Token).filter(
+        Token.alpha_id.in_([a.alpha_id for a in assets])).all()} if assets else {}
     hits = []
     for asset in assets:
-        tok = tokens.get(asset.cmc_id)
+        tok = tokens.get(asset.alpha_id)
         metadata = {}
         try:
             metadata = json.loads(asset.metadata_json or "{}")
         except (ValueError, TypeError):
             pass
         hits.append(TokenSearchHit(
-            source="coinmarketcap", in_db=bool(tok),
+            source="binance_alpha", in_db=bool(tok),
             symbol=tok.symbol if tok else None, display=asset.symbol,
             name=asset.name, chain=tok.chain_id if tok else None,
-            contract_address=asset.contract_address, cmc_id=asset.cmc_id,
-            cmc_rank=asset.rank, cmc_slug=asset.slug,
-            logo_url=metadata.get("logo"), status=tok.status if tok else None,
+            contract_address=asset.contract_address, alpha_id=asset.alpha_id,
+            alpha_rank=asset.rank, logo_url=metadata.get("iconUrl"), status=tok.status if tok else None,
             market_cap=tok.market_cap if tok else None,
             liquidity_usd=tok.liquidity_usd if tok else None,
         ))
@@ -1871,13 +1819,11 @@ def search_tokens_endpoint(
 
 
 class TokenEnsureBody(BaseModel):
-    cmc_id: int | None = None
+    alpha_id: str | None = None
     chain: str | None = None
     contract_address: str | None = None
     display: str | None = None
     name: str | None = None
-    cmc_slug: str | None = None
-    cmc_rank: int | None = None
     market_cap: float | None = None
     price: float | None = None
     volume_24h: float | None = None
@@ -1892,32 +1838,21 @@ async def ensure_token_endpoint(
     db: Session = Depends(get_db),
     identity: Identity = Depends(require_paid),
 ):
-    """Make a supported cached CMC contract available to charts/trading."""
-    asset = db.get(CmcAsset, body.cmc_id) if body.cmc_id else None
+    """Make a supported cached Binance Alpha BSC contract available to charts/trading."""
+    asset = db.get(AlphaAsset, body.alpha_id) if body.alpha_id else None
     if not asset and body.contract_address:
-        asset = db.query(CmcAsset).filter(
-            func.lower(CmcAsset.contract_address) == body.contract_address.lower()).first()
+        asset = db.query(AlphaAsset).filter(
+            func.lower(AlphaAsset.contract_address) == body.contract_address.lower()).first()
     if not asset:
-        raise HTTPException(status_code=404, detail="Asset is not in the cached CMC catalogue")
-    tok = db.query(Token).filter(Token.cmc_id == asset.cmc_id).first()
+        raise HTTPException(status_code=404, detail="Asset is not in the cached Binance Alpha catalogue")
+    tok = db.query(Token).filter(Token.alpha_id == asset.alpha_id).first()
     if not tok:
         raise HTTPException(status_code=422, detail=(
-            "This CMC asset does not expose a contract on a Haven-supported trading chain"))
-    security = None
-    if body.scan_security and tok.contract_address and asset.platform:
-        try:
-            async with CmcClient() as client:
-                response = await client.security(
-                    platform=asset.platform, address=tok.contract_address)
-            security = response.data if isinstance(response.data, dict) else None
-            tok.security_json = json.dumps(security, separators=(",", ":")) if security else None
-            db.commit()
-        except CmcError:
-            security = None
+            "This Binance Alpha asset does not expose a BSC contract"))
     return {
         "symbol": tok.symbol, "display": tok.display_symbol, "name": tok.name,
-        "status": tok.status, "security": security, "trade_policy": None,
-        "chart_allowed": True, "source": "coinmarketcap",
+        "status": tok.status, "security": None, "trade_policy": None,
+        "chart_allowed": True, "source": "binance_alpha",
     }
 
 
@@ -1934,11 +1869,11 @@ def get_token(symbol: str, db: Session = Depends(get_db),
 @app.get("/market/prices")
 def market_prices(symbols: str, db: Session = Depends(get_db),
                   identity: Identity = Depends(require_paid)):
-    """Small CMC-backed quote lookup for first-party UI valuation."""
+    """Small Binance Alpha-backed quote lookup for first-party UI valuation."""
     requested = [s.strip().upper() for s in symbols.split(",") if s.strip()][:50]
     rows = db.query(LatestTicker).filter(LatestTicker.symbol.in_(requested)).all()
     return {
-        "source": "coinmarketcap",
+        "source": "binance_alpha",
         "prices": {row.symbol: {"price": row.last_price, "change_24h": row.price_change_24h,
                                 "volume_24h": row.volume_24h, "updated_at": row.last_updated}
                    for row in rows},
@@ -1953,15 +1888,12 @@ def get_chains(identity: Identity = Depends(require_paid)):
 @app.get("/signals", response_model=List[SignalResponse])
 def get_top_signals(limit: int = 400, sort_by: str = "vol_24h", db: Session = Depends(get_db),
                     identity: Identity = Depends(require_paid)):
-    """Return a compact CMC-backed trading watchlist.
-
-    Ranking uses licensed CMC volume, change and market-cap data.
-    """
+    """Return a compact Binance Alpha BSC trading watchlist."""
     current_minute = (int(time.time() * 1000) // 60_000) * 60_000
     limit = max(1, min(limit, 500))
-    rows = (db.query(Token, LatestTicker, CmcAsset)
+    rows = (db.query(Token, LatestTicker, AlphaAsset)
             .join(LatestTicker, LatestTicker.symbol == Token.symbol)
-            .join(CmcAsset, CmcAsset.cmc_id == Token.cmc_id)
+            .join(AlphaAsset, AlphaAsset.alpha_id == Token.alpha_id)
             .filter((Token.status == "active") | Token.status.is_(None))
             .filter(LatestTicker.last_price.isnot(None))
             .all())
@@ -1970,7 +1902,7 @@ def get_top_signals(limit: int = 400, sort_by: str = "vol_24h", db: Session = De
         timestamp=ticker.last_updated or current_minute,
         price_change_24h=ticker.price_change_24h or 0,
         volume_24h=ticker.volume_24h or 0, market_cap=tok.market_cap or 0,
-        last_price=ticker.last_price, cmc_rank=asset.rank,
+        last_price=ticker.last_price, alpha_rank=asset.rank,
     ) for tok, ticker, asset in rows]
     if sort_by == "price_change_24h":
         signals.sort(key=lambda item: item.price_change_24h, reverse=True)
@@ -1980,6 +1912,9 @@ def get_top_signals(limit: int = 400, sort_by: str = "vol_24h", db: Session = De
         signals.sort(key=lambda item: (item.market_cap or 0) * (item.volume_24h or 0), reverse=True)
     else:
         signals.sort(key=lambda item: item.volume_24h, reverse=True)
+    # The screener is a cached ranked view, not a request to buy a live stream
+    # for every row it returns. Charts, valuation lookups, and armed strategies
+    # register their own exact demand with the shared market service.
     return signals[:limit]
 
 # ── In-app coding assistant (DeepSeek proxy) ─────────────────────────────────
@@ -2138,15 +2073,7 @@ async def get_klines(symbol: str, interval: str = "5m", limit: int = 500,
                      end_ms: int | None = None, include_open: int = 0,
                      db: Session = Depends(get_db),
                      identity: Identity = Depends(require_paid)):
-    """CMC historical candles with durable closed-candle caching.
-
-    Returns {data: [[open_time_ms, open, high, low, close, USD volume,
-    close_time_ms], ...]}. Closed CMC REST candles are durable; an active CMC
-    on-chain WebSocket candle may be included explicitly.
-
-    end_ms: return candles at/before that timestamp (performance-chart jumps).
-    include_open=1 appends the currently forming server-side CMC candle.
-    """
+    """Binance Alpha historical candles with durable closed-candle caching."""
     if interval not in KLINE_INTERVALS:
         raise HTTPException(status_code=422,
                             detail=f"Invalid interval '{interval}'. Allowed: {tuple(KLINE_INTERVALS)}")
@@ -2157,27 +2084,17 @@ async def get_klines(symbol: str, interval: str = "5m", limit: int = 500,
     tok = db.query(Token).filter(Token.symbol == sym).first()
     if not tok:
         raise HTTPException(status_code=404, detail="Token not found")
-    if not os.environ.get("CMC_API_KEY"):
-        raise HTTPException(status_code=503, detail="CoinMarketCap market data is not configured")
-    asset = db.get(CmcAsset, tok.cmc_id) if tok.cmc_id else None
-    if not tok.cmc_id or not tok.contract_address or not asset or not asset.platform:
-        raise HTTPException(status_code=422, detail="Token is missing its CMC ID, platform, or contract address")
-
-    requested_end = int(end_ms or time.time() * 1000)
-    requested_start = requested_end - (limit + 2) * interval_ms
+    if not tok.alpha_id or not tok.contract_address:
+        raise HTTPException(status_code=422, detail="Token is missing its Binance Alpha ID or BSC contract address")
     try:
-        rows = await cmc_market.candles(
-            cmc_id=int(tok.cmc_id), platform=str(asset.platform),
-            address=str(tok.contract_address), interval=interval,
-            start_ms=requested_start, end_ms=requested_end,
-        )
-    except (CmcError, ValueError) as exc:
-        raise HTTPException(status_code=503, detail=f"CMC candle data unavailable: {exc}")
+        rows = await alpha_market.candles(alpha_id=tok.alpha_id, interval=interval, limit=limit + 2)
+    except (AlphaError, ValueError) as exc:
+        raise HTTPException(status_code=503, detail=f"Binance Alpha candle data unavailable: {exc}")
     rows = [r for r in rows if include_open or r.closed == 1]
     rows = rows[-limit:]
     return {
         "code": "000000", "message": None, "symbol": sym, "interval": interval,
-        "source": "coinmarketcap",
+        "source": "binance_alpha",
         "data": [[r.open_time, str(r.open_price), str(r.high_price),
                   str(r.low_price), str(r.close_price), str(r.volume or 0),
                   r.close_time] for r in rows],

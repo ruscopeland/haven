@@ -1,5 +1,5 @@
 // Landing-page horizontal ticker + multi-select config.
-// Real data: /public/ticker-universe + /public/ticker (prices, CMC logos, sparklines).
+// Real data: /public/ticker-universe + /public/ticker (prices, Binance Alpha logos, sparklines).
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { API_URL } from '../authFetch.js';
 import Sparkline, { TokenLogo } from './Sparkline.jsx';
@@ -166,7 +166,7 @@ export default function MarketTicker() {
                   <TokenLogo url={t.logo_url} label={t.display} size={20} />
                   <span className="mkt-ticker-sym">{t.display}</span>
                   <span className="mkt-ticker-name">{t.name || t.symbol}</span>
-                  {t.cmc_rank != null && <span className="mkt-ticker-rank">#{t.cmc_rank}</span>}
+                  {t.alpha_rank != null && <span className="mkt-ticker-rank">#{t.alpha_rank}</span>}
                   <span className={up ? 'mkt-up' : 'mkt-down'}>{fmtPct(t.price_change_24h)}</span>
                 </label>
               );
@@ -177,7 +177,7 @@ export default function MarketTicker() {
           </div>
           <p className="mkt-ticker-hint">
             Defaults mix DeFi and larger alts from our live universe. Uncheck to remove;
-            search and check to add. Logos from CMC; sparklines from Haven 15m history. Saved in this browser.
+            search and check to add. Logos from Binance Alpha; sparklines from Haven 15m history. Saved in this browser.
           </p>
         </div>
       )}

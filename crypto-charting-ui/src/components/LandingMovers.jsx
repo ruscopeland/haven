@@ -65,7 +65,7 @@ export default function LandingMovers() {
                     <TokenLogo url={t.logo_url} label={t.display} size={22} />
                     <span className="landing-mover-sym">{t.display}</span>
                   </span>
-                  {t.cmc_rank != null && <span className="landing-mover-rank">#{t.cmc_rank}</span>}
+                  {t.alpha_rank != null && <span className="landing-mover-rank">#{t.alpha_rank}</span>}
                 </div>
                 <div className={`landing-mover-chg ${up ? 'up' : 'down'}`}>{fmtPct(t.price_change_24h)}</div>
                 <Sparkline points={t.sparkline} up={up} width={100} height={28} />

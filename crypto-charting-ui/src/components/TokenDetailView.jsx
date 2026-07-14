@@ -3,7 +3,7 @@ import { formatUnits } from 'ethers';
 import Chart from './Chart';
 import { getSavedAddress } from '../hooks/useWalletData';
 import { fmtUsd, fmtQty, fmtPrice, fmtTime, tokenColor, tradeUsd } from '../utils/format';
-import CmcSecurity from './CmcSecurity';
+import AlphaRisk from './AlphaRisk';
 import ManualTradePanel from './ManualTradePanel';
 import RiskTradeBanner from './RiskTradeBanner';
 import '../dashboard.css';
@@ -186,7 +186,7 @@ export default function TokenDetailView({
         symbol={displayName}
       />
 
-      <CmcSecurity
+      <AlphaRisk
         security={meta?.security}
         chain={meta?.chain_id}
         address={contract}

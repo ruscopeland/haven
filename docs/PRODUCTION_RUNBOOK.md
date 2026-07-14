@@ -12,9 +12,9 @@ technical chores for the owner.
 - A new Clerk user automatically receives one seven-day Haven trial. The local
   database records that trial's end date and usage limits against the Clerk user
   ID. It is an access allowance, not a Stripe subscription.
-- CoinMarketCap Startup is the only outside market-data source. Its published
+- Binance Alpha Startup is the only outside market-data source. Its published
   plan permits commercial product use, historical data, and WebSocket access.
-  Haven caches data to reduce repeat calls and does not resell CMC data as a
+  Haven caches data to reduce repeat calls and does not resell Binance Alpha data as a
   standalone feed.
 - Database upgrades run automatically when the API is deployed.
 - The owner page reports service, database, market stream, backup, subscription,
@@ -24,7 +24,7 @@ technical chores for the owner.
 
 ## What the lead developer handles
 
-The lead developer checks the existing Clerk, Railway, Cloudflare, CMC, and
+The lead developer checks the existing Clerk, Railway, Cloudflare, Binance Alpha, and
 monitoring setup; adds or corrects settings; deploys Haven; upgrades the
 database; tests sign-up and all plans; verifies backups; and runs the full test
 suite. Existing accounts should be reused, not recreated.
@@ -53,7 +53,7 @@ containers, or translate a technical checklist.
 
 Before launch, the lead developer verifies the real hosted website—not just a
 local copy—including account creation, automatic trial, Clerk checkout for each
-plan, paper and live workflows, CMC REST/WebSocket recovery, database upgrades,
+plan, paper and live workflows, Binance Alpha REST/WebSocket recovery, database upgrades,
 monitoring, encrypted backup and restore, signed engine downloads, and the full
 backend/frontend/engine test suite.
 

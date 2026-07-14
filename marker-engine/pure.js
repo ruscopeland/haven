@@ -117,7 +117,7 @@ function parseBracketId(marker) {
   catch { return undefined; }
 }
 
-// Implied price impact (%) of a quote versus the CMC market price.
+// Implied price impact (%) of a quote versus the Binance Alpha market price.
 // Positive = you get less than expected. Returns 0 when it can't be computed.
 export function priceImpactPct({ isBuy, usdNotional, currentPrice, bnbPrice, quotedOut }) {
   if (!(quotedOut > 0)) return 0;

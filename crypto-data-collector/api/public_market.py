@@ -1,6 +1,6 @@
 """Public market endpoints for the signed-out landing page.
 
-Real data only — no mocks. Reads Haven's licensed CMC caches and is heavily
+Real data only — no mocks. Reads Haven's Binance Alpha caches and is heavily
 rate-limited.
 """
 import re
@@ -18,8 +18,6 @@ from database.models import Token, LatestTicker, MarketCandle
 
 router = APIRouter(prefix="/public", tags=["public"])
 
-# CMC static CDN — real logos keyed by CMC numeric id (from listings feed).
-CMC_LOGO = "https://s2.coinmarketcap.com/static/img/coins/64x64/{id}.png"
 
 STABLE_SYMBOLS = {
     "USDT", "USDC", "USDE", "USDG", "DAI", "BUSD", "TUSD", "FDUSD", "USD1",
@@ -66,16 +64,15 @@ class PublicToken(BaseModel):
     name: str | None = None
     chain: str | None = None
     market_cap: float = 0.0
-    cmc_rank: int | None = None
-    cmc_id: int | None = None
-    cmc_slug: str | None = None
+    alpha_rank: int | None = None
+    alpha_id: str | None = None
     logo_url: str | None = None
     price: float | None = None
     price_change_24h: float | None = None
     volume_24h: float = 0.0
     liquidity_usd: float = 0.0
     default_checked: bool = False
-    # Real closes from the CMC candle cache over ~24h (downsampled).
+    # Real closes from the Binance Alpha candle cache over ~24h (downsampled).
     sparkline: List[float] = []
 
 
@@ -84,8 +81,6 @@ def _display(tok: Token) -> str:
 
 
 def _logo_url(tok: Token) -> str | None:
-    if tok.cmc_id:
-        return CMC_LOGO.format(id=int(tok.cmc_id))
     return None
 
 
@@ -109,10 +104,8 @@ def _passes_quality(tok: Token, ticker: LatestTicker | None, *,
     if _is_stable(tok):
         return False
     mc = tok.market_cap or 0.0
-    # Prefer real CMC mcaps on the public landing; skip junk without CMC id
-    # when they claim a huge mcap (or no mcap at all for movers band).
-    has_cmc = tok.cmc_id is not None
-    if mc > 0 and not has_cmc:
+    # Market caps are accepted only for tokens in the current Alpha catalogue.
+    if mc > 0 and not tok.alpha_id:
         return False
     if mc > 0 and mc < MIN_MCAP:
         return False
@@ -151,12 +144,12 @@ def _downsample(points: list[float], target: int = 24) -> list[float]:
 
 
 def _sparklines(db: Session, symbols: list[str], points: int = 24) -> dict[str, list[float]]:
-    """Close prices from cached, closed CMC 15-minute candles."""
+    """Close prices from cached, closed Binance Alpha 15-minute candles."""
     if not symbols:
         return {}
     start_ms = int(time.time() * 1000) - 86_400_000
     rows = (db.query(Token.symbol, MarketCandle.open_time, MarketCandle.close_price)
-            .join(MarketCandle, MarketCandle.cmc_id == Token.cmc_id)
+            .join(MarketCandle, MarketCandle.alpha_id == Token.alpha_id)
             .filter(Token.symbol.in_(symbols), MarketCandle.interval == "15min",
                     MarketCandle.closed == 1, MarketCandle.open_time >= start_ms)
             .order_by(Token.symbol, MarketCandle.open_time.asc()).all())
@@ -177,9 +170,8 @@ def _to_public(tok: Token, ticker: LatestTicker | None,
         name=tok.name,
         chain=tok.chain_id,
         market_cap=float(tok.market_cap or 0),
-        cmc_rank=tok.cmc_rank,
-        cmc_id=tok.cmc_id,
-        cmc_slug=tok.cmc_slug,
+        alpha_rank=tok.alpha_rank,
+        alpha_id=tok.alpha_id,
         logo_url=_logo_url(tok),
         price=ticker.last_price if ticker else None,
         price_change_24h=ticker.price_change_24h if ticker else None,
@@ -202,7 +194,7 @@ def _ranked_universe(db: Session) -> list[tuple[Token, LatestTicker | None]]:
 
     def sort_key(item):
         t, _ = item
-        rank = t.cmc_rank if t.cmc_rank and t.cmc_rank > 0 else 10_000_000
+        rank = t.alpha_rank if t.alpha_rank and t.alpha_rank > 0 else 10_000_000
         return (rank, -(t.market_cap or 0))
 
     pairs.sort(key=sort_key)

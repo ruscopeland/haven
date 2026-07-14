@@ -28,14 +28,14 @@ const finder = {
 
 ## The finder ctx
 
-Identical to a strategy ctx (same CMC OHLCV series, indicators, look-ahead guard,
+Identical to a strategy ctx (same Binance Alpha OHLCV series, indicators, look-ahead guard,
 `ctx.params`, `ctx.state`, `ctx.log`) with two differences:
 
 - **no trading surface** — there is no `ctx.buy` / `ctx.sell` / `ctx.position`;
 - **`ctx.token`** = `{ symbol, name, volume24h, priceChange24h }` for the
   token being scored right now.
 
-`ctx.volume` in finder code is CMC's USD OHLCV volume per bar.
+`ctx.volume` in finder code is Binance Alpha's USD OHLCV volume per bar.
 
 `score()` runs once per token per bar — a 3-day, 15-minute window over 100
 tokens is ~29k calls per edit. Keep it simple; indicators are cached per
@@ -65,5 +65,5 @@ the templates do.
 Attach the finder to a strategy in the Strategies tab (Token selection →
 Finder). Backtest = the portfolio simulator; DRY = paper trades on live
 rankings; LIVE = real swaps, still behind every engine risk guard. The
-data window is the history licensed for the configured CMC Startup plan and
+data window is the history licensed for the configured Binance Alpha Startup plan and
 the closed candles Haven has durably cached.

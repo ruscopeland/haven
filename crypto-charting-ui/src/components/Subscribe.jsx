@@ -5,7 +5,11 @@ import HavenLogo from './HavenLogo.jsx';
 import LegalFooter from './LegalFooter.jsx';
 import { RISK_SUMMARY_SHORT } from '../legal/content.js';
 
-export default function Subscribe({ onActivated }) {
+export default function Subscribe({ access, onActivated }) {
+  const hasPaidPlan = access?.paid === true;
+  const hasTrial = access?.trial === true;
+  const hasActivePlan = hasPaidPlan || hasTrial;
+
   return (
     <div className="subscribe-root">
       <div className="subscribe-topbar">
@@ -20,9 +24,13 @@ export default function Subscribe({ onActivated }) {
         </div>
       </div>
       <div className="subscribe-card">
-        <h1>Choose your plan</h1>
+        <h1>{hasActivePlan ? 'Manage your subscription' : 'Choose your plan'}</h1>
         <p className="subscribe-sub">
-          Choose a plan and add a card to start your seven-day trial. You will not be billed until the trial ends, and you can cancel beforehand.
+          {hasPaidPlan
+            ? 'Your subscription is active. Review your current plan and billing date, or choose a different plan below.'
+            : hasTrial
+              ? 'Your seven-day trial is active. Review your current plan and trial end date, or choose a different plan below.'
+              : 'Choose a plan and add a card to start your seven-day trial. You will not be billed until the trial ends, and you can cancel beforehand.'}
         </p>
         <p className="landing-risk-line" style={{ marginBottom: 20 }}>{RISK_SUMMARY_SHORT}</p>
         <div className="clerk-pricing-wrap">

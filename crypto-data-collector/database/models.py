@@ -2,7 +2,7 @@ from sqlalchemy import Column, Integer, String, Float, BigInteger, Text, UniqueC
 from database.db import Base
 
 class Token(Base):
-    """A CMC-identified contract supported by Haven's local engine."""
+    """A Binance Alpha BSC contract supported by Haven's local engine."""
     __tablename__ = "tokens"
 
     id = Column(String, primary_key=True, index=True)
@@ -12,16 +12,15 @@ class Token(Base):
     contract_address = Column(String)
     display_symbol = Column(String)      # clean human symbol ("CAKE"); UI adds chain badge
     decimals = Column(Integer)
-    liquidity_usd = Column(Float)        # optional CMC DEX liquidity when available
-    market_cap = Column(Float)           # USD market cap (from CMC ranking)
-    cmc_rank = Column(Integer)           # global CoinMarketCap rank (1 = largest)
-    cmc_slug = Column(String)            # CMC slug for identity
-    cmc_id = Column(Integer)             # CMC numeric id — logo CDN uses this
+    liquidity_usd = Column(Float)        # Binance Alpha liquidity when available
+    market_cap = Column(Float)           # USD market cap from Binance Alpha
+    alpha_rank = Column(Integer)         # deterministic Alpha catalogue rank
+    alpha_id = Column(String)            # Binance Alpha trading asset identifier
     listed_at = Column(BigInteger)       # unix ms first seen (pool creation)
     # staged  = ingested but hidden from /tokens until the M4 cutover flips it
     # active  = normal;  retired = no supported chain / delisted;  blacklisted = manual
     status = Column(String, default="active")
-    security_json = Column(String)       # cached CMC DEX security response
+    security_json = Column(String)       # cached Binance Alpha eligibility summary
 
 
 class LatestTicker(Base):
@@ -274,23 +273,17 @@ class DebugLog(Base):
     metadata_json = Column(String, nullable=True)          # extra structured data
 
 
-# ── CoinMarketCap market-data cache ─────────────────────────────────────────
+# ── Binance Alpha market-data cache ─────────────────────────────────────────
 
-class CmcAsset(Base):
-    """Cached CMC identity and relatively static metadata.
+class AlphaAsset(Base):
+    """Cached Binance Alpha identity and metadata for BSC-tradable tokens."""
+    __tablename__ = "alpha_assets"
 
-    CMC IDs are the canonical identity. Symbols are display values and are not
-    unique. ``metadata_json`` contains the licensed response fields needed by
-    Haven; it is never exposed as a standalone data-resale API.
-    """
-    __tablename__ = "cmc_assets"
-
-    cmc_id = Column(Integer, primary_key=True)
+    alpha_id = Column(String, primary_key=True)
     symbol = Column(String, index=True, nullable=False)
     name = Column(String, nullable=False)
-    slug = Column(String, index=True, nullable=False)
     rank = Column(Integer, index=True)
-    platform = Column(String, index=True)
+    chain_id = Column(String, index=True, nullable=False)
     contract_address = Column(String, index=True)
     metadata_json = Column(Text)
     fetched_at = Column(BigInteger, nullable=False)
@@ -298,16 +291,15 @@ class CmcAsset(Base):
 
 
 class MarketCandle(Base):
-    """CMC OHLCV cache; closed rows are immutable and fetched only once."""
+    """Binance Alpha OHLCV cache; closed rows are immutable once persisted."""
     __tablename__ = "market_candles"
     __table_args__ = (
-        UniqueConstraint("cmc_id", "platform", "contract_address", "interval",
+        UniqueConstraint("alpha_id", "contract_address", "interval",
                          "open_time", name="uq_market_candle_identity"),
     )
 
     id = Column(Integer, primary_key=True, autoincrement=True)
-    cmc_id = Column(Integer, index=True)
-    platform = Column(String, index=True, default="")
+    alpha_id = Column(String, index=True, nullable=False)
     contract_address = Column(String, index=True, default="")
     interval = Column(String, index=True, nullable=False)
     open_time = Column(BigInteger, index=True, nullable=False)
@@ -319,7 +311,7 @@ class MarketCandle(Base):
     volume = Column(Float, default=0.0)
     trader_count = Column(Integer)
     closed = Column(Integer, default=1, index=True)
-    source = Column(String, default="cmc_rest")
+    source = Column(String, default="binance_alpha")
     updated_at = Column(BigInteger, nullable=False)
 
 
@@ -327,13 +319,12 @@ class CandleCoverage(Base):
     """Durable REST coverage watermark, including intervals with no trades."""
     __tablename__ = "candle_coverage"
     __table_args__ = (
-        UniqueConstraint("cmc_id", "platform", "contract_address", "interval",
+        UniqueConstraint("alpha_id", "contract_address", "interval",
                          name="uq_candle_coverage_identity"),
     )
 
     id = Column(Integer, primary_key=True, autoincrement=True)
-    cmc_id = Column(Integer, index=True, nullable=False)
-    platform = Column(String, nullable=False)
+    alpha_id = Column(String, index=True, nullable=False)
     contract_address = Column(String, nullable=False)
     interval = Column(String, nullable=False)
     start_time = Column(BigInteger, nullable=False)
@@ -342,7 +333,7 @@ class CandleCoverage(Base):
 
 
 class ProviderStatus(Base):
-    """Last known CMC provider state for health and owner operations."""
+    """Last known Binance Alpha provider state for health and owner operations."""
     __tablename__ = "provider_status"
 
     provider = Column(String, primary_key=True)
@@ -357,7 +348,7 @@ class ProviderStatus(Base):
 
 
 class ProviderUsage(Base):
-    """Periodic CMC key-usage snapshot; the API key itself is never stored."""
+    """Periodic Binance Alpha key-usage snapshot; the API key itself is never stored."""
     __tablename__ = "provider_usage"
 
     id = Column(Integer, primary_key=True, autoincrement=True)
