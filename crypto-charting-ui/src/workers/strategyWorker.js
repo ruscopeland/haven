@@ -1,3 +1,5 @@
+// Keep this entrypoint versioned with its worker-specific CSP policy.  A
+// content change here gives clients a new immutable asset URL after a CSP fix.
 import {
   loadStrategy, loadFinder, runBacktest, runPortfolioBacktest, runRanking,
   computeForwardReturns, finderQuality,
