@@ -1,6 +1,6 @@
 # Haven user guide
 
-**Effective reference:** July 10, 2026
+**Effective reference:** July 13, 2026
 
 This guide matches the in-app **Docs** page. Haven is software for research and strategy tooling — not investment advice.
 
@@ -22,20 +22,20 @@ The subscription helps cover **shared market data**, development, hosting, and u
 
 ## Quick start
 
-1. Sign up → free **paper trial** (no card for paper).  
-2. **Dashboard** — optional wallet address for balances.  
-3. **Charts** — pick tokens from Alpha Screener or CMC-style search.  
-4. **Strategies** — template or code → backtest → **paper** first.  
-5. **Live** — subscribe → download engine → local `PRIVATE_KEY` only on your PC.  
+1. Sign up → automatic seven-day trial for paper or live workflows.
+2. **Dashboard** — optional wallet address for balances.
+3. **Charts** — pick tokens from the licensed CoinMarketCap catalogue.
+4. **Strategies** — template or code → backtest → **paper** first.
+5. **Live** — download the signed engine; your private key stays encrypted on your PC.
 6. Read **Risk disclosure** before live size.
 
 ---
 
 ## Charts & Alpha Screener
 
-- Main nav stays full width; screener sits **under** the tabs next to Layouts.  
-- Search: local feed + CMC-style discovery; selecting a missing token downloads data and can chart it.  
-- Layouts 1–5 save chart sets.  
+- Main nav stays full width; screener sits **under** the tabs next to Layouts.
+- Search: Haven's server-side CoinMarketCap cache; the provider key never reaches the browser.
+- Layouts 1–5 save chart sets.
 - Elevated-risk tokens: **still chart**; trading needs contract verify + risk acknowledgments; ~$1 probe recommended.
 
 ---
@@ -47,7 +47,7 @@ Settings → download engine → generate connection key (once) → run setup on
 
 - API URL  
 - Connection key  
-- `PRIVATE_KEY` (never in the browser)
+- Trading key stored with Windows user-bound encryption (never in the browser)
 
 Engine executes markers/strategies with size/impact/security guards.
 

@@ -1,15 +1,8 @@
-from sqlalchemy import Column, Integer, String, Float, BigInteger
+from sqlalchemy import Column, Integer, String, Float, BigInteger, Text, UniqueConstraint
 from database.db import Base
 
 class Token(Base):
-    """A tracked token (DATA-ROADMAP AD-D1/AD-D2).
-
-    New-format rows (on-chain ingester): id = "{chain}:{contract_lowercase}",
-    symbol = the globally-unique SLUG "{DISPLAY}_{chain}" that every other
-    table joins on, chain_id = the chain slug ("bsc", "ethereum", ...).
-    Legacy Binance rows (id = Binance tokenId, symbol = "XXXUSDT", numeric
-    chain_id) coexist until the M4 cutover remap (tools/remap_symbols.py).
-    """
+    """A CMC-identified contract supported by Haven's local engine."""
     __tablename__ = "tokens"
 
     id = Column(String, primary_key=True, index=True)
@@ -19,8 +12,7 @@ class Token(Base):
     contract_address = Column(String)
     display_symbol = Column(String)      # clean human symbol ("CAKE"); UI adds chain badge
     decimals = Column(Integer)
-    total_supply = Column(Float)         # human units (raw / 10**decimals)
-    liquidity_usd = Column(Float)        # primary-pool depth, refreshed by the sweep
+    liquidity_usd = Column(Float)        # optional CMC DEX liquidity when available
     market_cap = Column(Float)           # USD market cap (from CMC ranking)
     cmc_rank = Column(Integer)           # global CoinMarketCap rank (1 = largest)
     cmc_slug = Column(String)            # CMC slug for identity
@@ -29,52 +21,7 @@ class Token(Base):
     # staged  = ingested but hidden from /tokens until the M4 cutover flips it
     # active  = normal;  retired = no supported chain / delisted;  blacklisted = manual
     status = Column(String, default="active")
-    security_json = Column(String)       # GoPlus payload (DATA-ROADMAP M7)
-    primary_pool = Column(String)        # pools.id used for pricing/liquidity
-
-
-class Pool(Base):
-    """A DEX pool the on-chain ingester watches (DATA-ROADMAP AD-D6).
-
-    Only pools quoted in a chain's trusted quote tokens are ever stored —
-    that is what makes prices unspoofable (AD-D5). `watch=1` pools are in the
-    getLogs address filter; drops use floor/2 hysteresis so pools don't flap.
-    """
-    __tablename__ = "pools"
-
-    id = Column(String, primary_key=True)        # "{chain}:{pool_address_lowercase}"
-    chain = Column(String, index=True, nullable=False)
-    dex = Column(String)                          # "pancake-v2" | "pancake-v3" | "uniswap-v2" | "uniswap-v3"
-    kind = Column(String)                         # "v2" | "v3"
-    token_id = Column(String, index=True)         # tokens.id of the non-quote side
-    quote_address = Column(String)                # quote token contract (lowercase)
-    token_is_token0 = Column(Integer)             # 1 = ranked token is token0
-    fee_tier = Column(Integer, default=0)         # v3 fee (500/2500/10000); 0 for v2
-    liquidity_usd = Column(Float, default=0.0)    # ≈ 2 × quote balance × quote USD
-    watch = Column(Integer, default=0, index=True)
-    created_at = Column(BigInteger)               # unix ms of pool creation
-    last_checked = Column(BigInteger)             # last liquidity sweep
-
-
-class OneMinBucket(Base):
-    """One-minute aggregated bucket of trade data.
-
-    Each row is one minute of trades for one symbol.
-    Composite PK (symbol, bucket_start) so upsert with merge() works cleanly.
-    """
-    __tablename__ = "one_min_buckets"
-
-    symbol = Column(String, primary_key=True, index=True)
-    # Indexed on its own: /signals and pruning filter by bucket_start across all
-    # symbols, which otherwise full-scans the (symbol, bucket_start) PK.
-    bucket_start = Column(BigInteger, primary_key=True, index=True)  # unix ms of minute boundary
-    open_price = Column(Float)
-    high_price = Column(Float)
-    low_price = Column(Float)
-    close_price = Column(Float)
-    buy_volume = Column(Float)   # USD volume of buy-side trades
-    sell_volume = Column(Float)  # USD volume of sell-side trades
-    trade_count = Column(Integer)
+    security_json = Column(String)       # cached CMC DEX security response
 
 
 class LatestTicker(Base):
@@ -89,14 +36,10 @@ class LatestTicker(Base):
 
 
 class Heartbeat(Base):
-    """Health-check heartbeat for background processes.
-
-    Each process (collector, execution_engine) writes its name + timestamp
-    every 30 seconds. The /health endpoint reads these to show live status.
-    """
+    """Local engines report a coarse connection heartbeat."""
     __tablename__ = "heartbeats"
 
-    process = Column(String, primary_key=True, index=True)  # e.g. "collector", "execution_engine"
+    process = Column(String, primary_key=True, index=True)
     last_heartbeat = Column(BigInteger)  # unix ms
 
 
@@ -154,6 +97,13 @@ class TradeHistory(Base):
     block_time = Column(BigInteger)
     status = Column(String, default="PENDING")     # PENDING / FILLED / FAILED
     strategy_id = Column(String, nullable=True)
+    chain_id = Column(String, nullable=True)
+    submitted_at = Column(BigInteger, nullable=True)
+    confirmed_at = Column(BigInteger, nullable=True)
+    block_number = Column(BigInteger, nullable=True)
+    reconciliation_state = Column(String, default="recorded")
+    receipt_json = Column(Text, nullable=True)
+    intent_hash = Column(String, index=True, nullable=True)
 
 
 # ── Strategies ─────────────────────────────────────────────────────────────
@@ -190,6 +140,8 @@ class Strategy(Base):
     updated_at = Column(BigInteger)                  # bumped on definition changes only
     last_run_at = Column(BigInteger, nullable=True)  # runner writes after each processed bar
     last_error = Column(String, nullable=True)       # runner writes when the strategy throws
+    code_version = Column(Integer, default=1, nullable=False)
+    live_approved_version = Column(Integer, nullable=True)
 
 
 # ── Finders (Token Finder module) ──────────────────────────────────────────
@@ -220,48 +172,6 @@ class Finder(Base):
     last_error = Column(String, nullable=True)        # evaluator writes when the finder throws
 
 
-class FifteenMinBucket(Base):
-    """Downsampled 15-minute archive of one_min_buckets (Token Finder lookback).
-
-    Written by the collector's periodic archive task (idempotent recompute of
-    the recent window from one_min_buckets), retained ~90 days vs the 1-minute
-    table's ~7. /universe reads it for ranges older than the 1-minute
-    retention. Same column meanings as OneMinBucket.
-    """
-    __tablename__ = "fifteen_min_buckets"
-
-    symbol = Column(String, primary_key=True, index=True)
-    bucket_start = Column(BigInteger, primary_key=True, index=True)  # unix ms of 15-min boundary
-    open_price = Column(Float)
-    high_price = Column(Float)
-    low_price = Column(Float)
-    close_price = Column(Float)
-    buy_volume = Column(Float)
-    sell_volume = Column(Float)
-    trade_count = Column(Integer)
-
-
-class DailyBucket(Base):
-    """Daily OHLCV archive for long-term chart history (backfilled from CMC k-line).
-
-    Written by the backfill script (cmc k-line keyless endpoint) and by the
-    collector's daily archive task. Retained indefinitely (or a very long
-    retention). /klines reads it for intervals >= 1d so charts can show
-    1+ year of history instead of the 7-day/90-day limits of the finer tables.
-    """
-    __tablename__ = "daily_buckets"
-
-    symbol = Column(String, primary_key=True, index=True)
-    bucket_start = Column(BigInteger, primary_key=True, index=True)  # unix ms of UTC midnight
-    open_price = Column(Float)
-    high_price = Column(Float)
-    low_price = Column(Float)
-    close_price = Column(Float)
-    buy_volume = Column(Float)   # total USD volume (k-line doesn't split buy/sell)
-    sell_volume = Column(Float)  # 0 (no split available from k-line)
-    trade_count = Column(Integer)
-
-
 class EngineSetting(Base):
     """Key-value settings for the marker execution engine (pause flag, risk limits).
 
@@ -280,7 +190,7 @@ class EngineSetting(Base):
 
 # ── Debug log levels ───────────────────────────────────────────────────────
 DEBUG_LEVELS = ("DEBUG", "ERROR", "TRADE", "INFO", "API_REQUEST", "API_RESPONSE")
-DEBUG_SOURCES = ("collector", "engine", "api", "wallet")
+DEBUG_SOURCES = ("engine", "api", "wallet")
 
 
 class ApiKey(Base):
@@ -300,38 +210,56 @@ class ApiKey(Base):
     created_at = Column(BigInteger)
     last_used_at = Column(BigInteger, nullable=True)
     revoked = Column(Integer, default=0)                   # 1 = key disabled
+    scopes = Column(String, default="engine:read,engine:trade,engine:report", nullable=False)
+    expires_at = Column(BigInteger, nullable=True)
 
 
 class Subscription(Base):
-    """Stripe subscription state per user (Haven SaaS).
-
-    Written ONLY by the Stripe webhook handler (and checkout bootstrap).
-    status follows Stripe's vocabulary: active / trialing / past_due /
-    canceled / incomplete. `early` freezes the founding-member price tier the
-    user locked in (first 500 active subscribers).
-    """
+    """Local trial record and fail-closed cache of Clerk plan state."""
     __tablename__ = "subscriptions"
 
     user_id = Column(String, primary_key=True)             # Clerk user id
-    stripe_customer_id = Column(String, index=True, nullable=True)
-    stripe_subscription_id = Column(String, index=True, nullable=True)
     status = Column(String, default="none")
-    plan = Column(String, nullable=True)                   # monthly | annual
-    price_id = Column(String, nullable=True)
+    plan = Column(String, nullable=True)
     current_period_end = Column(BigInteger, nullable=True)  # unix ms
-    early = Column(Integer, default=0)                     # 1 = founding price lock
-    # Bot slots purchased beyond the plan's included allowance (see
-    # api/auth.py entitlements). Set by the owner / a future Stripe add-on;
-    # a "bot" is a strategy armed DRY or LIVE.
     extra_bots = Column(Integer, default=0)
     created_at = Column(BigInteger)
     updated_at = Column(BigInteger)
 
 
+class StrategyVersion(Base):
+    """Immutable strategy code versions and explicit live approvals."""
+    __tablename__ = "strategy_versions"
+    __table_args__ = (
+        UniqueConstraint("strategy_id", "version", name="uq_strategy_version"),
+    )
+
+    id = Column(String, primary_key=True)
+    strategy_id = Column(String, index=True, nullable=False)
+    user_id = Column(String, index=True, nullable=False)
+    version = Column(Integer, nullable=False)
+    code = Column(Text, nullable=False)
+    code_hash = Column(String, nullable=False)
+    approved_for_live = Column(Integer, default=0, nullable=False)
+    approved_at = Column(BigInteger)
+    created_at = Column(BigInteger, nullable=False)
+
+
+class AiDailyUsage(Base):
+    __tablename__ = "ai_daily_usage"
+    __table_args__ = (UniqueConstraint("user_id", "usage_date", name="uq_ai_daily_user"),)
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    user_id = Column(String, index=True, nullable=False)
+    usage_date = Column(String, index=True, nullable=False)
+    requests = Column(Integer, default=0, nullable=False)
+    updated_at = Column(BigInteger, nullable=False)
+
+
 class DebugLog(Base):
     """Structured debug log entry from any program in the system.
 
-    Each source (collector, engine, api, wallet) writes timestamped entries
+    Each source (engine, API, or wallet) writes timestamped entries
     with a severity level. The wallet dashboard fetches these for the
     toggleable debug log panel.
     """
@@ -339,8 +267,129 @@ class DebugLog(Base):
 
     id = Column(Integer, primary_key=True, autoincrement=True)
     user_id = Column(String, index=True, default="system", nullable=False)
-    source = Column(String, index=True, nullable=False)   # collector | engine | api | wallet
+    source = Column(String, index=True, nullable=False)   # engine | api | wallet
     level = Column(String, index=True, nullable=False)     # DEBUG | ERROR | TRADE | INFO | API_REQUEST | API_RESPONSE
     message = Column(String, nullable=False)
     timestamp = Column(BigInteger, index=True)             # unix ms
     metadata_json = Column(String, nullable=True)          # extra structured data
+
+
+# ── CoinMarketCap market-data cache ─────────────────────────────────────────
+
+class CmcAsset(Base):
+    """Cached CMC identity and relatively static metadata.
+
+    CMC IDs are the canonical identity. Symbols are display values and are not
+    unique. ``metadata_json`` contains the licensed response fields needed by
+    Haven; it is never exposed as a standalone data-resale API.
+    """
+    __tablename__ = "cmc_assets"
+
+    cmc_id = Column(Integer, primary_key=True)
+    symbol = Column(String, index=True, nullable=False)
+    name = Column(String, nullable=False)
+    slug = Column(String, index=True, nullable=False)
+    rank = Column(Integer, index=True)
+    platform = Column(String, index=True)
+    contract_address = Column(String, index=True)
+    metadata_json = Column(Text)
+    fetched_at = Column(BigInteger, nullable=False)
+    expires_at = Column(BigInteger, nullable=False, index=True)
+
+
+class MarketCandle(Base):
+    """CMC OHLCV cache; closed rows are immutable and fetched only once."""
+    __tablename__ = "market_candles"
+    __table_args__ = (
+        UniqueConstraint("cmc_id", "platform", "contract_address", "interval",
+                         "open_time", name="uq_market_candle_identity"),
+    )
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    cmc_id = Column(Integer, index=True)
+    platform = Column(String, index=True, default="")
+    contract_address = Column(String, index=True, default="")
+    interval = Column(String, index=True, nullable=False)
+    open_time = Column(BigInteger, index=True, nullable=False)
+    close_time = Column(BigInteger, nullable=False)
+    open_price = Column(Float, nullable=False)
+    high_price = Column(Float, nullable=False)
+    low_price = Column(Float, nullable=False)
+    close_price = Column(Float, nullable=False)
+    volume = Column(Float, default=0.0)
+    trader_count = Column(Integer)
+    closed = Column(Integer, default=1, index=True)
+    source = Column(String, default="cmc_rest")
+    updated_at = Column(BigInteger, nullable=False)
+
+
+class CandleCoverage(Base):
+    """Durable REST coverage watermark, including intervals with no trades."""
+    __tablename__ = "candle_coverage"
+    __table_args__ = (
+        UniqueConstraint("cmc_id", "platform", "contract_address", "interval",
+                         name="uq_candle_coverage_identity"),
+    )
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    cmc_id = Column(Integer, index=True, nullable=False)
+    platform = Column(String, nullable=False)
+    contract_address = Column(String, nullable=False)
+    interval = Column(String, nullable=False)
+    start_time = Column(BigInteger, nullable=False)
+    end_time = Column(BigInteger, nullable=False)
+    updated_at = Column(BigInteger, nullable=False)
+
+
+class ProviderStatus(Base):
+    """Last known CMC provider state for health and owner operations."""
+    __tablename__ = "provider_status"
+
+    provider = Column(String, primary_key=True)
+    state = Column(String, nullable=False)
+    last_event_at = Column(BigInteger)
+    last_reconciled_at = Column(BigInteger)
+    reconnect_count = Column(Integer, default=0)
+    gap_count = Column(Integer, default=0)
+    error = Column(Text)
+    details_json = Column(Text)
+    updated_at = Column(BigInteger, nullable=False)
+
+
+class ProviderUsage(Base):
+    """Periodic CMC key-usage snapshot; the API key itself is never stored."""
+    __tablename__ = "provider_usage"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    provider = Column(String, index=True, nullable=False)
+    captured_at = Column(BigInteger, index=True, nullable=False)
+    credits_used = Column(Integer)
+    credits_left = Column(Integer)
+    requests_left_minute = Column(Integer)
+    payload_json = Column(Text)
+
+
+class OperationAlert(Base):
+    __tablename__ = "operation_alerts"
+
+    id = Column(String, primary_key=True)
+    severity = Column(String, index=True, nullable=False)
+    code = Column(String, index=True, nullable=False)
+    message = Column(Text, nullable=False)
+    active = Column(Integer, default=1, index=True)
+    created_at = Column(BigInteger, nullable=False)
+    resolved_at = Column(BigInteger)
+    details_json = Column(Text)
+
+
+class BackupRun(Base):
+    __tablename__ = "backup_runs"
+
+    id = Column(String, primary_key=True)
+    provider = Column(String, nullable=False)
+    status = Column(String, index=True, nullable=False)
+    started_at = Column(BigInteger, nullable=False)
+    completed_at = Column(BigInteger)
+    location = Column(String)
+    checksum = Column(String)
+    error = Column(Text)

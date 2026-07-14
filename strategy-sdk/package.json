@@ -2,7 +2,7 @@
   "name": "strategy-sdk",
   "private": true,
   "version": "1.0.0",
-  "description": "Shared strategy runtime: indicators, flow aggregation, backtester. Plain ESM, zero deps — imported by crypto-charting-ui (backtests) and marker-engine (live/dry runner).",
+  "description": "Shared strategy runtime: indicators, CMC OHLCV backtesting, and portfolio ranking. Plain ESM, zero dependencies for browser workers and the local engine.",
   "type": "module",
   "main": "src/index.js",
   "scripts": {

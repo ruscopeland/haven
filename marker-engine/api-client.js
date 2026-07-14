@@ -1,7 +1,5 @@
-// Shared Haven API client — used by the desktop engine (index.js) and the
-// cloud paper-runner (paper-runner-service.js). Every request carries the
-// X-Api-Key header when a key is set (a user's engine key, or the cloud
-// runner's service key); solo/local mode leaves it empty.
+// Haven API client for the user's local engine. Requests carry a scoped,
+// expiring engine key; solo/local mode leaves it empty.
 export class ApiClient {
   constructor(baseUrl, apiKey = '') {
     this.base = baseUrl;
@@ -28,7 +26,7 @@ export class ApiClient {
   // limit must clear it or the engine/runner token maps silently truncate.
   getTokens() { return this.#json('/tokens?limit=20000&min_liquidity=0&quality=false'); }
   getEngineSettings() { return this.#json('/engine/settings'); }
-  // GoPlus security gate before approve/swap. force=true re-scans if stale/missing.
+  // CMC DEX security gate before approve/swap. force=true refreshes when needed.
   checkTokenSecurity(symbol, { force = false } = {}) {
     const q = force ? '?force=1' : '';
     return this.#json(`/security/check/${encodeURIComponent(symbol)}${q}`, {
@@ -73,9 +71,6 @@ export class ApiClient {
   }
   getKlines(symbol, interval, limit) {
     return this.#json(`/klines/${symbol}?interval=${interval}&limit=${limit}`);
-  }
-  getFlow(symbol, startMs) {
-    return this.#json(`/flow/${symbol}?limit=10080${startMs ? `&start_ms=${startMs}` : ''}`);
   }
   getTrades({ symbol, status, strategy_id, limit = 50 } = {}) {
     const q = new URLSearchParams();

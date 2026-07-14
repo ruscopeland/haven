@@ -8,6 +8,22 @@ const __dirname = path.dirname(fileURLToPath(import.meta.url))
 // https://vite.dev/config/
 export default defineConfig({
   plugins: [react()],
+  build: {
+    license: true,
+    rolldownOptions: {
+      output: {
+        codeSplitting: {
+          groups: [
+            { name: 'react-vendor', test: /node_modules[\\/]react(?:-dom)?[\\/]/ },
+            { name: 'auth-wallet-vendor', test: /node_modules[\\/](?:@clerk|ethers)[\\/]/ },
+            { name: 'editor-shell-vendor', test: /node_modules[\\/]@uiw[\\/]/ },
+            { name: 'editor-core-vendor', test: /node_modules[\\/](?:@codemirror|@lezer)[\\/]/ },
+            { name: 'chart-vendor', test: /node_modules[\\/]lightweight-charts[\\/]/ },
+          ],
+        },
+      },
+    },
+  },
   resolve: {
     // Shared strategy runtime (also imported by marker-engine) lives outside
     // this app so both runtimes execute the exact same code.

@@ -17,11 +17,7 @@ const ADDR_KEY = 'alpha_wallet_address';
 const EXTRA_CONTRACTS_KEY = 'havenWalletExtraContracts'; // JSON: { bsc: ['0x…'], … }
 const SCAN_CHAINS = ['bsc', 'ethereum', 'base'];
 
-const NATIVE_PRICE_ADDR = {
-  bsc: '0xbb4CdB9CBd36B01bD1cBaEBF2De08d9173bc095c',
-  ethereum: '0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2',
-  base: '0x4200000000000000000000000000000000000006',
-};
+const NATIVE_PRICE_SYMBOL = { bsc: 'BNB', ethereum: 'ETH', base: 'ETH' };
 
 export function getSavedAddress() {
   // Multi-tenant rule: never default every account to a shared wallet.
@@ -37,14 +33,13 @@ export function getSavedAddress() {
 }
 
 async function fetchNativeUsd(chain) {
-  const addr = NATIVE_PRICE_ADDR[chain];
-  if (!addr) return null;
-  const r = await fetch(`https://api.dexscreener.com/latest/dex/tokens/${addr}`);
+  const symbol = NATIVE_PRICE_SYMBOL[chain];
+  if (!symbol) return null;
+  const r = await fetch(`${API_URL}/market/prices?symbols=${symbol}`);
   if (!r.ok) return null;
   const j = await r.json();
-  const pairs = (j.pairs || []).filter(p => p.priceUsd);
-  pairs.sort((a, b) => (b.liquidity?.usd || 0) - (a.liquidity?.usd || 0));
-  return pairs[0] ? parseFloat(pairs[0].priceUsd) : null;
+  const price = j.prices?.[symbol]?.price;
+  return price > 0 ? Number(price) : null;
 }
 
 function loadExtraContracts() {

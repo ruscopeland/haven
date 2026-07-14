@@ -23,14 +23,10 @@ dry run.
 ## Bars, warm-up, and `null`
 
 - `bar` / `ctx.bars[i]` = `{ time, open, high, low, close, volume }`. `time`
-  is unix **seconds**. In finder code, `volume` is **buy+sell USD** (the
-  collector's buckets have no token-quantity volume).
+  is Unix **seconds** and `volume` is licensed CMC USD OHLCV volume.
 - Indicators need history: `ctx.rsi(14)[ctx.i]` is `null` for the first ~14
   bars. **Always guard**: `if (x == null) return;` — this is the single most
   common authoring bug.
-- `ctx.flow.*` (buy/sell/net USD per bar) comes from the collector's 1-minute
-  buckets, kept ~7 days. Bars older than that see `null` — "no data", which is
-  different from `0` ("no flow"). Guard it the same way.
 
 ## When do orders fill?
 

@@ -13,11 +13,10 @@
 //     is reported separately (openPositionUsd / unrealizedPnlUsd).
 
 import { loadStrategy, createCtx, mergeParams } from './runtime.js';
-import { aggregateFlow } from './flow.js';
 
 export function runBacktest({
-  code, strategy, bars, flowRows = null, params = {},
-  feePct = 0.25, slippagePct = 0.1, intervalSec = 60,
+  code, strategy, bars, params = {},
+  feePct = 0.25, slippagePct = 0.1,
 }) {
   const empty = { trades: [], equity: [], pending: [], logs: [], stats: emptyStats(), error: null };
   if (!strategy) {
@@ -85,10 +84,9 @@ export function runBacktest({
     },
   };
 
-  const flow = flowRows ? aggregateFlow(flowRows, bars.map(b => b.time), intervalSec) : null;
   const state = {};
   const ctx = createCtx({
-    bars, flow, params: mergedParams, state, position, emit,
+    bars, params: mergedParams, state, position, emit,
     log: (msg) => logs.push(`[bar ${barIndex}] ${msg}`),
   });
 

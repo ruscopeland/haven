@@ -1,31 +1,24 @@
 // Marker engine daemon — headless executor for chart markers.
 //
-// Watches collector prices via the FastAPI server and fires real swaps when a
+// Watches server-side CMC prices via the Haven API and fires real swaps when a
 // price crosses a marker line. This replaces the old in-browser wallet engine:
 // no browser tab, no HMR duplicate loops, no background-tab throttling.
 //
 // Runs in observe-only mode (logs crosses, never trades) when no key is set.
 import 'dotenv/config';
-import fs from 'node:fs';
-import path from 'node:path';
-import { fileURLToPath } from 'node:url';
 import { makeProvider, makeWallet } from './chain.js';
 import { MarkerEngine } from './engine.js';
 import { StrategyRunner } from './strategy-runner.js';
 import { FinderHub } from './finder-runner.js';
 import { ApiClient } from './api-client.js';
+import { loadEngineSecrets } from './credential-store.js';
 
-const __dirname = path.dirname(fileURLToPath(import.meta.url));
+const secureSecrets = loadEngineSecrets();
 
 // ── Config ──────────────────────────────────────────────────────────────────
 function loadPrivateKey() {
+  if (secureSecrets.privateKey) return secureSecrets.privateKey.trim();
   if (process.env.PRIVATE_KEY) return process.env.PRIVATE_KEY.trim();
-  // Fall back to the wallet app's .env so the key lives in exactly one place.
-  try {
-    const walletEnv = fs.readFileSync(path.join(__dirname, '..', 'crypto-wallet', '.env'), 'utf8');
-    const m = walletEnv.match(/^\s*VITE_PRIVATE_KEY\s*=\s*(\S+)\s*$/m);
-    if (m) return m[1].trim();
-  } catch { /* no wallet .env */ }
   return '';
 }
 
@@ -39,14 +32,14 @@ const POLL_MS = parseInt(process.env.POLL_MS || '3000', 10);
 // The connection key from the web app's "Connect your engine" screen. Sent as
 // X-Api-Key so the cloud API knows which user this engine trades for. Empty in
 // solo mode (the local API runs with HAVEN_SOLO=1 and needs no key).
-const API_KEY = (process.env.HAVEN_API_KEY || '').trim();
+const API_KEY = (secureSecrets.apiKey || process.env.HAVEN_API_KEY || '').trim();
 const config = {
   gasPriceGwei: process.env.GAS_PRICE_GWEI || '1',
   slippagePct: process.env.SLIPPAGE_PCT || '0.5',
   quickBuyPercent: parseFloat(process.env.QUICK_BUY_PERCENT || '5'),
   quickSellPercent: parseFloat(process.env.QUICK_SELL_PERCENT || '100'),
   // Stale-price guard (DATA-ROADMAP M3): skip marker evaluation for a token
-  // whose collector price is older than this — never trade a frozen price.
+  // whose CMC price is older than this — never trade a frozen price.
   stalePriceMs: parseInt(process.env.STALE_PRICE_MS || '180000', 10),
 };
 

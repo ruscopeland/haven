@@ -11,8 +11,7 @@
 //   }
 // ctx is the strategy ctx minus trading (no position/buy/sell) plus
 // ctx.token = { symbol, name, volume24h, priceChange24h }. In finder ctxs,
-// ctx.volume is buy+sell USD volume (the collector's buckets have no
-// token-quantity volume).
+// ctx.volume is CMC's USD OHLCV volume for the candle.
 
 import { createBaseCtx, mergeParams } from './runtime.js';
 
@@ -34,7 +33,7 @@ export function loadFinder(code) {
 
 // ── Universe normalization ───────────────────────────────────────────────────
 // Input: the GET /universe payload { interval, times (ms), tokens: [{symbol,
-// name, volume24h, priceChange24h, o,h,l,c,buy,sell,trades}] } with nulls where
+// name, volume24h, priceChange24h, o,h,l,c,volume}] } with nulls where
 // a token has no data.
 // Output shape shared by the ranking engine, the portfolio backtester, and the
 // live evaluator — ONE parser, never three:
@@ -46,8 +45,6 @@ export function loadFinder(code) {
 //       offset,              // global index of this token's first covered bar
 //       bars,                // [{time, open, high, low, close, volume}] from offset on,
 //                            //  interior gaps forward-filled flat with volume 0
-//       flow,                // { buy, sell, net, trades } aligned to bars; null on
-//                            //  gap-filled bars ("no data" ≠ "no flow")
 //     }]
 //   }
 export function normalizeUniverse(payload) {
@@ -63,7 +60,6 @@ export function normalizeUniverse(payload) {
     if (offset >= n) continue;                     // no covered bars at all
 
     const bars = [];
-    const buy = [], sell = [], net = [], trades = [];
     let prevClose = null;
     for (let i = offset; i < n; i++) {
       const covered = t.c[i] != null && t.o[i] != null;
@@ -71,24 +67,20 @@ export function normalizeUniverse(payload) {
         bars.push({
           time: times[i],
           open: t.o[i], high: t.h[i], low: t.l[i], close: t.c[i],
-          volume: (t.buy[i] || 0) + (t.sell[i] || 0),
+          volume: t.volume?.[i] ?? ((t.buy?.[i] || 0) + (t.sell?.[i] || 0)),
         });
         prevClose = t.c[i];
-        const b = t.buy[i], s = t.sell[i];
-        buy.push(b ?? 0); sell.push(s ?? 0);
-        net.push((b ?? 0) - (s ?? 0)); trades.push(t.trades[i] ?? 0);
       } else {
         // Interior gap (token went quiet): flat forward-fill so indicator math
-        // stays sane; flow stays null so finders can tell "no data" apart.
+        // stays sane while preserving a zero-volume gap.
         bars.push({ time: times[i], open: prevClose, high: prevClose, low: prevClose, close: prevClose, volume: 0 });
-        buy.push(null); sell.push(null); net.push(null); trades.push(null);
       }
     }
     tokens.push({
       symbol: t.symbol, name: t.name ?? t.symbol,
       chain: t.chain ?? null,                       // chain slug passthrough (M3)
       volume24h: t.volume24h ?? 0, priceChange24h: t.priceChange24h ?? 0,
-      offset, bars, flow: { buy, sell, net, trades },
+      offset, bars,
     });
   }
   return { interval: payload?.interval, intervalSec, times, tokens };
@@ -97,7 +89,7 @@ export function normalizeUniverse(payload) {
 // Finder ctx: base ctx + token metadata, no trading surface.
 export function createFinderCtx({ token, params, state, log }) {
   const ctx = createBaseCtx({
-    bars: token.bars, flow: token.flow, params, state,
+    bars: token.bars, params, state,
     log: log || (() => {}),
   });
   ctx.token = {

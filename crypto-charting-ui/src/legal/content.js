@@ -36,7 +36,7 @@ export const TERMS = {
       p: [
         'Haven provides software tools and access to shared market-oriented data to help you research digital assets, design strategies, backtest, paper-trade, and optionally execute trades using software that runs under your control.',
         'Haven is not a broker, dealer, exchange, investment adviser, commodity trading advisor, bank, custodian, or money transmitter. Haven does not manage your money, pick trades for you as a fiduciary, or guarantee outcomes.',
-        'Nothing in the Service is financial, investment, legal, or tax advice. Content (including charts, signals, rankings, GoPlus-style risk flags, examples, templates, and AI/assistant text if any) is informational and educational tooling only.',
+        'Nothing in the Service is financial, investment, legal, or tax advice. Content (including charts, rankings, CoinMarketCap security flags, examples, templates, and AI/assistant text if any) is informational and educational tooling only.',
         'You alone decide what to trade, when, and whether to use any feature.',
       ],
     },
@@ -68,7 +68,7 @@ export const TERMS = {
     {
       h: '6. Third-party services',
       p: [
-        'The Service may rely on third parties (blockchains, RPCs, DEXes/aggregators, data providers such as CoinMarketCap-style feeds, security vendors such as GoPlus, authentication, payments, hosting). Their terms and availability apply. We are not responsible for third-party outages, errors, or policy changes.',
+        'The Service relies on third parties including blockchains, RPCs, DEX aggregators, licensed CoinMarketCap market and security data, authentication, billing, and hosting. Their terms and availability apply. We are not responsible for third-party outages, errors, or policy changes.',
         'On-chain activity is irreversible when confirmed. Network fees, slippage, MEV, and contract behavior are outside our control.',
       ],
     },
@@ -220,7 +220,7 @@ export const RISK = {
     {
       h: 'No advice, no performance promises',
       p: [
-        'Haven does not advise you to buy, sell, or hold any asset. We do not represent that you will profit. Any examples, rankings, “alpha,” flows, or templates are tools and illustrations — not recommendations.',
+        'Haven does not advise you to buy, sell, or hold any asset. We do not represent that you will profit. Any examples, rankings, “alpha,” or templates are tools and illustrations — not recommendations.',
         'Operators of Haven may use the same software as members. That does not mean their positions, timing, or results will match yours, or that you should copy anyone.',
       ],
     },
@@ -234,7 +234,7 @@ export const RISK = {
     {
       h: 'Token & contract risk',
       p: [
-        'Tokens may be honeypots, high-tax, pausable, mintable, upgradeable, or able to blacklist wallets after you buy. Security scans (including GoPlus) are partial snapshots and can miss issues or go stale.',
+        'Tokens may be honeypots, high-tax, pausable, mintable, upgradeable, or able to blacklist wallets after you buy. CoinMarketCap security data is a partial snapshot and can miss issues or go stale.',
         'Haven may still chart risky tokens so you can research them. Charting is not an endorsement. If you insist on trading a flagged token, start small if at all, verify the contract yourself, and accept that a successful small trade does not prove the next trade is safe.',
       ],
     },
@@ -274,11 +274,11 @@ export const DOCS_SECTIONS = [
     id: 'quickstart',
     title: 'Quick start',
     body: [
-      '1. Create an account and start the free paper trial (no card for paper).',
+      '1. Create an account and start the automatic seven-day paper and live trial (no card).',
       '2. Open Dashboard — set a watch address if you want portfolio balances.',
       '3. Open Charts — search or select tokens from Alpha Screener; open layouts.',
       '4. Open Strategies — load a template or write rules; backtest; arm paper first.',
-      '5. For live: subscribe, download the desktop engine (Settings), paste a connection key, put your PRIVATE_KEY only in the engine’s local config on your PC, keep engine running.',
+      '5. For live during trial or paid access: download the desktop engine, create a scoped connection key, and let setup store the wallet key with Windows DPAPI on your PC.',
       '6. Read Risk Disclosure and verify contracts before any live size.',
     ],
   },
@@ -296,8 +296,8 @@ export const DOCS_SECTIONS = [
     title: 'Charts & Alpha Screener',
     body: [
       'Nav tabs stay full width. On Charts, Alpha Screener sits under the tabs beside Layouts.',
-      'Sort the live feed by flow, market cap, volume, etc.',
-      'Search by name/symbol: local hits appear in the list; CMC-style results can load a token into your DB, backfill history, and open a chart even if it was not already tracked.',
+      'Sort the live feed by market cap, volume, or 24-hour performance.',
+      'Search by name or symbol: cached CoinMarketCap results can add a supported contract, fetch its history once, and open a chart.',
       'Layouts 1–5 save chart sets; Grid controls multi-chart layout.',
       'Markers on the chart plan levels; live execution goes through the engine.',
     ],
@@ -307,7 +307,7 @@ export const DOCS_SECTIONS = [
     title: 'Risky tokens',
     body: [
       'Haven charts first, lectures second: elevated-risk tokens still open charts.',
-      'GoPlus (and related flags) may show honeypot, tax, blacklist functions, etc.',
+      'CoinMarketCap security flags may show honeypot, tax, blacklist functions, and related risks.',
       'Manual trade requires: verify contract on the explorer, accept warnings, prefer a ~$1 probe first. Larger size needs an extra acknowledgment. Creators can still block wallets later.',
       'Strategy/auto paths stay blocked without a clean security posture — intentional.',
     ],
@@ -340,7 +340,7 @@ export const DOCS_SECTIONS = [
     body: [
       'Shows balances for an address you configure, using chain reads + Haven token metadata.',
       'Manual swap UI goes through the engine path — same security gates.',
-      'Open Token pages for chart + trade ticket + GoPlus panel.',
+      'Open Token pages for a chart, trade ticket, and CoinMarketCap security panel.',
     ],
   },
   {
@@ -350,7 +350,7 @@ export const DOCS_SECTIONS = [
       'Paper trial: learn the product and run simulated bots without live execution rights.',
       'Paid plan: unlocks live path and full bot entitlements as shown at checkout.',
       'Fees fund shared data + product development — not “alpha signals as advice.”',
-      'Cancel via billing portal / Stripe customer flow when offered.',
+      'Manage or cancel a paid plan through the Clerk billing portal when offered.',
     ],
   },
   {
@@ -358,7 +358,7 @@ export const DOCS_SECTIONS = [
     title: 'Settings',
     body: [
       'Engine risk limits: max trades/day, max trade USD, max price impact, retries.',
-      'GoPlus status shows Haven’s local address scan cap (not the same number as GoPlus dashboard CU).',
+      'Market status shows the server-side CoinMarketCap REST and WebSocket condition.',
       'Subscription panel for plan status.',
     ],
   },

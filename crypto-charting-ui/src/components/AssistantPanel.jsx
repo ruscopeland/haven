@@ -31,7 +31,7 @@ function renderContent(content, onInsertCode) {
     last = re.lastIndex;
   }
   if (last < content.length) {
-    out.push(<span key={key++} className="asst-text">{content.slice(last)}</span>);
+    out.push(<span key={key} className="asst-text">{content.slice(last)}</span>);
   }
   return out;
 }
@@ -46,7 +46,7 @@ export default function AssistantPanel({ mode = 'strategy', code = '', onInsertC
 
   const label = mode === 'finder' ? 'finder' : 'strategy';
   const example = mode === 'finder'
-    ? 'rank tokens by 1h buy/sell flow imbalance'
+    ? 'rank tokens by CMC volume momentum and relative strength'
     : 'buy when RSI(14) crosses below 30, sell at +5%';
 
   useEffect(() => {

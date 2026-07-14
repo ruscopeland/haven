@@ -6,7 +6,6 @@ import { fmtUsd, fmtQty, fmtPrice, fmtTime, timeAgo, intervalToMs, tokenLabel } 
 import '../strategy-detail.css';
 
 const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:8000';
-const WBNB = '0xbb4CdB9CBd36B01bD1cBaEBF2De08d9173bc095c';
 
 // Human labels for the marker type behind a fill.
 const REASONS = {
@@ -87,12 +86,11 @@ export default function StrategyDetailView({ strategyId, onBack, onEdit }) {
       .then(list => { if (alive) setTokenMap(Object.fromEntries(list.map(t => [t.symbol, t]))); })
       .catch(() => {});
     // BNB price for the gas-fee USD estimate (live fills only).
-    fetch(`https://api.dexscreener.com/latest/dex/tokens/${WBNB}`)
+    fetch(`${API_URL}/market/prices?symbols=BNB`)
       .then(r => r.json())
       .then(j => {
-        const pairs = (j.pairs || []).filter(p => p.priceUsd);
-        pairs.sort((a, b) => (b.liquidity?.usd || 0) - (a.liquidity?.usd || 0));
-        if (alive && pairs[0]) setBnbPrice(parseFloat(pairs[0].priceUsd));
+        const price = Number(j.prices?.BNB?.price || 0);
+        if (alive && price > 0) setBnbPrice(price);
       })
       .catch(() => {});
     return () => { alive = false; };
@@ -202,6 +200,21 @@ export default function StrategyDetailView({ strategyId, onBack, onEdit }) {
       if (!ok) return;
     }
     try {
+      if (mode === 'live' && strat.live_approved_version !== strat.code_version) {
+        const currentRes = await fetch(`${API_URL}/strategies/${strategyId}`);
+        if (!currentRes.ok) throw new Error('Could not load the current code for approval.');
+        const current = await currentRes.json();
+        const digest = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(current.code));
+        const codeHash = [...new Uint8Array(digest)].map(b => b.toString(16).padStart(2, '0')).join('');
+        const approvalRes = await fetch(`${API_URL}/strategies/${strategyId}/approve-live`, {
+          method: 'POST', headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ version: current.code_version, code_hash: codeHash }),
+        });
+        if (!approvalRes.ok) {
+          const detail = await approvalRes.json().catch(() => ({}));
+          throw new Error(detail.detail || 'The current code version could not be approved.');
+        }
+      }
       const res = await fetch(`${API_URL}/strategies/${strategyId}`, {
         method: 'PATCH', headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ mode }),

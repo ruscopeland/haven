@@ -1,4 +1,4 @@
-import React, { useEffect, useRef, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 
 const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:8000';
 
@@ -24,7 +24,7 @@ function hitKey(hit) {
   return `name:${hit.display}:${hit.name}`;
 }
 
-export default function Screener({ onToggle, selectedTokens, signals = [], sortBy = "flow_1m", setSortBy }) {
+export default function Screener({ onToggle, selectedTokens, signals = [], sortBy = "vol_24h", setSortBy }) {
   const [searchQuery, setSearchQuery] = useState("");
   const [remoteHits, setRemoteHits] = useState([]);
   const [searching, setSearching] = useState(false);
@@ -179,7 +179,7 @@ export default function Screener({ onToggle, selectedTokens, signals = [], sortB
                 className="screener-typeahead-row"
                 disabled={busy || !canLoad}
                 onClick={() => ensureAndToggle(hit)}
-                title={canLoad ? 'Load token, chart history, GoPlus scan' : 'Cannot load this entry'}
+                title={canLoad ? 'Load CMC token details and chart history' : 'Cannot load this entry'}
               >
                 <div className="screener-typeahead-main">
                   {hit.logo_url ? (
@@ -215,10 +215,8 @@ export default function Screener({ onToggle, selectedTokens, signals = [], sortB
             value={sortBy}
             onChange={e => setSortBy(e.target.value)}
           >
-            <option value="flow_15m">15m Flow</option>
             <option value="market_cap">Market Cap</option>
             <option value="mcap_vol">Mkt Cap + Vol</option>
-            <option value="vol_spike">Vol Spikes</option>
             <option value="vol_24h">24h Volume</option>
             <option value="price_change_24h">24h Performance</option>
           </select>
@@ -243,31 +241,18 @@ export default function Screener({ onToggle, selectedTokens, signals = [], sortB
           </div>
         ) : (
           filteredSignals.map((sig) => {
-            const isPositive = sig.net_flow_15m >= 0;
             const isSelected = selectedTokens.some(t => t.symbol === sig.symbol);
             const chg = sig.price_change_24h;
             const chgUp = (chg || 0) >= 0;
             const label = sig.display_symbol || sig.name || sig.symbol.replace(/USDT$/, '');
 
-            let primary = null;
-            if (sortBy === 'flow_15m') {
-              primary = (
-                <span className={isPositive ? 'flow-positive' : 'flow-negative'}>
-                  {isPositive ? '+' : ''}{formatMoney(sig.net_flow_15m)}
-                </span>
-              );
-            } else if (sortBy === 'market_cap') {
+            let primary;
+            if (sortBy === 'market_cap') {
               primary = <span style={{ color: '#fff' }}>{sig.market_cap > 0 ? formatMoney(sig.market_cap) : '—'}</span>;
             } else if (sortBy === 'mcap_vol') {
               primary = (
                 <span style={{ color: '#34d399', fontWeight: 'bold' }}>
                   {sig.market_cap > 0 ? (Math.log10(sig.market_cap + 1) + Math.log10(sig.volume_24h + 1)).toFixed(1) : '0.0'}
-                </span>
-              );
-            } else if (sortBy === 'vol_spike') {
-              primary = (
-                <span style={{ color: '#34d399', fontWeight: 'bold' }}>
-                  {sig.volume_24h > 0 ? (((sig.buy_vol_1h + sig.sell_vol_1h) / (sig.volume_24h / 24)).toFixed(1)) : '0.0'}x
                 </span>
               );
             } else if (sortBy === 'vol_24h') {
@@ -295,7 +280,8 @@ export default function Screener({ onToggle, selectedTokens, signals = [], sortB
                   <div style={{ minWidth: 0 }}>
                     <div className="token-symbol-row">
                       <span className="token-symbol">{label}</span>
-                      <span className="token-live-price" title="Live collector price">
+                      {sig.cmc_rank && <span className="flow-label">CMC #{sig.cmc_rank}</span>}
+                      <span className="token-live-price" title="Live CoinMarketCap price">
                         {formatScreenerPrice(sig.last_price)}
                       </span>
                     </div>
@@ -309,10 +295,8 @@ export default function Screener({ onToggle, selectedTokens, signals = [], sortB
                 <div className="token-flow">
                   {primary}
                   <span className="flow-label">
-                    {sortBy === 'flow_15m' ? '15m Flow'
-                      : sortBy === 'market_cap' ? 'Market Cap'
+                    {sortBy === 'market_cap' ? 'Market Cap'
                       : sortBy === 'mcap_vol' ? 'Mkt+Vol'
-                      : sortBy === 'vol_spike' ? 'Vol spike'
                       : sortBy === 'vol_24h' ? '24h Vol'
                       : '24h Change'}
                   </span>

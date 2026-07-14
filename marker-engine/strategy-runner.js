@@ -24,12 +24,13 @@
 // what they hold.
 import { randomUUID } from 'node:crypto';
 import {
-  loadStrategy, createCtx, mergeParams, aggregateFlow, chooseBinding,
+  createCtx, mergeParams, chooseBinding,
 } from '../strategy-sdk/src/index.js';
+import { loadIsolatedStrategy as loadStrategy } from './sandbox-runtime.js';
 
 const LIST_REFRESH_MS = 15_000;
 const HEARTBEAT_MS = 30_000;
-const BAR_FETCH_LAG_MS = 5_000;      // let Binance finalize the bar first
+const BAR_FETCH_LAG_MS = 5_000;      // let CMC finalize and persist the bar first
 const RETRY_MS = 30_000;             // transient fetch failures
 const MAX_BARS = 600;                // rolling history window per strategy
 const PAPER_SLIPPAGE_PCT = 0.1;
@@ -37,16 +38,11 @@ const TOKENS_REFRESH_MS = 300_000;   // tradeable-token set (has contract addres
 const INTERVAL_SEC = { '1m': 60, '5m': 300, '15m': 900, '30m': 1800, '1h': 3600, '4h': 14400, '1d': 86400 };
 
 export class StrategyRunner {
-  constructor({ api, log, finderHub = null, paperOnly = false }) {
+  constructor({ api, log, finderHub = null }) {
     this.api = api;
     this.log = log;
     this.finderHub = finderHub;
-    // paperOnly = the CLOUD runner: it runs every user's DRY strategies
-    // centrally (no wallet, PAPER trades only) and ignores LIVE strategies —
-    // those execute exclusively on each user's own machine.
-    this.paperOnly = paperOnly;
     this.runners = new Map();        // strategy id -> runner state
-    this.owners = new Map();         // strategy id -> user_id (for PAPER attribution)
     this.lastListFetch = 0;
     this.lastHeartbeat = 0;
     this.lastTokensFetch = 0;
@@ -85,7 +81,7 @@ export class StrategyRunner {
           const tokens = await this.api.getTokens();
           const withAddr = tokens.filter(t => t.contract_address);
           this.tradeable = new Set(withAddr.map(t => t.symbol));
-          // chain_id is 'bsc' on new-format rows; legacy Binance rows used '56'.
+          // Normalize the numeric BSC id if an older local row still carries it.
           this.tradeableLive = new Set(withAddr
             .filter(t => !t.chain_id || t.chain_id === 'bsc' || t.chain_id === '56')
             .map(t => t.symbol));
@@ -114,11 +110,7 @@ export class StrategyRunner {
   // symbol/interval, which bump it server-side) recreates the runner from
   // scratch; a mode flip alone carries over without resetting warm-up state.
   reconcile(list) {
-    // Local engine: run this user's dry AND live strategies. Cloud runner
-    // (paperOnly): run every user's dry strategies only.
-    const keep = this.paperOnly ? (s => s.mode === 'dry') : (s => s.mode !== 'off');
-    const wanted = new Map(list.filter(keep).map(s => [s.id, s]));
-    this.owners = new Map(list.map(s => [s.id, s.user_id]));
+    const wanted = new Map(list.filter(s => s.mode !== 'off').map(s => [s.id, s]));
 
     for (const [id, r] of this.runners) {
       const s = wanted.get(id);
@@ -147,7 +139,7 @@ export class StrategyRunner {
             maxPositions: s.max_positions || 1,
             switchMarginPct: s.switch_margin_pct ?? 10,
             slots: Array.from({ length: s.max_positions || 1 }, () => ({ sub: null })),
-            code: '', paramsOverrides: {}, needsFlow: false,
+            code: '', paramsOverrides: {},
             initialized: false, broken: false, nextCheck: 0,
           });
           this.log('INFO',
@@ -158,8 +150,7 @@ export class StrategyRunner {
             intervalSec: INTERVAL_SEC[s.interval] || 300,
             mode: s.mode, updatedAt: s.updated_at,
             initialized: false, broken: false,
-            strategy: null, code: '', params: {}, state: {},
-            bars: [], flowRows: null, needsFlow: false,
+            strategy: null, code: '', params: {}, state: {}, bars: [],
             position: { qty: 0, avgCost: 0, costUsd: 0 },
             lots: [],                 // dry-mode bracket lots {qty, tp, sl}
             lastBarTime: 0,           // unix sec, open time of last processed bar
@@ -182,7 +173,6 @@ export class StrategyRunner {
       r.broken = true;    // stays broken until the definition changes (updated_at)
       return this.reportError(r, `strategy code failed to load: ${probe.error}`, 0);
     }
-    r.needsFlow = /ctx\.flow/.test(r.code);
 
     // Restart recovery: slots re-attach to symbols that already hold a
     // position (from trade history), so an engine restart never orphans one.
@@ -214,7 +204,6 @@ export class StrategyRunner {
       id: r.id, name: `${r.name}#${slotIdx + 1}`, symbol,
       interval: r.interval, intervalSec: r.intervalSec, mode: r.mode,
       strategy, params: mergeParams(strategy.params, r.paramsOverrides),
-      needsFlow: r.needsFlow, flowRows: null,
       bars: [], state: {},
       position: { qty: 0, avgCost: 0, costUsd: 0 },
       lots: [], lastBarTime: 0, nextCheck: 0, entryRank,
@@ -223,10 +212,6 @@ export class StrategyRunner {
     if (bars.length === 0) throw new Error(`no kline data for ${symbol}`);
     sub.bars = bars.slice(-MAX_BARS);
     sub.lastBarTime = sub.bars[sub.bars.length - 1].time;
-    if (sub.needsFlow) {
-      const flow = await this.api.getFlow(symbol);
-      sub.flowRows = flow.data || [];
-    }
     const posMap = await this.reloadPositionsBySymbol(r.id, r.mode);
     this.assignPosition(sub, posMap);
 
@@ -259,10 +244,9 @@ export class StrategyRunner {
       const fresh = await this.fetchBars(sub, 3);
       const newBars = fresh.filter(b => b.time > sub.lastBarTime);
       if (newBars.length === 0) {
-        sub.nextCheck = Date.now() + BAR_FETCH_LAG_MS;  // Binance lagging — retry shortly
+        sub.nextCheck = Date.now() + BAR_FETCH_LAG_MS;  // CMC reconciliation lagging — retry shortly
         continue;
       }
-      if (sub.needsFlow) await this.extendFlow(sub).catch(() => {});
       if (!posMap) posMap = await this.reloadPositionsBySymbol(r.id, r.mode).catch(() => null);
       if (posMap) this.assignPosition(sub, posMap);
 
@@ -346,11 +330,10 @@ export class StrategyRunner {
     const fresh = await this.fetchBars(r, 3);
     const newBars = fresh.filter(b => b.time > r.lastBarTime);
     if (newBars.length === 0) {
-      r.nextCheck = Date.now() + BAR_FETCH_LAG_MS;    // Binance lagging — retry shortly
+      r.nextCheck = Date.now() + BAR_FETCH_LAG_MS;    // CMC reconciliation lagging — retry shortly
       return;
     }
 
-    if (r.needsFlow) await this.extendFlow(r).catch(() => {});
     await this.reloadPosition(r).catch(() => {});      // pick up engine fills / prior paper trades
 
     for (const bar of newBars) {
@@ -379,17 +362,12 @@ export class StrategyRunner {
     }
     r.strategy = strategy;
     r.params = mergeParams(strategy.params, overrides);
-    r.needsFlow = /ctx\.flow/.test(r.code);
 
     const bars = await this.fetchBars(r, 500);
     if (bars.length === 0) throw new Error(`no kline data for ${r.symbol}`);
     r.bars = bars.slice(-MAX_BARS);
     r.lastBarTime = r.bars[r.bars.length - 1].time;
 
-    if (r.needsFlow) {
-      const flow = await this.api.getFlow(r.symbol);
-      r.flowRows = flow.data || [];
-    }
 
     await this.reloadPosition(r);
 
@@ -424,12 +402,8 @@ export class StrategyRunner {
   }
 
   makeCtx(r, onSignal) {
-    const flow = r.needsFlow && r.flowRows
-      ? aggregateFlow(r.flowRows, r.bars.map(b => b.time), r.intervalSec)
-      : null;
     return createCtx({
       bars: r.bars,
-      flow,
       params: r.params,
       state: r.state,
       position: r.position,
@@ -536,9 +510,6 @@ export class StrategyRunner {
       block_time: Date.now(),
       status: 'PAPER',
       strategy_id: r.id,
-      // Cloud runner attributes each PAPER trade to the strategy's owner (the
-      // service key honors user_id). Ignored for a local engine key.
-      user_id: this.owners.get(r.id),
     });
   }
 
@@ -583,15 +554,6 @@ export class StrategyRunner {
         volume: parseFloat(d[5]),
       }))
       .filter(b => b.time + r.intervalSec <= nowSec);      // closed bars only
-  }
-
-  async extendFlow(r) {
-    const lastMs = r.flowRows?.length ? r.flowRows[r.flowRows.length - 1][0] + 60_000 : undefined;
-    const flow = await this.api.getFlow(r.symbol, lastMs);
-    r.flowRows = (r.flowRows || []).concat(flow.data || []);
-    // keep only rows covering the bar window
-    const minMs = r.bars.length ? r.bars[0].time * 1000 : 0;
-    while (r.flowRows.length && r.flowRows[0][0] < minMs) r.flowRows.shift();
   }
 
   async reportError(r, message, retryMs) {

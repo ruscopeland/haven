@@ -70,37 +70,6 @@ const strategy = {
 `,
   },
   {
-    name: 'Net-flow momentum',
-    code: `// Uses the collector's buy/sell USD flow — data TradingView doesn't have.
-// NOTE: flow comes from 1-minute buckets kept for ~7 days; older bars see
-// ctx.flow.* == null, so this only trades the recent window. Always guard.
-const strategy = {
-  name: 'Net-flow momentum',
-  params: { minNetUsd: 2000, lookback: 3, usd: 50, exitNetUsd: -500 },
-
-  onBar(bar, ctx) {
-    const net = ctx.flow.net;
-    if (net[ctx.i] == null) return;                 // outside flow retention
-
-    // Sum net flow over the last N bars (params.lookback).
-    let sum = 0;
-    for (let j = 0; j < ctx.params.lookback; j++) {
-      const v = net[ctx.i - j];
-      if (v == null) return;
-      sum += v;
-    }
-
-    if (!ctx.position.qty && sum > ctx.params.minNetUsd) {
-      ctx.buy(ctx.params.usd, { tag: 'flow-in' });
-    }
-    if (ctx.position.qty && net[ctx.i] < ctx.params.exitNetUsd) {
-      ctx.sell({ pct: 100 }, { tag: 'flow-out' });
-    }
-  },
-};
-`,
-  },
-  {
     name: 'MACD momentum rider',
     code: `// Ride MACD momentum: enter when the histogram flips positive, bank half at
 // an ATR-sized target (stop jumps to breakeven), exit the rest when momentum
@@ -296,44 +265,6 @@ const strategy = {
 `,
   },
   {
-    name: 'Z-score fade',
-    code: `// Statistical mean-reversion: buy a stretch of zEntry standard deviations
-// below the mean — but only once order flow shows the dumping has stopped.
-// Exits at the mean. Needs ctx.flow, so it only trades the recent window.
-const strategy = {
-  name: 'Z-score fade',
-  params: { len: 48, zEntry: 2, zExit: 0.25, flowBars: 3, slPct: 8, usd: 50 },
-
-  onBar(bar, ctx) {
-    const mean = ctx.sma(ctx.params.len);
-    const sd = ctx.stddev(ctx.params.len);
-    if (mean[ctx.i] == null || !(sd[ctx.i] > 0)) return;
-    const z = (bar.close - mean[ctx.i]) / sd[ctx.i];
-
-    if (ctx.position.qty && z >= -ctx.params.zExit) {
-      ctx.sell({ pct: 100 }, { tag: 'mean-touch' });
-      return;
-    }
-
-    if (!ctx.position.qty && z <= -ctx.params.zEntry) {
-      // Only catch the knife once the last few bars flip to net buying.
-      let net = 0;
-      for (let j = 0; j < ctx.params.flowBars; j++) {
-        const v = ctx.flow.net[ctx.i - j];
-        if (v == null) return;                    // outside flow retention — stand down
-        net += v;
-      }
-      if (net <= 0) return;                       // still being dumped
-      ctx.buy(ctx.params.usd, {
-        sl: bar.close * (1 - ctx.params.slPct / 100),
-        tag: 'z-fade',
-      });
-    }
-  },
-};
-`,
-  },
-  {
     name: 'DCA ladder',
     code: `// Laddered accumulation: open a starter position on weakness, add a rung each
 // time price drops another step below the last fill, then exit the whole
@@ -407,89 +338,12 @@ const strategy = {
 };
 `,
   },
-  {
-    name: 'Flow surge scalper',
-    code: `// Order-flow scalp: enter when buy volume surges to a multiple of its own
-// baseline while price holds above VWAP; exit on a time stop or the flow
-// flipping negative — whichever comes first. Uses ctx.flow (recent bars only).
-const strategy = {
-  name: 'Flow surge scalper',
-  params: { fast: 3, slow: 36, surgeMult: 3, maxHold: 12, slPct: 4, usd: 50 },
-
-  onBar(bar, ctx) {
-    // Rolling buy-flow sums with explicit null guards (flow has ~7d retention).
-    const need = ctx.params.slow;
-    if (ctx.i < need) return;
-    let fastSum = 0, slowSum = 0;
-    for (let j = 0; j < need; j++) {
-      const v = ctx.flow.buy[ctx.i - j];
-      if (v == null) return;                      // outside flow retention
-      slowSum += v;
-      if (j < ctx.params.fast) fastSum += v;
-    }
-    const fastAvg = fastSum / ctx.params.fast;
-    const slowAvg = slowSum / need;
-
-    if (ctx.position.qty) {
-      const held = ctx.state.entryBar != null ? ctx.i - ctx.state.entryBar : 0;
-      const netNow = ctx.flow.net[ctx.i];
-      if (held >= ctx.params.maxHold || (netNow != null && netNow < 0)) {
-        ctx.sell({ pct: 100 }, { tag: held >= ctx.params.maxHold ? 'time-stop' : 'flow-flip' });
-      }
-      return;
-    }
-
-    const vwap = ctx.vwap();
-    if (slowAvg > 0 && fastAvg >= ctx.params.surgeMult * slowAvg &&
-        vwap[ctx.i] != null && bar.close > vwap[ctx.i]) {
-      ctx.state.entryBar = ctx.i;
-      ctx.buy(ctx.params.usd, {
-        sl: bar.close * (1 - ctx.params.slPct / 100),
-        tag: 'flow-surge',
-      });
-    }
-  },
-};
-`,
-  },
 ];
 
 // Starter finders for the Token Finder tab. Same evaluation style as
 // strategies (loadFinder), but the contract is filter/score per token —
 // finders rank, they never trade.
 export const FINDER_TEMPLATES = [
-  {
-    name: 'Flow momentum',
-    code: `// Rank tokens by recent buy pressure and price momentum, blended.
-// score() runs once per token per bar; higher = better. Return null to skip.
-const finder = {
-  name: 'Flow momentum',
-  params: { lookback: 8, momoWeight: 2.0, flowWeight: 1.0, minVol24hUsd: 100000 },
-
-  // Hard exclude — filtered tokens never appear in the ranking at all.
-  filter(ctx) {
-    return ctx.token.volume24h >= ctx.params.minVol24hUsd;
-  },
-
-  score(ctx) {
-    const momo = ctx.roc(ctx.params.lookback)[ctx.i];      // % price change
-    if (momo == null) return null;                          // indicator warm-up
-
-    // Net USD flow over the lookback window, normalized by 24h volume so
-    // large caps don't drown small ones.
-    let net = 0;
-    for (let j = 0; j < ctx.params.lookback; j++) {
-      const v = ctx.flow.net[ctx.i - j];
-      if (v == null) return null;                           // outside flow retention
-      net += v;
-    }
-    const flowPct = (net / ctx.token.volume24h) * 100;
-
-    return ctx.params.momoWeight * momo + ctx.params.flowWeight * flowPct;
-  },
-};
-`,
-  },
   {
     name: 'Volume spike',
     code: `// Rank by how unusual current activity is vs the token's own baseline.
@@ -511,10 +365,7 @@ const finder = {
     const spike = fast / slow;                              // 1 = normal activity
     if (spike < ctx.params.minSpike) return null;           // nothing happening
 
-    // Tie-break equal spikes toward buy-side pressure.
-    const nf = ctx.flow.net[ctx.i];
-    const buyBias = nf != null && ctx.volume[ctx.i] > 0 ? nf / ctx.volume[ctx.i] : 0;
-    return spike + buyBias;
+    return spike;
   },
 };
 `,
@@ -540,105 +391,6 @@ const finder = {
     const volPct = (vol / price) * 100;                     // stddev as % of price
     if (volPct <= 0) return null;                           // flat line — untradeable
     return ret / volPct;                                    // "Sharpe-ish" momentum
-  },
-};
-`,
-  },
-  {
-    name: 'Quiet accumulation',
-    code: `// Rank by sustained net buying WITHOUT a big price move yet — someone is
-// building a position quietly. High score = inflow with the move still ahead.
-const finder = {
-  name: 'Quiet accumulation',
-  params: { lookback: 24, maxMovePct: 3, minVol24hUsd: 50000 },
-
-  filter(ctx) {
-    return ctx.token.volume24h >= ctx.params.minVol24hUsd;
-  },
-
-  score(ctx) {
-    const move = ctx.roc(ctx.params.lookback)[ctx.i];
-    if (move == null) return null;
-    if (Math.abs(move) > ctx.params.maxMovePct) return null; // already moved — too late
-
-    let net = 0, total = 0;
-    for (let j = 0; j < ctx.params.lookback; j++) {
-      const b = ctx.flow.buy[ctx.i - j], s = ctx.flow.sell[ctx.i - j];
-      if (b == null || s == null) return null;
-      net += b - s;
-      total += b + s;
-    }
-    if (total <= 0) return null;
-    return (net / total) * 100;                              // % of volume that was net buying
-  },
-};
-`,
-  },
-  {
-    name: 'Coiled near highs',
-    code: `// Rank tokens consolidating just under their recent high — the closer to the
-// prior high (without having broken it), the higher the score. Buy-side flow
-// breaks ties: pressure building under resistance beats aimless drift.
-const finder = {
-  name: 'Coiled near highs',
-  params: { lookback: 48, maxDistPct: 5, flowBars: 6, minVol24hUsd: 100000 },
-
-  filter(ctx) {
-    return ctx.token.volume24h >= ctx.params.minVol24hUsd;
-  },
-
-  score(ctx) {
-    const hh = ctx.highest(ctx.high, ctx.params.lookback)[ctx.i];
-    const price = ctx.close[ctx.i];
-    if (hh == null || !(price > 0) || !(hh > 0)) return null;
-
-    const distPct = ((hh - price) / hh) * 100;        // 0 = sitting at the high
-    if (distPct > ctx.params.maxDistPct) return null; // too far below — not coiled
-
-    let net = 0;
-    for (let j = 0; j < ctx.params.flowBars; j++) {
-      const v = ctx.flow.net[ctx.i - j];
-      if (v != null) net += v;
-    }
-    const flowTilt = (net / ctx.token.volume24h) * 100;
-    return (ctx.params.maxDistPct - distPct) + flowTilt;
-  },
-};
-`,
-  },
-  {
-    name: 'Whale radar',
-    code: `// Rank by average trade SIZE, not volume: fewer, bigger prints vs the token's
-// own baseline usually means larger players, not retail noise. Whales selling
-// rank down, whales buying rank up.
-const finder = {
-  name: 'Whale radar',
-  params: { fast: 6, slow: 48, minTrades: 30, minVol24hUsd: 50000 },
-
-  filter(ctx) {
-    return ctx.token.volume24h >= ctx.params.minVol24hUsd;
-  },
-
-  score(ctx) {
-    if (ctx.i < ctx.params.slow) return null;
-    let fUsd = 0, fN = 0, sUsd = 0, sN = 0;
-    for (let j = 0; j < ctx.params.slow; j++) {
-      const usd = ctx.volume[ctx.i - j];             // buy+sell USD per bar
-      const n = ctx.flow.trades[ctx.i - j];
-      if (usd == null || n == null) continue;        // gap bar — skip
-      sUsd += usd; sN += n;
-      if (j < ctx.params.fast) { fUsd += usd; fN += n; }
-    }
-    if (fN < 1 || sN < ctx.params.minTrades || !(sUsd > 0)) return null;
-
-    const recentSize = fUsd / fN;                    // avg USD per print, recent
-    const baseSize = sUsd / sN;                      //  … vs the token's own normal
-    if (!(baseSize > 0)) return null;
-
-    // Direction matters: weight the size anomaly by recent net-flow sign.
-    let net = 0;
-    for (let j = 0; j < ctx.params.fast; j++) net += ctx.flow.net[ctx.i - j] ?? 0;
-    return (recentSize / baseSize) * (net >= 0 ? 1 : -0.5);
   },
 };
 `,
@@ -673,36 +425,6 @@ const finder = {
     if (n < ctx.params.baseline / 2 || sum <= 0) return null;
 
     return (sum / n) / width;
-  },
-};
-`,
-  },
-  {
-    name: 'Oversold bounce',
-    code: `// Rank washed-out tokens where buyers just showed up: deep RSI plus the last
-// few bars flipping to net buying. Catches the turn, not the falling knife.
-const finder = {
-  name: 'Oversold bounce',
-  params: { rsiLen: 14, maxRsi: 35, flowBars: 3, minVol24hUsd: 50000 },
-
-  filter(ctx) {
-    return ctx.token.volume24h >= ctx.params.minVol24hUsd;
-  },
-
-  score(ctx) {
-    const rsi = ctx.rsi(ctx.params.rsiLen)[ctx.i];
-    if (rsi == null || rsi > ctx.params.maxRsi) return null;
-
-    let net = 0, total = 0;
-    for (let j = 0; j < ctx.params.flowBars; j++) {
-      const b = ctx.flow.buy[ctx.i - j], s = ctx.flow.sell[ctx.i - j];
-      if (b == null || s == null) return null;
-      net += b - s; total += b + s;
-    }
-    if (total <= 0 || net <= 0) return null;         // buyers must actually be back
-
-    // Deeper oversold + stronger buy tilt = higher score.
-    return (ctx.params.maxRsi - rsi) * (1 + net / total);
   },
 };
 `,

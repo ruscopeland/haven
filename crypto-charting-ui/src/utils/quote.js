@@ -1,34 +1,29 @@
 // Pre-trade quote preview for the token page — mirrors the marker engine's
 // execution path so what the user sees is what the engine will do:
 //   sizing   = marker-engine/pure.js sizeTrade  (buy: usd/bnbPrice BNB in;
-//              sell: usd/collectorPrice tokens, capped at balance)
+//              sell: usd/CMC market price tokens, capped at balance)
 //   quote    = OpenOcean v4 aggregator (the engine's router, chain.js)
 //   impact   = marker-engine/pure.js priceImpactPct (quoted out vs what the
-//              collector market price predicts)
+//              CMC market price predicts)
 // The engine re-quotes at execution; this preview is informational. Keep it
 // ON-DEMAND only (no polling) — OpenOcean allows ~1 req/1.6s per IP and the
 // engine quotes from this same machine when a trade fires.
 
 const OO_NATIVE = '0xEeeeeEeeeEeEeeEeEeEeeEEEeeeeEeeeeeeeEEeE';
-const WBNB = '0xbb4CdB9CBd36B01bD1cBaEBF2De08d9173bc095c';
 
 // Engine config (marker-engine/index.js defaults; no .env overrides are set).
 export const ENGINE_SLIPPAGE_PCT = 0.5;
 export const ENGINE_GAS_GWEI = 1;
 
-// Same source the engine's getBnbPriceUsd uses first (DexScreener, best-liquidity pair).
+// Same server-side CoinMarketCap source used by the engine and charts.
 export async function fetchBnbPriceUsd() {
-  const r = await fetch(`https://api.dexscreener.com/latest/dex/tokens/${WBNB}`);
+  const api = import.meta.env.VITE_API_URL || 'http://localhost:8000';
+  const r = await fetch(`${api}/market/prices?symbols=BNB`);
   if (!r.ok) throw new Error(`BNB price fetch failed (HTTP ${r.status})`);
   const j = await r.json();
-  let best = null;
-  for (const p of j.pairs || []) {
-    if ((p.baseToken?.address || '').toLowerCase() !== WBNB.toLowerCase()) continue;
-    const liq = parseFloat(p.liquidity?.usd || 0);
-    if (!best || liq > best.liq) best = { liq, price: parseFloat(p.priceUsd || 0) };
-  }
-  if (!best || !(best.price > 0)) throw new Error('BNB price unavailable');
-  return best.price;
+  const price = Number(j.prices?.BNB?.price || 0);
+  if (!(price > 0)) throw new Error('BNB price unavailable');
+  return price;
 }
 
 // The chosen route out of the quote payload: path.routes[].subRoutes[].dexes[].dex.
@@ -50,10 +45,10 @@ function extractRoute(data) {
 }
 
 // side: 'BUY' | 'SELL'. usd: user's USD intent. contract: token address.
-// collectorPrice: the live market price the chart/engine use. heldQty: wallet
+// marketPrice: the live CMC price the chart/engine use. heldQty: wallet
 // balance for sells (null = unknown, no cap applied).
-export async function fetchSwapPreview({ side, usd, contract, collectorPrice, heldQty }) {
-  if (!(collectorPrice > 0)) throw new Error('No live market price from the collector');
+export async function fetchSwapPreview({ side, usd, contract, marketPrice, heldQty }) {
+  if (!(marketPrice > 0)) throw new Error('No live market price from CoinMarketCap');
   const bnbPrice = await fetchBnbPriceUsd();
   const isBuy = side === 'BUY';
 
@@ -61,13 +56,13 @@ export async function fetchSwapPreview({ side, usd, contract, collectorPrice, he
   if (isBuy) {
     amountIn = usd / bnbPrice;                 // BNB in — engine sizing
     usdNotional = usd;
-    expectedOut = usd / collectorPrice;        // tokens the market price predicts
+    expectedOut = usd / marketPrice;        // tokens the market price predicts
   } else {
-    let amtToken = usd / collectorPrice;       // tokens out of the wallet — engine sizing
+    let amtToken = usd / marketPrice;       // tokens out of the wallet — engine sizing
     if (heldQty != null && amtToken > heldQty) { amtToken = heldQty; capped = true; }
     if (!(amtToken > 0)) throw new Error('Nothing to sell');
     amountIn = amtToken;
-    usdNotional = amtToken * collectorPrice;
+    usdNotional = amtToken * marketPrice;
     expectedOut = usdNotional / bnbPrice;      // BNB the market price predicts
   }
 

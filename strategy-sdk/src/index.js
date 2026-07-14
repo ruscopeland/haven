@@ -1,5 +1,4 @@
 export * from './indicators.js';
-export { aggregateFlow, flowCoverage } from './flow.js';
 export { loadStrategy, createCtx, createBaseCtx, mergeParams } from './runtime.js';
 export { runBacktest } from './backtest.js';
 export {

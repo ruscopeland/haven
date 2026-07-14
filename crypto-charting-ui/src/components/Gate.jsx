@@ -1,14 +1,13 @@
-// Signed-in gate. Access: anyone signed in (paper). Paid plan/feature from Clerk Billing.
-import { useAuth } from '@clerk/clerk-react';
+// Signed-in gate. Haven grants the automatic trial; Clerk is paid-plan authority.
 import App from '../App.jsx';
 import Subscribe from './Subscribe.jsx';
 import HavenLogo from './HavenLogo.jsx';
-import { isClerkPaid } from '../clerkBilling.js';
+import useEntitlements from '../hooks/useEntitlements.js';
 
 export default function Gate() {
-  const { isLoaded, has } = useAuth();
+  const { loading, data, error, refresh } = useEntitlements();
 
-  if (!isLoaded) {
+  if (loading) {
     return (
       <div className="gate-loading">
         <div className="gate-skeleton-logo"><HavenLogo size={36} /></div>
@@ -17,12 +16,18 @@ export default function Gate() {
     );
   }
 
-  // Always enter the app when signed in. Clerk Billing owns paper vs paid.
-  // Subscribe screen is only a dedicated upgrade view (user can open Settings).
-  // Show subscribe only when ?subscribe=1 (optional deep link).
   const params = new URLSearchParams(window.location.search);
-  if (params.get('subscribe') === '1' && !isClerkPaid(has)) {
+  if (params.get('subscribe') === '1' || data?.app_access === false) {
     return <Subscribe onActivated={() => { window.location.href = '/'; }} />;
+  }
+  if (error || !data) {
+    return (
+      <div className="gate-loading" role="alert">
+        <HavenLogo size={36} />
+        <div>Haven could not verify your account access.</div>
+        <button type="button" className="btn-primary" onClick={refresh}>Try again</button>
+      </div>
+    );
   }
 
   return <App />;
