@@ -1,4 +1,5 @@
 import { lazy, Suspense, useState, useEffect, useRef, useCallback } from 'react'
+import { UserButton } from '@clerk/clerk-react'
 import Screener from './components/Screener'
 import Chart from './components/Chart'
 import DashboardView from './components/DashboardView'
@@ -19,6 +20,7 @@ const FinderWorkbench = lazy(() => import('./components/FinderWorkbench.jsx'));
 const OwnerOperations = lazy(() => import('./components/OwnerOperations.jsx'));
 
 const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:8000';
+const CLERK_ENABLED = Boolean(import.meta.env.VITE_CLERK_PUBLISHABLE_KEY);
 const LAYOUT_NAMES_KEY = 'chartLayoutNames';
 
 const NAV = [
@@ -303,6 +305,7 @@ function App() {
         </div>
 
         <EngineToggle />
+        {CLERK_ENABLED && <UserButton afterSignOutUrl="/" />}
       </div>
 
       <UpgradeBanner onOpenSettings={() => navigate('settings')} />
