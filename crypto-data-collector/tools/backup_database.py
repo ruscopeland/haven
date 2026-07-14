@@ -45,11 +45,13 @@ def _plain_backup(path: Path) -> None:
         finally:
             check.close()
         return
+    pg_dump = os.environ.get("PG_DUMP_BIN", "pg_dump")
+    pg_restore = os.environ.get("PG_RESTORE_BIN", "pg_restore")
     subprocess.run(
-        ["pg_dump", "--format=custom", "--no-owner", "--file", str(path), DATABASE_URL],
+        [pg_dump, "--format=custom", "--no-owner", "--file", str(path), DATABASE_URL],
         check=True, capture_output=True, timeout=3600,
     )
-    subprocess.run(["pg_restore", "--list", str(path)], check=True,
+    subprocess.run([pg_restore, "--list", str(path)], check=True,
                    capture_output=True, timeout=300)
 
 

@@ -23,6 +23,8 @@ jobs:
       DATABASE_URL: ${{ secrets.HAVEN_PRODUCTION_DATABASE_URL }}
       HAVEN_BACKUP_ENCRYPTION_KEY: ${{ secrets.HAVEN_BACKUP_ENCRYPTION_KEY }}
       HAVEN_BACKUP_DIR: ${{ github.workspace }}/encrypted-backups
+      PG_DUMP_BIN: /usr/lib/postgresql/18/bin/pg_dump
+      PG_RESTORE_BIN: /usr/lib/postgresql/18/bin/pg_restore
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
@@ -32,7 +34,9 @@ jobs:
       - name: Install backup tools
         run: |
           sudo apt-get update
-          sudo apt-get install --yes postgresql-client
+          sudo apt-get install --yes postgresql-common ca-certificates
+          sudo /usr/share/postgresql-common/pgdg/apt.postgresql.org.sh -y
+          sudo apt-get install --yes postgresql-client-18
           pip install -r requirements.txt
       - name: Create and verify encrypted backup
         run: python tools/backup_database.py
