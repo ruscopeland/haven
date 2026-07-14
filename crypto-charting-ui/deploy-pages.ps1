@@ -2,7 +2,11 @@
 # Always rebuilds so VITE_* env is baked correctly — wrong API host causes
 # browser "Failed to fetch" (e.g. api.haven.trade is not our API).
 $ErrorActionPreference = "Stop"
-$envFile = Join-Path $PSScriptRoot "..\deploy-secrets.env"
+$envFile = if ($env:HAVEN_DEPLOY_SECRETS_FILE) {
+    $env:HAVEN_DEPLOY_SECRETS_FILE
+} else {
+    Join-Path $PSScriptRoot "..\deploy-secrets.env"
+}
 if (-not (Test-Path $envFile)) { Write-Error "Missing $envFile"; exit 1 }
 
 $cfToken = $null
@@ -17,9 +21,8 @@ Get-Content $envFile | ForEach-Object {
 if (-not $cfToken -or -not $cfAccount) { Write-Error "Missing Cloudflare credentials"; exit 1 }
 if (-not $clerkKey) { Write-Error "Missing CLERK_PUBLISHABLE_KEY"; exit 1 }
 
-# Working Railway public URL. Custom domain api.haven.trading is registered but
-# currently serves a *.up.railway.app cert (name mismatch) — do not use until TLS is fixed.
-$env:VITE_API_URL = "https://api-production-0dc54.up.railway.app"
+# Haven's stable production API address.
+$env:VITE_API_URL = "https://api.haven.trading"
 $env:VITE_CLERK_PUBLISHABLE_KEY = $clerkKey
 # CRITICAL: do not bake the operator's local .env wallet into production.
 # An empty value overrides crypto-charting-ui/.env VITE_WALLET_ADDRESS at build time.
