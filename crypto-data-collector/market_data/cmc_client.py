@@ -101,12 +101,18 @@ class CmcClient:
         })
 
     async def dex_candles(self, *, platform: str, address: str, interval: str,
-                          start_s: int, end_s: int, limit: int = 1000) -> CmcResponse:
-        return await self.get("/v1/k-line/candles", {
+                          start_s: int | None = None, end_s: int | None = None,
+                          limit: int = 1000) -> CmcResponse:
+        params = {
             "platform": platform, "address": address, "interval": interval,
-            "from": start_s, "to": end_s, "limit": min(max(limit, 1), 1000),
+            "limit": min(max(limit, 1), 1000),
             "unit": "usd", "pm": "p",
-        })
+        }
+        if start_s is not None:
+            params["from"] = start_s
+        if end_s is not None:
+            params["to"] = end_s
+        return await self.get("/v1/k-line/candles", params)
 
     async def security(self, *, platform: str, address: str) -> CmcResponse:
         return await self.get("/v1/dex/security/detail", {

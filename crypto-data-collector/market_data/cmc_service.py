@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import inspect
 import json
 import math
 import os
@@ -320,10 +321,10 @@ class CmcMarketDataService:
                 continue
             try:
                 headers = {"X-CMC_PRO_API_KEY": self.api_key}
-                try:
+                if "additional_headers" in inspect.signature(websockets.connect).parameters:
                     connection = websockets.connect(WS_URL, additional_headers=headers,
                                                     ping_interval=20, ping_timeout=20, close_timeout=5)
-                except TypeError:  # websockets 12 compatibility
+                else:  # websockets 12 and earlier
                     connection = websockets.connect(WS_URL, extra_headers=headers,
                                                     ping_interval=20, ping_timeout=20, close_timeout=5)
                 async with connection as ws:
@@ -595,14 +596,26 @@ class CmcMarketDataService:
 
     async def _fetch_candle_range(self, cmc_id: int, platform: str, address: str,
                                   interval: str, start_ms: int, end_ms: int):
+        width = INTERVAL_MS[interval]
+        requested_count = max(1, min(1000, (end_ms - start_ms + width - 1) // width))
+        # The Startup K-line endpoint permits its rolling candle window without
+        # explicit timestamps. Supplying from/to can reject the same otherwise
+        # licensed data as outside the plan window, so use the rolling form for
+        # requests ending at the present and cache the exact returned coverage.
+        rolling = end_ms >= now_ms() - 2 * width
         async with CmcClient(self.api_key) as client:
             response = await client.dex_candles(
                 platform=platform, address=address, interval=interval,
-                start_s=start_ms // 1000, end_s=end_ms // 1000,
+                start_s=None if rolling else start_ms // 1000,
+                end_s=None if rolling else end_ms // 1000,
+                limit=requested_count,
             )
         rows = response.data or []
         at = now_ms()
-        width = INTERVAL_MS[interval]
+        returned_times = [
+            _timestamp_ms(candle[5]) for candle in rows
+            if isinstance(candle, (list, tuple)) and len(candle) >= 6
+        ]
         with SessionLocal() as db:
             for candle in rows:
                 if not isinstance(candle, (list, tuple)) or len(candle) < 6:
@@ -629,10 +642,12 @@ class CmcMarketDataService:
                         index_elements=["cmc_id", "platform", "contract_address", "interval", "open_time"],
                         set_=values)
                 db.execute(stmt)
+            actual_start = min(returned_times) if returned_times else start_ms
+            actual_end = max(returned_times) + width if returned_times else end_ms
             coverage_values = {
                 "cmc_id": cmc_id, "platform": platform,
                 "contract_address": address.lower(), "interval": interval,
-                "start_time": start_ms, "end_time": end_ms, "updated_at": at,
+                "start_time": actual_start, "end_time": actual_end, "updated_at": at,
             }
             old = db.query(CandleCoverage).filter(
                 CandleCoverage.cmc_id == cmc_id, CandleCoverage.platform == platform,
