@@ -620,31 +620,40 @@ class CmcMarketDataService:
             _timestamp_ms(candle[5]) for candle in rows
             if isinstance(candle, (list, tuple)) and len(candle) >= 6
         ]
+        candle_values = []
+        for candle in rows:
+            if not isinstance(candle, (list, tuple)) or len(candle) < 6:
+                continue
+            opened = _timestamp_ms(candle[5])
+            if opened + width > at:
+                continue
+            candle_values.append({
+                "cmc_id": cmc_id, "platform": platform,
+                "contract_address": address.lower(), "interval": interval,
+                "open_time": opened, "close_time": opened + width - 1,
+                "open_price": float(candle[0]), "high_price": float(candle[1]),
+                "low_price": float(candle[2]), "close_price": float(candle[3]),
+                "volume": float(candle[4] or 0),
+                "trader_count": int(candle[6] or 0) if len(candle) > 6 else None,
+                "closed": 1, "source": "cmc_rest", "updated_at": at,
+            })
         with SessionLocal() as db:
-            for candle in rows:
-                if not isinstance(candle, (list, tuple)) or len(candle) < 6:
-                    continue
-                opened = _timestamp_ms(candle[5])
-                if opened + width > at:
-                    continue
-                values = {
-                    "cmc_id": cmc_id, "platform": platform,
-                    "contract_address": address.lower(), "interval": interval,
-                    "open_time": opened, "close_time": opened + width - 1,
-                    "open_price": float(candle[0]), "high_price": float(candle[1]),
-                    "low_price": float(candle[2]), "close_price": float(candle[3]),
-                    "volume": float(candle[4] or 0),
-                    "trader_count": int(candle[6] or 0) if len(candle) > 6 else None,
-                    "closed": 1, "source": "cmc_rest", "updated_at": at,
+            if candle_values:
+                stmt = dialect_insert(MarketCandle).values(candle_values)
+                mutable = {
+                    key: getattr(stmt.excluded, key) for key in (
+                        "close_time", "open_price", "high_price", "low_price",
+                        "close_price", "volume", "trader_count", "closed",
+                        "source", "updated_at",
+                    )
                 }
-                stmt = dialect_insert(MarketCandle).values(**values)
                 if db.bind.dialect.name == "postgresql":
                     stmt = stmt.on_conflict_do_update(
-                        constraint="uq_market_candle_identity", set_=values)
+                        constraint="uq_market_candle_identity", set_=mutable)
                 else:
                     stmt = stmt.on_conflict_do_update(
                         index_elements=["cmc_id", "platform", "contract_address", "interval", "open_time"],
-                        set_=values)
+                        set_=mutable)
                 db.execute(stmt)
             actual_start = min(returned_times) if returned_times else start_ms
             actual_end = max(returned_times) + width if returned_times else end_ms
