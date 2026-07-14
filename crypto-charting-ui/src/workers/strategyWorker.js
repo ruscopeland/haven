@@ -27,7 +27,7 @@ self.onmessage = ({ data }) => {
         quality: finderQuality(ranked.rankings, fwd, payload.topN),
       };
     } else {
-      throw new Error(`Unknown worker operation: ${operation}`);
+      throw new Error(`Unknown worker operation: ${operation} (runtime revision: csp-2)`);
     }
     self.postMessage({ id, result });
   } catch (error) {
