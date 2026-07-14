@@ -10,12 +10,19 @@ import hashlib
 import os
 import sqlite3
 import subprocess
+import sys
 import tempfile
 import time
 import uuid
 from pathlib import Path
 
 from cryptography.fernet import Fernet
+
+# Running this file directly sets Python's import root to ``tools``. Add the
+# backend directory so the same command works locally and in GitHub Actions.
+BACKEND_ROOT = Path(__file__).resolve().parents[1]
+if str(BACKEND_ROOT) not in sys.path:
+    sys.path.insert(0, str(BACKEND_ROOT))
 
 from database.db import DATABASE_URL, IS_SQLITE, SessionLocal
 from database.models import BackupRun
