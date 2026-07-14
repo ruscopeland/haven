@@ -1572,7 +1572,7 @@ async def security_check_token(symbol: str, body: SecurityCheckBody | None = Non
                                force: int = 0,
                                db: Session = Depends(get_db),
                                identity: Identity = Depends(require_paid)):
-    """Pre-trade Alpha catalogue gate; Binance Alpha does not provide an audit."""
+    """Pre-trade gate for the current Binance Alpha BSC catalogue."""
     tok = db.query(Token).filter(Token.symbol == symbol).first()
     if not tok:
         raise HTTPException(status_code=404, detail="Token not found")
@@ -1585,14 +1585,18 @@ async def security_check_token(symbol: str, body: SecurityCheckBody | None = Non
             "message": "No contract address — cannot trade.",
         }
     asset = db.get(AlphaAsset, tok.alpha_id) if tok.alpha_id else None
-    # Inclusion in the current BSC Alpha catalogue proves the exact pair we chart,
-    # but is not a contract-security audit. It remains elevated-risk: no automatic
-    # strategy execution, while manual execution retains its acknowledgement gate.
+    # A current Alpha catalogue entry verifies the BSC contract paired with the
+    # market data. Catalogue tokens are tradeable; only missing, mismatched, or
+    # explicitly blacklisted entries are blocked.
+    catalogue_verified = bool(
+        asset and asset.contract_address
+        and asset.contract_address.lower() == tok.contract_address.lower()
+    )
     result = {"provider": "Binance Alpha", "scanned_at": int(time.time() * 1000),
-              "safe": False, "critical": ["security_audit_unavailable"], "flags": [],
-              "verified": bool(asset and asset.contract_address.lower() == tok.contract_address.lower()),
+              "safe": catalogue_verified, "critical": [], "flags": [],
+              "verified": catalogue_verified,
               "from_cache": False}
-    if not asset:
+    if not catalogue_verified:
         result["critical"].append("not_in_alpha_catalogue")
     result.update({"symbol": symbol, "status": tok.status,
                    "contract_address": tok.contract_address, "chain_id": tok.chain_id,

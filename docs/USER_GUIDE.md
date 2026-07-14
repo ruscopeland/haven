@@ -36,7 +36,7 @@ The subscription helps cover **shared market data**, development, hosting, and u
 - Main nav stays full width; screener sits **under** the tabs next to Layouts.
 - Search: Haven's server-side Binance Alpha cache; the provider key never reaches the browser.
 - Layouts 1–5 save chart sets.
-- Elevated-risk tokens: **still chart**; trading needs contract verify + risk acknowledgments; ~$1 probe recommended.
+- Current Binance Alpha BSC catalogue tokens are available to chart and trade through the local engine; its price-impact, size, daily-cap, and pause controls apply to every swap.
 
 ---
 

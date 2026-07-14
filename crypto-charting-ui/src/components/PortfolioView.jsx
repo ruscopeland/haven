@@ -518,6 +518,7 @@ export default function PortfolioView({
                   price={focus.price}
                   heldQty={focus.heldQty}
                   stacked
+                  skipRiskReview
                 />
               </>
             ) : (

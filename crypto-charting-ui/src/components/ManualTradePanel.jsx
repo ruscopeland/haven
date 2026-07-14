@@ -19,6 +19,7 @@ export default function ManualTradePanel({
   price,
   heldQty,
   stacked = false, // true = buy above sell (narrow column)
+  skipRiskReview = false,
 }) {
   const [side, setSide] = useState(null);
   const [buyUsd, setBuyUsd] = useState('');
@@ -43,7 +44,7 @@ export default function ManualTradePanel({
   const heldUsd = heldQty != null && price ? heldQty * price : null;
   const tradeable = !!contract;
   const confirmUsd = side === 'BUY' ? buyNum : sellNum;
-  const elevated = policy?.mode === 'elevated_risk';
+  const elevated = !skipRiskReview && policy?.mode === 'elevated_risk';
   const probeUsd = policy?.recommend_probe_usd ?? DEFAULT_PROBE;
   const needsLargeAck = elevated && confirmUsd > probeUsd;
 

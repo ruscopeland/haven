@@ -98,9 +98,8 @@ export default function SettingsView({ onOpenLegal }) {
             <div>Status: <b className="dash-green">configured</b> · {securityStatus.provider}</div>
             <div>Cached checks: {securityStatus.scanned_total} · blocked tokens: {securityStatus.blocked_total}</div>
             <div style={{ marginTop: 8, color: 'var(--text-bright)' }}>
-              <b>Trade safety:</b> the engine never unlimited-approves tokens. Before any approve/swap it
-              uses Binance Alpha DEX security information. Elevated risk still charts; manual trades require
-              contract verification and an explicit risk acknowledgment.
+              <b>Trade safety:</b> the engine trades current Binance Alpha BSC catalogue entries only and never
+              unlimited-approves tokens. Price-impact, size, daily-cap, and pause controls apply to every swap.
             </div>
           </div>
         )}

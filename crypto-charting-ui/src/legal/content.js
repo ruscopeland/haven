@@ -304,12 +304,12 @@ export const DOCS_SECTIONS = [
   },
   {
     id: 'risk-tokens',
-    title: 'Risky tokens',
+    title: 'Binance Alpha tokens',
     body: [
-      'Haven charts first, lectures second: elevated-risk tokens still open charts.',
-      'Binance Alpha security flags may show honeypot, tax, blacklist functions, and related risks.',
-      'Manual trade requires: verify contract on the explorer, accept warnings, prefer a ~$1 probe first. Larger size needs an extra acknowledgment. Creators can still block wallets later.',
-      'Strategy/auto paths stay blocked without a clean security posture — intentional.',
+      'Haven charts and trades tokens from the current Binance Alpha BSC catalogue.',
+      'The engine verifies catalogue membership before a swap and rejects missing, mismatched, or blacklisted contracts.',
+      'Every trade remains subject to engine limits for size, daily caps, price impact, and pause controls.',
+      'Market and smart-contract risk remain; review the token and use only capital you can afford to lose.',
     ],
   },
   {

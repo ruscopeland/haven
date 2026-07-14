@@ -7,13 +7,16 @@ export function AlphaBadge({ compact = false }) {
 }
 
 export default function AlphaRisk({ security, symbol }) {
-  const critical = security?.critical || ['security_audit_unavailable'];
-  return <div className="goplus-panel risk">
-    <div className="goplus-panel-head"><AlphaBadge /><span className="goplus-verdict bad">Manual-risk review required</span></div>
+  const critical = security?.critical || [];
+  const listed = security?.safe === true && security?.verified === true;
+  return <div className={`goplus-panel${listed ? '' : ' risk'}`}>
+    <div className="goplus-panel-head"><AlphaBadge /><span className={`goplus-verdict ${listed ? 'good' : 'bad'}`}>{listed ? 'Listed and tradeable' : 'Unavailable for trading'}</span></div>
     <p className="dash-muted" style={{ fontSize: 12, margin: '8px 0 0' }}>
-      Binance Alpha confirms the listed contract and market data, but does not provide a contract-security audit. Charts remain available; automated trades stay blocked and manual trades require verification and acknowledgement.
+      {listed
+        ? 'This contract and market are listed in the current Binance Alpha BSC catalogue. Engine price-impact, size, daily-cap, and pause controls still apply.'
+        : 'This token is not a verified current Binance Alpha BSC catalogue entry, so trading is unavailable.'}
     </p>
-    <div className="goplus-flags">{critical.map(flag => <span key={flag} className="goplus-flag crit">{flag}</span>)}</div>
+    {critical.length > 0 && <div className="goplus-flags">{critical.map(flag => <span key={flag} className="goplus-flag crit">{flag}</span>)}</div>}
     <div className="goplus-foot"><a href={ALPHA_HOME} target="_blank" rel="noopener noreferrer">Binance Alpha{symbol ? ` · ${symbol}` : ''}</a></div>
   </div>;
 }
