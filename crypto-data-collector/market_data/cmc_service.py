@@ -132,7 +132,7 @@ class CmcMarketDataService:
             try:
                 async with CmcClient(self.api_key) as client:
                     response = await client.listings(limit=int(os.environ.get("CMC_ASSET_LIMIT", "2000")))
-                self._store_assets(response.data)
+                await asyncio.to_thread(self._store_assets, response.data)
                 await self._refresh_metadata()
                 self.state.error = None
             except Exception as exc:
@@ -356,10 +356,11 @@ class CmcMarketDataService:
                         received = now_ms()
                         payload = json.loads(raw)
                         if isinstance(payload, dict) and payload.get("channel") == "onchain@kline":
-                            self._apply_kline_event(payload, received)
+                            await asyncio.to_thread(self._apply_kline_event, payload, received)
                         else:
-                            for event in self._events(payload):
-                                self._apply_price_event(event, received)
+                            events = self._events(payload)
+                            if events:
+                                await asyncio.to_thread(self._apply_price_events, events, received)
                         # A chart or bot can become active after connection. Add its
                         # on-chain candles without exposing the key or waiting for a reconnect.
                         desired = self._onchain_subscriptions(self.ws_max - len(ids))
@@ -427,6 +428,10 @@ class CmcMarketDataService:
             for interval in self.stream_intervals:
                 self._upsert_stream_candle(db, cmc_id, interval, received_at, price)
             db.commit()
+
+    def _apply_price_events(self, events: list[dict], received_at: int):
+        for event in events:
+            self._apply_price_event(event, received_at)
 
     def _upsert_stream_candle(self, db, cmc_id: int, interval: str, at: int, price: float):
         width = INTERVAL_MS[interval]
@@ -508,12 +513,14 @@ class CmcMarketDataService:
             response = await client.quotes(ids)
         rows = response.data if isinstance(response.data, list) else list((response.data or {}).values())
         at = now_ms()
+        events = []
         for row in rows:
             usd = _quote_usd(row)
-            self._apply_price_event({
+            events.append({
                 "cid": row.get("id"), "p": usd.get("price"),
                 "p24h": usd.get("percent_change_24h"), "vu": usd.get("volume_24h"),
-            }, at)
+            })
+        await asyncio.to_thread(self._apply_price_events, events, at)
         self.state.last_reconciled_at = at
         self._persist_state()
 
