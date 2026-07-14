@@ -7,3 +7,9 @@
   Cross-Origin-Resource-Policy: same-origin
   Strict-Transport-Security: max-age=31536000; includeSubDomains
   Content-Security-Policy: default-src 'self'; script-src 'self' https://clerk.haven.trading https://challenges.cloudflare.com https://*.clerk.accounts.dev https://*.clerk.com https://*.js.stripe.com https://js.stripe.com https://static.cloudflareinsights.com; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; img-src 'self' data: https:; connect-src 'self' https: wss:; worker-src 'self' blob:; frame-src https://clerk.haven.trading https://accounts.haven.trading https://challenges.cloudflare.com https://*.clerk.accounts.dev https://*.clerk.com https://*.js.stripe.com https://js.stripe.com https://hooks.stripe.com; font-src 'self' data: https://fonts.gstatic.com; object-src 'none'; base-uri 'self'; form-action 'self' https://clerk.haven.trading https://accounts.haven.trading https://*.clerk.accounts.dev https://*.clerk.com; frame-ancestors 'none'; upgrade-insecure-requests
+
+/assets/strategyWorker-*.js
+  # User-authored strategy/finder code runs only in this disposable module worker.
+  # Keep unsafe-eval out of the main application CSP; new Function is required
+  # here by the documented JavaScript authoring contract.
+  Content-Security-Policy: default-src 'none'; script-src 'self' 'unsafe-eval'; connect-src 'none'; object-src 'none'; base-uri 'none'
