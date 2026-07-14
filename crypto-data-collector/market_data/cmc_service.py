@@ -614,13 +614,25 @@ class CmcMarketDataService:
         # requests ending at the present and cache the exact returned coverage.
         rolling = end_ms >= now_ms() - 2 * width
         async with CmcClient(self.api_key) as client:
-            response = await client.dex_candles(
-                platform=CMC_PLATFORM_TO_DEX_API.get(platform, platform),
-                address=address, interval=interval,
-                start_s=None if rolling else start_ms // 1000,
-                end_s=None if rolling else end_ms // 1000,
-                limit=requested_count,
-            )
+            dex_platform = CMC_PLATFORM_TO_DEX_API.get(platform, platform)
+            try:
+                response = await client.dex_candles(
+                    platform=dex_platform, address=address, interval=interval,
+                    start_s=None if rolling else start_ms // 1000,
+                    end_s=None if rolling else end_ms // 1000,
+                    limit=requested_count,
+                )
+            except CmcError:
+                if rolling:
+                    raise
+                # Startup may reject from/to for the DEX K-line endpoint even
+                # though its rolling history is licensed. Fetch the broad
+                # rolling window once; the exact returned timestamps below
+                # prevent us from claiming coverage we did not receive.
+                response = await client.dex_candles(
+                    platform=dex_platform, address=address, interval=interval,
+                    limit=1000,
+                )
         rows = response.data or []
         at = now_ms()
         returned_times = [
