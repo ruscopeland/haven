@@ -1079,8 +1079,10 @@ async def get_universe(interval: str = "15m", start_ms: int | None = None,
     if chains:
         allowed = [item.strip() for item in chains.split(",") if item.strip()]
         query = query.filter(Token.chain_id.in_(allowed))
-    maximum = min(UNIVERSE_MAX_TOKENS,
-                  max(1, int(os.environ.get("BINANCE_ALPHA_FINDER_ASSET_LIMIT", "50"))))
+    # Keep the first finder load interactive. The selected window needs only
+    # its own number of bars, not the endpoint's historical maximum.
+    maximum = min(20, UNIVERSE_MAX_TOKENS,
+                  max(1, int(os.environ.get("BINANCE_ALPHA_FINDER_ASSET_LIMIT", "20"))))
     selected = query.order_by(LatestTicker.volume_24h.desc()).limit(maximum).all()
     specs = [{
         "symbol": token.symbol, "name": token.name, "chain": token.chain_id,
@@ -1089,11 +1091,13 @@ async def get_universe(interval: str = "15m", start_ms: int | None = None,
     } for token, ticker, asset in selected if token.alpha_id]
     semaphore = asyncio.Semaphore(max(1, int(os.environ.get("BINANCE_ALPHA_REST_CONCURRENCY", "4"))))
 
+    requested_bars = min(1500, max(20, ((end_ms - start_ms) // interval_ms) + 3))
+
     async def load(spec):
         async with semaphore:
             try:
                 candles = await alpha_market.candles(alpha_id=spec["alpha_id"], interval=interval,
-                                                     limit=UNIVERSE_MAX_BARS)
+                                                     limit=requested_bars)
             except AlphaError:
                 return spec, []
         return spec, candles

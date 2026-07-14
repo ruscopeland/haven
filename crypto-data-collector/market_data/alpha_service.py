@@ -110,6 +110,7 @@ class BinanceAlphaMarketDataService:
     async def candles(self, *, alpha_id: str, interval: str, limit: int) -> list[MarketCandle]:
         if interval not in INTERVAL_MS:
             raise ValueError("Unsupported Binance Alpha candle interval")
+        limit = min(max(int(limit), 1), 1500)
         asset_db = SessionLocal()
         try:
             asset = asset_db.get(AlphaAsset, alpha_id)
@@ -117,6 +118,15 @@ class BinanceAlphaMarketDataService:
                 raise ValueError("Unknown Binance Alpha asset")
             pair = f"{alpha_id}USDT"
             address = asset.contract_address
+            # Finder/strategy requests repeat the same window frequently. Reuse
+            # a fresh cache rather than issuing one Alpha request per token each
+            # time the author changes code or parameters.
+            cached = (asset_db.query(MarketCandle)
+                      .filter_by(alpha_id=alpha_id, contract_address=address, interval=interval)
+                      .order_by(MarketCandle.open_time.desc()).limit(limit).all())
+            fresh_after = int(time.time() * 1000) - self.refresh_sec * 2000
+            if len(cached) >= min(limit, 20) and cached and cached[0].updated_at >= fresh_after:
+                return list(reversed(cached))
         finally:
             asset_db.close()
         async with BinanceAlphaClient() as client:
