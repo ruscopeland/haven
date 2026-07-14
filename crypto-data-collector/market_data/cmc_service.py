@@ -382,6 +382,7 @@ class CmcMarketDataService:
                 self.state.reconnect_count += 1
                 self.state.gap_count += 1
                 self.state.error = f"{type(exc).__name__}: {exc}"
+                print(f"CMC WebSocket reconnecting: {self.state.error}", flush=True)
                 self._persist_state()
                 attempt += 1
                 await self._wait(min(60, (2 ** min(attempt, 6))) + random.random())

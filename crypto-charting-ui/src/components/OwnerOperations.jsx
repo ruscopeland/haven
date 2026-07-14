@@ -77,6 +77,7 @@ export default function OwnerOperations() {
           <Metric label="Subscriptions" value={data.provider?.details?.subscriptions} />
           <Metric label="Credits left" value={usage?.credits_left} hint={usage ? `Used ${usage.credits_used}` : null} />
           <Metric label="Reconnects / gaps" value={`${data.provider?.reconnect_count || 0} / ${data.provider?.gap_count || 0}`} />
+          {data.provider?.error && <p className="dash-error" style={{ fontSize: 11 }}>{data.provider.error}</p>}
         </section>
         <section className="ops-card">
           <h2>Database</h2><Status value={data.database?.migrations?.up_to_date ? 'ok' : 'drift'} />

@@ -50,7 +50,7 @@ export default function EngineConnect() {
     <div className="settings-root" style={{ marginBottom: 24 }}>
       <h2 style={{ color: '#e5e9f0', marginTop: 0 }}>🖥️ Connect your engine</h2>
       <p className="dash-muted" style={{ fontSize: 12, marginBottom: 16 }}>
-        Live trading runs on your computer after you subscribe. Download the engine,
+        Live trading runs on your computer during a trial or paid subscription. Download the engine,
         generate a connection key, run setup (creates your wallet + seed phrase), then start it.
       </p>
 

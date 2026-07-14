@@ -8,19 +8,22 @@ export default function FirstRunChecklist({ wallet, onGoSettings, onGoStrategies
   const [dismissed, setDismissed] = useState(() => localStorage.getItem(LS_DISMISS) === '1');
   const [billing, setBilling] = useState(null);
   const [engine, setEngine] = useState(null);
+  const [engineStatus, setEngineStatus] = useState(null);
 
   useEffect(() => {
     if (dismissed) return;
     let alive = true;
     const load = async () => {
       try {
-        const [b, e] = await Promise.all([
+        const [b, e, h] = await Promise.all([
           fetch(`${API_URL}/billing/status`).then(r => r.ok ? r.json() : null),
           fetch(`${API_URL}/engine/settings`).then(r => r.ok ? r.json() : null),
+          fetch(`${API_URL}/engine/health`).then(r => r.ok ? r.json() : null),
         ]);
         if (!alive) return;
         setBilling(b);
         setEngine(e);
+        setEngineStatus(h?.status || null);
       } catch { /* ignore */ }
     };
     load();
@@ -31,18 +34,19 @@ export default function FirstRunChecklist({ wallet, onGoSettings, onGoStrategies
   if (dismissed) return null;
 
   const walletOk = !!(wallet?.address);
-  const engineOk = engine != null; // settings reachable
-  const engineLive = engine && !engine.paused;
+  const engineConnected = engineStatus === 'ok';
+  const engineLive = engineConnected && engine && !engine.paused;
   const botsRunning = (billing?.bots_running || 0) > 0;
   const isTrial = billing?.trial === true;
 
   const items = [
     { done: botsRunning, label: 'Create and run a paper or live bot', action: onGoStrategies },
     { done: walletOk, label: 'Set wallet address for portfolio display', action: onGoSettings },
-    { done: engineOk, label: 'Download & connect desktop engine (Settings)', action: onGoSettings },
+    { done: engineConnected, label: 'Download & connect desktop engine (Settings)', action: onGoSettings },
     {
       done: engineLive,
-      label: engine?.paused ? 'Engine is paused — resume when ready' : 'Engine running (not paused)',
+      label: !engineConnected ? 'Start the desktop engine on your computer' :
+        engine?.paused ? 'Engine is paused — resume when ready' : 'Engine running (not paused)',
       action: null,
     },
   ];
