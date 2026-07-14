@@ -553,7 +553,9 @@ class CmcMarketDataService:
         width = INTERVAL_MS.get(cmc_interval)
         if not width:
             raise ValueError(f"unsupported interval: {interval}")
-        closed_end = min(end_ms, now_ms() - width)
+        at = now_ms()
+        current_open = at - (at % width)
+        closed_end = min(end_ms - (end_ms % width), current_open - width)
         if closed_end >= start_ms:
             lock_key = (cmc_id, platform, address.lower(), cmc_interval)
             lock = self._candle_locks.setdefault(lock_key, asyncio.Lock())
