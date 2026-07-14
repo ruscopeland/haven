@@ -12,12 +12,15 @@ export default function SubscriptionPanel() {
 
   const paid = access?.paid === true;
   const trial = access?.trial === true;
+  const owner = access?.owner === true;
 
   return (
     <div style={{ marginBottom: 8 }}>
       <h2 style={{ color: 'var(--text-bright)', marginTop: 0 }}>Subscription</h2>
       <div style={{ marginBottom: 12 }}>
-        {paid ? (
+        {owner ? (
+          <span className="dash-green" style={{ fontWeight: 600 }}>Owner access active</span>
+        ) : paid ? (
           <span className="dash-green" style={{ fontWeight: 600 }}>Paid plan active</span>
         ) : trial ? (
           <span className="dash-green" style={{ fontWeight: 600 }}>Seven-day trial active</span>
@@ -26,7 +29,11 @@ export default function SubscriptionPanel() {
         )}
       </div>
 
-      {paid ? (
+      {owner ? (
+        <p className="dash-muted" style={{ fontSize: 13, marginBottom: 12, lineHeight: 1.5 }}>
+          This private owner account has operational access without purchasing a Haven subscription.
+        </p>
+      ) : paid ? (
         <p className="dash-muted" style={{ fontSize: 13, marginBottom: 12, lineHeight: 1.5 }}>
           Your {access?.plan || 'paid'} plan includes paper and live trading. Manage billing in your account menu
           (profile → Billing), or below.
@@ -40,7 +47,7 @@ export default function SubscriptionPanel() {
         <div className="upgrade-panel" style={{ marginBottom: 16 }}>
           <h3 className="upgrade-panel-title">Upgrade to subscribe</h3>
           <p className="dash-muted" style={{ fontSize: 13, margin: '0 0 14px', lineHeight: 1.5 }}>
-            Pick a plan. Clerk securely handles subscription and payment status.
+            Pick a plan and add a card to start the seven-day trial. Clerk securely handles payment and subscription status.
           </p>
           <button type="button" className="btn-primary" onClick={() => setShowPlans(true)}>
             Show plans
@@ -48,7 +55,7 @@ export default function SubscriptionPanel() {
         </div>
       )}
 
-      {(showPlans || (!paid && !trial)) && (
+      {!owner && (showPlans || (!paid && !trial)) && (
         <div className="clerk-pricing-wrap" style={{ marginTop: 8 }}>
           <PricingTable />
         </div>
