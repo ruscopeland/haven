@@ -36,7 +36,10 @@ jobs:
         with:
           python-version: "3.12"
       - name: Install the Windows installer compiler
-        run: choco install nsis --yes --no-progress
+        shell: pwsh
+        run: |
+          choco install nsis --yes --no-progress
+          Join-Path ${env:ProgramFiles(x86)} 'NSIS' | Out-File -FilePath $env:GITHUB_PATH -Encoding utf8 -Append
       - name: Install release builder dependencies
         run: python -m pip install --disable-pip-version-check cryptography
       - name: Build signed Windows and Linux installers
