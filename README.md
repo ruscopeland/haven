@@ -12,6 +12,7 @@ Haven is a non-custodial crypto strategy workspace. The hosted service supplies 
 
 See [Production runbook](docs/PRODUCTION_RUNBOOK.md) for deployment and [User guide](docs/USER_GUIDE.md) for the product workflow.
 For the signed Windows/Linux engine release handoff, see [engine release operations](docs/ENGINE_RELEASE_OPERATIONS.md).
+For website changes, Cloudflare publishing, and Git continuation, see [website and Git operations](docs/WEBSITE_AND_GIT_OPERATIONS.md).
 
 ## Local development
 

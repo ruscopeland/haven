@@ -13,6 +13,8 @@ authoritative detailed references:
 
 - `docs/USER_GUIDE.md` — intended user workflow and safety language.
 - `docs/PRODUCTION_RUNBOOK.md` — deployment ownership and launch checks.
+- `docs/WEBSITE_AND_GIT_OPERATIONS.md` — website source, Cloudflare publishing,
+  engine-download UI, and Git continuation procedure.
 - `docs/SECURITY_ROTATION_REQUIRED.md` — unresolved credential-rotation work.
 - `strategy-sdk/docs/` — strategy/finder behavior and public authoring contract.
 - `.github/workflows/production-checks.yml` — release verification commands.
@@ -32,6 +34,10 @@ or recovery phrases here.
   API environment variables belong there.
 - **Web edge and DNS:** Cloudflare. Do not change DNS, domains, or proxy/TLS
   settings without explicit owner approval.
+- **Website publishing:** source is `crypto-charting-ui/`; use
+  `docs/WEBSITE_AND_GIT_OPERATIONS.md` for the exact test, Git, and Cloudflare
+  Pages procedure. The existing secure Wrangler sign-in is local to this
+  Windows computer and is never committed.
 - **Identity, plans, checkout, and subscription state:** Clerk. Stripe is
   managed only through Clerk; Haven has no direct Stripe keys or webhooks.
 - **Engine downloads:** the API verifies a signed platform release before
