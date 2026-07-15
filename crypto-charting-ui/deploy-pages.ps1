@@ -48,6 +48,10 @@ $env:VITE_CLERK_PUBLISHABLE_KEY = $clerkKey
 # CRITICAL: do not bake the operator's local .env wallet into production.
 # An empty value overrides crypto-charting-ui/.env VITE_WALLET_ADDRESS at build time.
 $env:VITE_WALLET_ADDRESS = ""
+# Make all JavaScript asset URLs deployment-specific. The Cloudflare domain
+# cache deliberately holds assets longer than HTML, and this prevents an old
+# shell from resolving a lazy editor import to an obsolete chunk.
+$env:VITE_BUILD_ID = (git rev-parse --short HEAD).Trim()
 
 Write-Host "Building Haven with Clerk $clerkEnvironment billing"
 npm run build

@@ -2,8 +2,13 @@ import { defineConfig } from 'vite'
 import react from '@vitejs/plugin-react'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
+import { env } from 'node:process'
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url))
+// Cloudflare's domain cache keeps JavaScript assets for several hours. Include
+// the deployment revision in every JS filename so a newly deployed HTML shell
+// can never load a previous deployment's lazy-loaded chunks from that cache.
+const buildRevision = env.VITE_BUILD_ID || 'local'
 
 // https://vite.dev/config/
 export default defineConfig({
@@ -12,6 +17,8 @@ export default defineConfig({
     license: true,
     rolldownOptions: {
       output: {
+        entryFileNames: `assets/[name]-[hash]-${buildRevision}.js`,
+        chunkFileNames: `assets/[name]-[hash]-${buildRevision}.js`,
         codeSplitting: {
           groups: [
             { name: 'react-vendor', test: /node_modules[\\/]react(?:-dom)?[\\/]/ },
