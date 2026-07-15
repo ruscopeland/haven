@@ -61,6 +61,7 @@ export default function StrategyWorkbench({ signals = [], initialSelectId = null
   const [saveMsg, setSaveMsg] = useState('');
   const [activity, setActivity] = useState([]);
   const [finders, setFinders] = useState([]);
+  const [finderLoadError, setFinderLoadError] = useState('');
   const [pfUniverse, setPfUniverse] = useState(null);   // normalized universe of the last portfolio run
   const [showGuide, setShowGuide] = useState(false);
   const [showSlots, setShowSlots] = useState(false);    // "bot slots full" dialog (deploy hit a 409)
@@ -97,9 +98,17 @@ export default function StrategyWorkbench({ signals = [], initialSelectId = null
       if (res.ok) setList(await res.json());
     } catch { /* API down — health dot already shows it */ }
     try {
-      const res = await fetch(`${API_URL}/finders`);
-      if (res.ok) setFinders(await res.json());
-    } catch { /* ditto */ }
+      // Finders are saved in a separate tab. Do not let a cached empty list
+      // hide a finder that was just created when this editor opens.
+      const res = await fetch(`${API_URL}/finders`, { cache: 'no-store' });
+      if (!res.ok) throw new Error(res.statusText);
+      const rows = await res.json();
+      if (!Array.isArray(rows)) throw new Error('unexpected response');
+      setFinders(rows);
+      setFinderLoadError('');
+    } catch {
+      setFinderLoadError('Could not load saved Token Finders. Refresh and try again.');
+    }
   }, []);
 
   useEffect(() => {
@@ -506,6 +515,7 @@ export default function StrategyWorkbench({ signals = [], initialSelectId = null
               {(isPortfolio ? PORTFOLIO_INTERVALS : INTERVALS).map(iv => <option key={iv} value={iv}>{iv}</option>)}
             </select>
           </div>
+          {finderLoadError && <div className="bt-error">⚠ {finderLoadError}</div>}
           {isPortfolio && (
             <div className="wb-config-row">
               <label className="wb-mini-label">max positions

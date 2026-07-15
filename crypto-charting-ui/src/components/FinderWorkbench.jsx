@@ -77,7 +77,9 @@ export default function FinderWorkbench() {
   // ── Saved finders list ───────────────────────────────────────────────────
   const fetchList = useCallback(async () => {
     try {
-      const res = await fetch(`${API_URL}/finders`);
+      // A save is followed by this read; force a fresh list so the new finder
+      // is immediately available when the Strategy editor is opened.
+      const res = await fetch(`${API_URL}/finders`, { cache: 'no-store' });
       if (res.ok) setList(await res.json());
     } catch { /* API down — health dot already shows it */ }
   }, []);
