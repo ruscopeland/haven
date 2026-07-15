@@ -80,7 +80,7 @@ jobs:
         run: npm install --global @railway/cli
       - name: Deploy API and signed release files
         run: >-
-          railway up crypto-data-collector --ci
+          railway up . --path-as-root --ci
           --project "$HAVEN_RAILWAY_PROJECT_ID"
           --environment "$HAVEN_RAILWAY_ENVIRONMENT"
           --service "$HAVEN_RAILWAY_SERVICE"
