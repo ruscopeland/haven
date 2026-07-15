@@ -40,6 +40,11 @@ or recovery phrases here.
   key must already exist in an approved protected secret store; never invent,
   print, move, or replace it. The corresponding public key is an API production
   setting. A release build also needs a Windows builder with NSIS (`makensis`).
+  The current Windows release operator's recovery copy is DPAPI-protected at
+  `%LOCALAPPDATA%\Haven\engine-release-signing.dpapi`; use
+  `crypto-data-collector/tools/engine_release_key.py status` to check for it.
+  Never print, copy into Git, or replace it except during explicit owner-authorized
+  rotation.
 
 If an operational task requires access that is not connected to the current
 session, identify the existing system and request only the specific sign-in or

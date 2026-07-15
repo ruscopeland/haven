@@ -43,6 +43,21 @@ of the same existing Ed25519 key pair. Creating, rotating, moving, exposing, or
 replacing that key is an owner-authorized security operation, not a routine
 build step.
 
+## Local recovery copy
+
+The authorized Windows release operator keeps a recovery copy outside Git using
+`crypto-data-collector/tools/engine_release_key.py`. It stores the private key
+in `%LOCALAPPDATA%\Haven\engine-release-signing.dpapi`, encrypted for that
+Windows user by DPAPI; the public half is stored alongside it. The tool never
+prints the private key. A fresh task can run `python
+crypto-data-collector/tools/engine_release_key.py status` to confirm that this
+machine has the protected recovery copy.
+
+Only during an explicitly authorized key rotation should a task run
+`initialize`. To place the existing local key in GitHub's encrypted secret
+entry, use `copy-private-for-github`; it writes only to the local clipboard for
+that one entry and never writes the key into this workspace.
+
 ### Confirmed production target
 
 The target was confirmed in the Railway dashboard on 2026-07-15. These are
