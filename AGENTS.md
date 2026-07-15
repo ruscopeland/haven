@@ -20,6 +20,32 @@ authoritative detailed references:
 `crypto-charting-ui/README.md` is still the generic Vite template; do not treat
 it as product documentation.
 
+## Persistent operations context
+
+This section is the starting point for a fresh task. Do not rely on a previous
+chat for operational context, and never add secrets, key values, account IDs,
+or recovery phrases here.
+
+- **Source and CI:** GitHub (`ruscopeland/haven`). GitHub Actions runs the
+  repository checks; look there first for release automation.
+- **API and database hosting:** Railway. Production configuration and protected
+  API environment variables belong there.
+- **Web edge and DNS:** Cloudflare. Do not change DNS, domains, or proxy/TLS
+  settings without explicit owner approval.
+- **Identity, plans, checkout, and subscription state:** Clerk. Stripe is
+  managed only through Clerk; Haven has no direct Stripe keys or webhooks.
+- **Engine downloads:** the API verifies a signed platform release before
+  serving it. `crypto-data-collector/tools/build_engine_release.py` builds the
+  Windows NSIS installer and Linux installer bundle. The private release-signing
+  key must already exist in an approved protected secret store; never invent,
+  print, move, or replace it. The corresponding public key is an API production
+  setting. A release build also needs a Windows builder with NSIS (`makensis`).
+
+If an operational task requires access that is not connected to the current
+session, identify the existing system and request only the specific sign-in or
+approval needed. Do not ask a non-technical owner to configure environment
+variables or run build commands.
+
 ## Repository map
 
 - `crypto-charting-ui/` — React 19/Vite web app. It displays data and strategy

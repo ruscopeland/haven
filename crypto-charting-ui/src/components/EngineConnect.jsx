@@ -1,6 +1,6 @@
 // Settings → Connect your engine. Generates a one-time connection key the user
 // pastes into the downloaded desktop engine, lists/revokes existing keys, and
-// downloads the engine zip (fetched with the auth interceptor, then saved).
+// downloads a signed Windows installer or Linux installer bundle.
 import { useEffect, useState } from 'react';
 import { API_URL } from '../authFetch.js';
 
@@ -33,15 +33,19 @@ export default function EngineConnect() {
     load();
   };
 
-  const downloadEngine = async () => {
+  const downloadEngine = async (platform) => {
     setErr('');
     try {
-      const r = await fetch(`${API_URL}/engine/download`);
+      const r = await fetch(`${API_URL}/engine/download?platform=${encodeURIComponent(platform)}`);
       if (!r.ok) throw new Error((await r.json().catch(() => ({}))).detail || `HTTP ${r.status}`);
       const blob = await r.blob();
       const url = URL.createObjectURL(blob);
       const a = document.createElement('a');
-      a.href = url; a.download = 'haven-engine.zip'; a.click();
+      a.href = url;
+      a.download = platform === 'windows'
+        ? 'haven-engine-windows-installer.exe'
+        : 'haven-engine-linux.tar.gz';
+      a.click();
       URL.revokeObjectURL(url);
     } catch (e) { setErr(`Download failed: ${e.message}`); }
   };
@@ -50,13 +54,15 @@ export default function EngineConnect() {
     <div className="settings-root" style={{ marginBottom: 24 }}>
       <h2 style={{ color: '#e5e9f0', marginTop: 0 }}>🖥️ Connect your engine</h2>
       <p className="dash-muted" style={{ fontSize: 12, marginBottom: 16 }}>
-        Live trading runs on your computer during a trial or paid subscription. Download the engine,
-        generate a connection key, run setup (creates your wallet + seed phrase), then start it.
+        Live trading runs on your computer during a trial or paid subscription. Install the engine for
+        your operating system, generate a connection key, run setup (creates your wallet + seed phrase), then start it.
       </p>
 
       <ol className="engine-steps">
         <li>
-          <button className="settings-save" onClick={downloadEngine}>⬇ Download the engine (.zip)</button>
+          <button className="settings-save" onClick={() => downloadEngine('windows')}>⬇ Download Windows installer</button>
+          {' '}
+          <button className="settings-save" onClick={() => downloadEngine('linux')}>⬇ Download Linux installer</button>
         </li>
         <li>
           <button className="settings-save" disabled={busy} onClick={generate}>
@@ -64,7 +70,7 @@ export default function EngineConnect() {
           </button>
         </li>
         <li className="dash-muted" style={{ fontSize: 12 }}>
-          On your PC: run <code>setup.bat</code> → create wallet → save seed phrase → start engine.
+          Windows: open the installer, then launch Haven Engine. Linux: extract the download, run <code>./install.sh</code>, then <code>haven-engine</code>.
         </li>
       </ol>
 

@@ -20,7 +20,9 @@ technical chores for the owner.
 - The owner page reports service, database, market stream, backup, subscription,
   and deployment health.
 - Paper and live trading use the same engine on the trader's computer. Wallet
-  private keys stay on that computer.
+  private keys stay on that computer. Signed releases include a Windows NSIS
+  installer and a Linux current-user installer; Windows uses DPAPI and Linux
+  uses the user's desktop keyring.
 
 ## What the lead developer handles
 
@@ -28,6 +30,11 @@ The lead developer checks the existing Clerk, Railway, Cloudflare, Binance Alpha
 monitoring setup; adds or corrects settings; deploys Haven; upgrades the
 database; tests sign-up and all plans; verifies backups; and runs the full test
 suite. Existing accounts should be reused, not recreated.
+
+Engine releases are built only with `crypto-data-collector/tools/build_engine_release.py`
+using the protected release-signing key. The Windows build environment needs NSIS
+(`makensis`); the script fails closed when it is unavailable. The completed
+Windows `.exe`, Linux `.tar.gz`, and both manifests are published together.
 
 Replacement secrets belong in the hosting services' protected settings, never
 in this workspace or in browser code. Plan names, prices, capacity limits, owner

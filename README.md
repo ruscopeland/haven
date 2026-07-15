@@ -1,6 +1,6 @@
 # Haven
 
-Haven is a non-custodial crypto strategy workspace. The hosted service supplies licensed Binance Alpha data, authentication, subscriptions, strategy storage, and operations visibility. One signed desktop engine runs both paper and live strategies; live private keys stay encrypted on the trader's Windows machine.
+Haven is a non-custodial crypto strategy workspace. The hosted service supplies licensed Binance Alpha data, authentication, subscriptions, strategy storage, and operations visibility. One signed desktop engine runs both paper and live strategies; live private keys stay encrypted in the trader's Windows DPAPI store or Linux desktop keyring.
 
 ## Product architecture
 
@@ -11,6 +11,7 @@ Haven is a non-custodial crypto strategy workspace. The hosted service supplies 
 - **Operations:** `/owner` is private to configured owner IDs and reports Binance Alpha usage, stream health, database migration state, backups, subscriptions, engine credentials, pending transactions, and launch gates.
 
 See [Production runbook](docs/PRODUCTION_RUNBOOK.md) for deployment and [User guide](docs/USER_GUIDE.md) for the product workflow.
+For the signed Windows/Linux engine release handoff, see [engine release operations](docs/ENGINE_RELEASE_OPERATIONS.md).
 
 ## Local development
 

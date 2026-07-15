@@ -1468,20 +1468,28 @@ def revoke_engine_key(key_id: str, db: Session = Depends(get_db),
 
 
 @app.get("/engine/download")
-def download_engine(db: Session = Depends(get_db),
+def download_engine(platform: str = "windows", db: Session = Depends(get_db),
                     identity: Identity = Depends(require_paid)):
-    """Serve the signed desktop engine archive to entitled users.
+    """Serve the requested signed desktop-engine installer to entitled users.
 
-    The zip is built by tools/build_engine_release.py into api/static/. If it isn't
-    present the endpoint 404s with guidance rather than erroring cryptically.
+    The platform package is built by tools/build_engine_release.py into api/static/.
+    If it is absent, the endpoint returns a clear 404 rather than a cryptic error.
     """
     from fastapi.responses import FileResponse
     ent = entitlements(db, identity)
     if not ent.get("live_allowed"):
         raise HTTPException(status_code=403, detail="Your plan does not include the local engine")
-    zip_path = os.path.join(os.path.dirname(__file__), "static", "haven-engine.zip")
-    manifest_path = zip_path + ".manifest.json"
-    if not os.path.exists(zip_path) or not os.path.exists(manifest_path):
+    releases = {
+        "windows": ("haven-engine-windows-installer.exe", "application/vnd.microsoft.portable-executable"),
+        "linux": ("haven-engine-linux.tar.gz", "application/gzip"),
+    }
+    selected = releases.get(platform.lower())
+    if not selected:
+        raise HTTPException(status_code=400, detail="platform must be windows or linux")
+    filename, media_type = selected
+    release_path = os.path.join(os.path.dirname(__file__), "static", filename)
+    manifest_path = release_path + ".manifest.json"
+    if not os.path.exists(release_path) or not os.path.exists(manifest_path):
         raise HTTPException(status_code=404,
                             detail="A signed engine release is not currently available.")
     try:
@@ -1495,15 +1503,14 @@ def download_engine(db: Session = Depends(get_db),
             base64.b64decode(signature),
             json.dumps(manifest, sort_keys=True, separators=(",", ":")).encode(),
         )
-        with open(zip_path, "rb") as handle:
+        with open(release_path, "rb") as handle:
             digest = hashlib.sha256(handle.read()).hexdigest()
         if digest != manifest.get("sha256"):
             raise ValueError("archive checksum mismatch")
     except Exception:
         raise HTTPException(status_code=503,
                             detail="Engine release signature verification failed")
-    response = FileResponse(zip_path, media_type="application/zip",
-                            filename="haven-engine.zip")
+    response = FileResponse(release_path, media_type=media_type, filename=filename)
     response.headers["X-Haven-Release"] = str(manifest.get("version", ""))
     response.headers["X-Haven-SHA256"] = digest
     return response

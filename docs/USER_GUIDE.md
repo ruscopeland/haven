@@ -26,7 +26,7 @@ The subscription helps cover **shared market data**, development, hosting, and u
 2. **Dashboard** — optional wallet address for balances.
 3. **Charts** — pick tokens from the licensed Binance Alpha catalogue.
 4. **Strategies** — template or code → backtest → **paper** first.
-5. **Live** — download the signed engine; your private key stays encrypted on your PC.
+5. **Live** — download the signed installer for Windows or Linux; your private key stays encrypted on your computer.
 6. Read **Risk disclosure** before live size.
 
 ---
@@ -42,12 +42,12 @@ The subscription helps cover **shared market data**, development, hosting, and u
 
 ## Desktop engine
 
-Settings → download engine → generate connection key (once) → run setup on your PC
+Settings → download the installer for your operating system → generate connection key (once) → run setup
 (creates a local wallet + seed phrase; save the seed offline) → start engine:
 
-- API URL  
-- Connection key  
-- Trading key stored with Windows user-bound encryption (never in the browser)
+- **Windows:** install Node.js 22, then open `haven-engine-windows-installer.exe` and use the Start Menu shortcut. The first launch runs setup. Credentials use Windows user-bound DPAPI encryption.
+- **Linux:** extract `haven-engine-linux.tar.gz`, run `./install.sh`, then run `haven-engine`. The installer requires Node.js 22 and `libsecret-tools`; credentials use your logged-in desktop keyring.
+- API URL and connection key are entered only during local setup. The trading key is never stored in the browser or in `.env`.
 
 Engine executes markers/strategies with size/impact/security guards.
 

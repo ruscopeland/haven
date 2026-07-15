@@ -12,8 +12,8 @@ RUN pip install --no-cache-dir -r requirements.txt
 
 COPY . .
 
-# A signed engine archive is injected by the protected release job. The API
-# rejects a missing, unsigned, or checksum-mismatched release.
+# Signed Windows and Linux engine packages are injected by the protected release
+# job. The API rejects a missing, unsigned, or checksum-mismatched release.
 
 RUN useradd --create-home --uid 10001 haven && chown -R haven:haven /app
 USER haven

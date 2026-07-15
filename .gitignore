@@ -4,6 +4,7 @@
 .env.*
 !.env.example
 !.env.*.example
+docs/LOCAL_RELEASE_ACCESS.md
 
 # ── Live database + backups + logs ───────────────────────────
 crypto-data-collector/crypto_data.db

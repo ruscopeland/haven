@@ -278,7 +278,7 @@ export const DOCS_SECTIONS = [
       '2. Open Dashboard — set a watch address if you want portfolio balances.',
       '3. Open Charts — search or select tokens from Alpha Screener; open layouts.',
       '4. Open Strategies — load a template or write rules; backtest; arm paper first.',
-      '5. For live during trial or paid access: download the desktop engine, create a scoped connection key, and let setup store the wallet key with Windows DPAPI on your PC.',
+      '5. For live during trial or paid access: download the Windows installer or Linux installer bundle, create a scoped connection key, and let setup store the wallet key with Windows DPAPI or your Linux desktop keyring.',
       '6. Read Risk Disclosure and verify contracts before any live size.',
     ],
   },
@@ -327,7 +327,7 @@ export const DOCS_SECTIONS = [
     id: 'engine',
     title: 'Desktop engine (live)',
     body: [
-      'Settings → Connect your engine → download zip → generate connection key (shown once).',
+      'Settings → Connect your engine → download the installer for Windows or Linux → generate connection key (shown once).',
       'On your PC: configure API URL + connection key + PRIVATE_KEY in local env only.',
       'Engine pulls markers/strategies, runs risk guards (size, impact, security), swaps via aggregator routes.',
       'Pause in Settings stops new execution. Panic / limits are your responsibility to configure.',
