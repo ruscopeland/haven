@@ -43,6 +43,21 @@ of the same existing Ed25519 key pair. Creating, rotating, moving, exposing, or
 replacing that key is an owner-authorized security operation, not a routine
 build step.
 
+### Confirmed production target
+
+The target was confirmed in the Railway dashboard on 2026-07-15. These are
+identifiers, not credentials, and may be used to configure the GitHub workflow:
+
+- Railway project: `haven` (`28ad7d1e-51bd-4df4-b47c-2bd9ee65b827`)
+- Railway environment: `production`
+  (`51044258-3ee9-41f1-8f02-51fa62e85c3d`)
+- Railway API service: `api` (`99c398a9-5acf-4d70-bed8-212ba0b3af8e`)
+
+Railway currently reports that its automatic GitHub repository connection is
+not accessible. The release workflow intentionally deploys through Railway's
+project-scoped CLI token instead, so it does not depend on that broken automatic
+connection.
+
 ## Build and deployment contract
 
 `crypto-data-collector/tools/build_engine_release.py` is the only approved
@@ -82,6 +97,12 @@ protected GitHub environments must contain the existing values named below:
 The matching `HAVEN_ENGINE_RELEASE_PUBLIC_KEY` remains a Railway production API
 variable. Keep environment approval enabled for `engine-release` and
 `production`; it is the deliberate confirmation before signing or deploying.
+
+As of 2026-07-15, the `engine-release` and `production` GitHub environments
+exist, but neither has the release-specific secrets/variables yet. Railway has
+`HAVEN_ENGINE_RELEASE_PUBLIC_KEY`, while GitHub does not have its matching
+private signing key. A future task must locate that existing private key in its
+approved secret store; it must not generate a substitute.
 
 ## What a fresh task should do
 
