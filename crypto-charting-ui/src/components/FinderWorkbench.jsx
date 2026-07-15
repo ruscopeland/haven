@@ -185,7 +185,10 @@ export default function FinderWorkbench() {
         code: draft.code, universe, params: draft.params, horizon, topN,
       });
       if (cancelled) return;
-      setResult({ rankings: ranked.rankings, logs: ranked.logs, error: ranked.error, quality: ranked.quality });
+      setResult({
+        rankings: ranked.rankings, logs: ranked.logs, error: ranked.error,
+        fwd: ranked.fwd, quality: ranked.quality,
+      });
       setPinnedGi(p => (p != null && p < ranked.rankings.length ? p : null));
     }, 400);
     return () => { cancelled = true; clearTimeout(timer); };

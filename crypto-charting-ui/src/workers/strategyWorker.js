@@ -24,6 +24,7 @@ self.onmessage = ({ data }) => {
       const fwd = computeForwardReturns(payload.universe, payload.horizon);
       result = {
         rankings: ranked.rankings, logs: ranked.logs, error: ranked.error,
+        fwd,
         quality: finderQuality(ranked.rankings, fwd, payload.topN),
       };
     } else {
