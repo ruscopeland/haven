@@ -100,6 +100,16 @@ test('runRanking: a throwing finder reports error, does not throw', () => {
   assert.match(error, /boom/);
 });
 
+test('runRanking: finder errors identify the failing token and bar', () => {
+  const u = normalizeUniverse(makePayload({ AAA: { closes: [1, 2, 3] } }));
+  const { error } = runRanking({
+    code: `const finder = { score(ctx) { return ctx.market.net; } }`,
+    universe: u,
+  });
+  assert.match(error, /^score failed for AAA at 2023-11-14T22:14:20\.000Z:/);
+  assert.match(error, /reading 'net'/i);
+});
+
 test('computeForwardReturns + finderQuality', () => {
   const u = normalizeUniverse(makePayload({
     UP: { closes: [100, 100, 110, 121] },        // +10% per bar from bar 1

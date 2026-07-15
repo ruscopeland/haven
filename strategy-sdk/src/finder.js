@@ -142,8 +142,17 @@ export function runRanking({ code, finder, universe, params = {}, keep = 100, mi
         const ti = gi - token.offset;
         if (ti < minBars - 1) continue;            // not enough history yet
         ctx.__setBar(ti);
-        if (finder.filter && !finder.filter(ctx)) continue;
-        const s = finder.score(ctx);
+        let passesFilter;
+        let s;
+        try {
+          passesFilter = !finder.filter || finder.filter(ctx);
+          if (passesFilter) s = finder.score(ctx);
+        } catch (e) {
+          const phase = finder.filter && passesFilter === undefined ? 'filter' : 'score';
+          const detail = e?.message || String(e);
+          throw new Error(`${phase} failed for ${token.symbol} at ${new Date(universe.times[gi] * 1000).toISOString()}: ${detail}`);
+        }
+        if (!passesFilter) continue;
         if (s == null || Number.isNaN(s) || !Number.isFinite(s)) continue;
         scored.push({ symbol: token.symbol, score: s });
       }
