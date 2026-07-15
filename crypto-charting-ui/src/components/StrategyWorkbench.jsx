@@ -494,6 +494,12 @@ export default function StrategyWorkbench({ signals = [], initialSelectId = null
               title="Token selection: one fixed symbol, or a Token Finder ranking"
               onChange={(e) => {
                 const id = e.target.value || null;
+                // A fixed-symbol backtest can have an error (for example no
+                // candles). It is not meaningful for a finder-bound portfolio
+                // and must not remain on screen while its universe loads.
+                setBtResult(null);
+                setBars(null);
+                setPfUniverse(null);
                 patchDraft({
                   finderId: id,
                   // Finder-bound backtests need a universe-capable interval.
