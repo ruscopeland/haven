@@ -1,18 +1,17 @@
 # Open issues
 
-## Engine release signing and deployment access are not connected
+## Verify paid-user engine downloads in production
 
-The code and GitHub workflow can build signed Windows and Linux engine packages,
-but GitHub has no configured copy of the existing protected private signing key
-or Railway project token. Railway has the matching public verification key and
-the API deployment target is documented. The API cannot serve a production
-release until the signed files and manifests are deployed with it to Railway.
+Release `1.1.0` was successfully built, signed, and deployed through the
+GitHub-to-Railway workflow on 2026-07-15. Production health returned `200`, and
+unauthenticated Windows and Linux download requests returned `401`, as intended.
+The signing key, Railway deployment token, public verification key, and four
+release files are connected.
 
-Next action: locate the original private half of Railway's existing engine
-release key in its approved secret store (do not paste it in chat), then add it
-to the `engine-release` GitHub environment and connect a scoped Railway project
-token as documented in `docs/ENGINE_RELEASE_OPERATIONS.md`.
+Next action: sign in as a paid test user and download both
+`platform=windows` and `platform=linux`. Confirm the expected installer is
+returned and that `X-Haven-Release` and `X-Haven-SHA256` headers are present.
 
-Evidence required to close: a protected build produces both signed platform
-packages, Railway has the matching public key and four files, and authenticated
-downloads succeed for both `platform=windows` and `platform=linux`.
+Evidence required to close: successful paid authenticated downloads for both
+platforms, with the version and checksum headers recorded without copying any
+credential or private-key material.

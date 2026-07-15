@@ -22,12 +22,18 @@ haven-engine-linux.tar.gz
 haven-engine-linux.tar.gz.manifest.json
 ```
 
-`.github/workflows/engine-release.yml` is the protected, manually triggered
-GitHub workflow that builds these files. It can also deploy them to Railway only
-when the person launching it explicitly selects **Deploy the verified release to
-Railway**. Do not claim a downloadable production release exists until the four
-files above are in the deployed Railway source and the endpoint has verified
-them.
+`.github/workflows/engine-release.yml` is the manually triggered GitHub
+workflow that builds these files. It can also deploy them to Railway only when
+the person launching it explicitly selects **Deploy the verified release to
+Railway**. The workflow uploads the complete repository to Railway so the
+service's configured `crypto-data-collector` build root and the four generated
+files remain together.
+
+Release `1.1.0` completed successfully on 2026-07-15. The production health
+endpoint returned `200`; unauthenticated requests to both platform-download
+URLs returned `401`, confirming that downloads remain behind the API's access
+control. An authenticated paid-user download check is still required before
+calling the user-facing download flow fully verified.
 
 ## Ownership and safe locations
 
@@ -114,10 +120,10 @@ variable. Keep environment approval enabled for `engine-release` and
 `production`; it is the deliberate confirmation before signing or deploying.
 
 As of 2026-07-15, the `engine-release` and `production` GitHub environments
-exist, but neither has the release-specific secrets/variables yet. Railway has
-`HAVEN_ENGINE_RELEASE_PUBLIC_KEY`, while GitHub does not have its matching
-private signing key. A future task must locate that existing private key in its
-approved secret store; it must not generate a substitute.
+exist and contain the named release secret(s) and production variables. Railway
+has the matching `HAVEN_ENGINE_RELEASE_PUBLIC_KEY`. The local DPAPI-protected
+recovery key is also present on this Windows machine. Never inspect or print
+any of those values; verify only that their named entries exist.
 
 ## What a fresh task should do
 
@@ -125,10 +131,12 @@ approved secret store; it must not generate a substitute.
 2. Check the `engine-release` workflow and whether its protected environments
    contain the named secret/variables (never their values), then check whether
    the four signed files are present in the Railway deployment path.
-3. If the signing-key location or protected environment is not connected to the
-   current session, report that exact missing access. Do not create a substitute
-   key or unsigned package.
-4. Keep any personal access notes in `docs/LOCAL_RELEASE_ACCESS.md`, which is
+3. Run the workflow with a new version only when the owner authorizes a release.
+   Select deployment only after the build version and production scope are
+   confirmed. Do not create a substitute key or unsigned package.
+4. Check the public health endpoint, then perform both paid authenticated
+   platform-download checks and record the result in `ISSUES.md`.
+5. Keep any personal access notes in `docs/LOCAL_RELEASE_ACCESS.md`, which is
    ignored by Git. That file may name a dashboard or account owner, but must
    never contain passwords, tokens, private keys, recovery codes, or secret
    values.
