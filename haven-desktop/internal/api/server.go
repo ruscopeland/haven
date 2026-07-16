@@ -14,6 +14,7 @@ import (
 	"net/http"
 	"sort"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/google/uuid"
@@ -100,6 +101,9 @@ func (s *Server) registerRoutes() {
 	s.mux.HandleFunc("GET /klines/{symbol}", s.handleGetKlines)
 	s.mux.HandleFunc("GET /universe", s.handleGetUniverse)
 	s.mux.HandleFunc("GET /tokens", s.handleListTokens)
+	s.mux.HandleFunc("GET /tokens/{symbol}", s.handleGetToken)
+	s.mux.HandleFunc("GET /tokens/search", s.handleTokenSearch)
+	s.mux.HandleFunc("POST /tokens/ensure", s.handleTokenEnsure)
 	s.mux.HandleFunc("GET /market/prices", s.handleGetPrices)
 	s.mux.HandleFunc("GET /signals", s.handleGetSignals)
 	s.mux.HandleFunc("GET /chains", s.handleGetChains)
@@ -421,24 +425,191 @@ func (s *Server) handleListTokens(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusOK, []TokenEntry{})
 		return
 	}
+
+	// Support pagination params the wallet scanner uses
+	skip := 0
+	limit := 500
+	if s := r.URL.Query().Get("skip"); s != "" {
+		if n, err := strconv.Atoi(s); err == nil && n >= 0 {
+			skip = n
+		}
+	}
+	if l := r.URL.Query().Get("limit"); l != "" {
+		if n, err := strconv.Atoi(l); err == nil && n > 0 && n <= 500 {
+			limit = n
+		}
+	}
+
 	tokens := s.marketService.GetTokens()
 	if tokens == nil {
 		tokens = []TokenEntry{}
 	}
-	writeJSON(w, http.StatusOK, tokens)
+
+	// Build enriched token list with contract_address, chain_id, status
+	type enrichedToken struct {
+		Symbol          string  `json:"symbol"`
+		Name            string  `json:"name"`
+		DisplaySymbol   string  `json:"display_symbol"`
+		ContractAddress string  `json:"contract_address"`
+		ChainID         string  `json:"chain_id"`
+		AlphaID         string  `json:"alpha_id"`
+		Status          string  `json:"status"`
+		Price           float64 `json:"price"`
+		PriceChange24h  float64 `json:"price_change_24h"`
+		Volume24h       float64 `json:"volume_24h"`
+		Decimals        int     `json:"decimals"`
+	}
+
+	enriched := make([]enrichedToken, len(tokens))
+	for i, t := range tokens {
+		enriched[i] = enrichedToken{
+			Symbol:          t.Symbol,
+			Name:            t.Name,
+			DisplaySymbol:   t.Symbol,
+			ContractAddress: t.ContractAddress,
+			ChainID:         "bsc",
+			AlphaID:         t.AlphaID,
+			Status:          "active",
+			Price:           t.Price,
+			PriceChange24h:  t.PriceChange24h,
+			Volume24h:       t.Volume24h,
+			Decimals:        18,
+		}
+	}
+
+	// Apply pagination
+	if skip >= len(enriched) {
+		writeJSON(w, http.StatusOK, []enrichedToken{})
+		return
+	}
+	end := skip + limit
+	if end > len(enriched) {
+		end = len(enriched)
+	}
+
+	writeJSON(w, http.StatusOK, enriched[skip:end])
+}
+
+func (s *Server) handleGetToken(w http.ResponseWriter, r *http.Request) {
+	symbol := r.PathValue("symbol")
+	if s.marketService == nil {
+		writeError(w, http.StatusNotFound, "token not found")
+		return
+	}
+
+	for _, t := range s.marketService.GetTokens() {
+		if strings.EqualFold(t.Symbol, symbol) {
+			writeJSON(w, http.StatusOK, map[string]interface{}{
+				"symbol":           t.Symbol,
+				"name":             t.Name,
+				"display_symbol":   t.Symbol,
+				"contract_address": t.ContractAddress,
+				"chain_id":         "bsc",
+				"alpha_id":         t.AlphaID,
+				"status":           "active",
+				"decimals":         18,
+			})
+			return
+		}
+	}
+	writeError(w, http.StatusNotFound, "token not found")
+}
+
+func (s *Server) handleTokenSearch(w http.ResponseWriter, r *http.Request) {
+	q := strings.ToLower(r.URL.Query().Get("q"))
+	if q == "" {
+		writeJSON(w, http.StatusOK, []interface{}{})
+		return
+	}
+	if s.marketService == nil {
+		writeJSON(w, http.StatusOK, []interface{}{})
+		return
+	}
+
+	var results []map[string]interface{}
+	for _, t := range s.marketService.GetTokens() {
+		if strings.Contains(strings.ToLower(t.Symbol), q) ||
+			strings.Contains(strings.ToLower(t.Name), q) {
+			results = append(results, map[string]interface{}{
+				"symbol":           t.Symbol,
+				"name":             t.Name,
+				"display":          t.Symbol,
+				"contract_address": t.ContractAddress,
+				"chain":            "bsc",
+				"chain_id":         "56",
+				"alpha_id":         t.AlphaID,
+				"in_db":            true,
+				"price":            t.Price,
+				"volume_24h":       t.Volume24h,
+				"price_change_24h": t.PriceChange24h,
+			})
+			if len(results) >= 12 {
+				break
+			}
+		}
+	}
+	writeJSON(w, http.StatusOK, results)
+}
+
+func (s *Server) handleTokenEnsure(w http.ResponseWriter, r *http.Request) {
+	// In the desktop app, all Binance Alpha tokens are already available.
+	// Just return the requested token if we have it.
+	var req struct {
+		AlphaID         string `json:"alpha_id"`
+		Chain           string `json:"chain"`
+		ContractAddress string `json:"contract_address"`
+		Display         string `json:"display"`
+		Name            string `json:"name"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid JSON")
+		return
+	}
+
+	// Try to find by alpha_id or contract address
+	if s.marketService != nil {
+		for _, t := range s.marketService.GetTokens() {
+			if req.AlphaID != "" && strings.EqualFold(t.AlphaID, req.AlphaID) {
+				writeJSON(w, http.StatusOK, map[string]interface{}{
+					"symbol": t.Symbol, "name": t.Name, "display": t.Symbol,
+					"chain": "bsc", "contract_address": t.ContractAddress,
+					"status": "active",
+				})
+				return
+			}
+		}
+	}
+	// Token not found in our catalogue — still return success with what we know
+	writeJSON(w, http.StatusOK, map[string]interface{}{
+		"symbol": req.Display, "name": req.Name, "display": req.Display,
+		"chain": req.Chain, "contract_address": req.ContractAddress,
+		"status": "active",
+	})
 }
 
 func (s *Server) handleGetPrices(w http.ResponseWriter, r *http.Request) {
-	if s.marketService == nil {
-		writeJSON(w, http.StatusOK, map[string]interface{}{})
-		return
+	prices := make(map[string]interface{})
+	if s.marketService != nil {
+		for _, t := range s.marketService.GetTokens() {
+			prices[t.Symbol] = map[string]interface{}{
+				"price":        t.Price,
+				"change_24h":   t.PriceChange24h,
+				"volume_24h":   t.Volume24h,
+				"updated_at":   time.Now().UnixMilli(),
+			}
+		}
 	}
-	tokens := s.marketService.GetTokens()
-	prices := make(map[string]float64, len(tokens))
-	for _, t := range tokens {
-		prices[t.Symbol] = t.Price
+	// Always include BNB placeholder for wallet pricing
+	if _, ok := prices["BNB"]; !ok {
+		prices["BNB"] = map[string]interface{}{
+			"price": 580.0, "change_24h": 0, "volume_24h": 0,
+			"updated_at": time.Now().UnixMilli(),
+		}
 	}
-	writeJSON(w, http.StatusOK, prices)
+	writeJSON(w, http.StatusOK, map[string]interface{}{
+		"source": "binance_alpha",
+		"prices": prices,
+	})
 }
 
 // SignalResponse mirrors the old cloud API's /signals response format
