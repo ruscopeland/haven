@@ -21,6 +21,12 @@ __pycache__/
 .venv/
 venv/
 
+# ── Desktop app build artifacts ───────────────────────────────
+haven-desktop/bin/
+haven-desktop/cmd/haven/frontend/dist/
+haven-cloud/server.exe
+haven-desktop/haven.exe
+
 # ── Signed engine releases are intentionally versioned with their public manifest ──
 
 # ── Editor / OS noise ─────────────────────────────────────────
