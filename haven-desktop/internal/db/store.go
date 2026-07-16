@@ -62,6 +62,8 @@ func (s *Store) migrate() error {
 		finder_id TEXT DEFAULT '',
 		mode TEXT NOT NULL DEFAULT 'dry',
 		version INTEGER NOT NULL DEFAULT 1,
+		max_positions INTEGER NOT NULL DEFAULT 1,
+		switch_margin_pct REAL NOT NULL DEFAULT 10,
 		created_at TEXT NOT NULL,
 		updated_at TEXT NOT NULL
 	);
@@ -154,17 +156,19 @@ func (s *Store) migrate() error {
 
 // Strategy represents a saved trading strategy.
 type Strategy struct {
-	ID        string  `json:"id"`
-	Name      string  `json:"name"`
-	Code      string  `json:"code"`
-	Params    string  `json:"params"`
-	Symbol    string  `json:"symbol"`
-	Interval  string  `json:"interval"`
-	FinderID  string  `json:"finder_id"`
-	Mode      string  `json:"mode"`
-	Version   int     `json:"version"`
-	CreatedAt string  `json:"created_at"`
-	UpdatedAt string  `json:"updated_at"`
+	ID              string  `json:"id"`
+	Name            string  `json:"name"`
+	Code            string  `json:"code"`
+	Params          string  `json:"params_json"`
+	Symbol          string  `json:"symbol"`
+	Interval        string  `json:"interval"`
+	FinderID        string  `json:"finder_id"`
+	Mode            string  `json:"mode"`
+	Version         int     `json:"version"`
+	MaxPositions    int     `json:"max_positions"`
+	SwitchMarginPct float64 `json:"switch_margin_pct"`
+	CreatedAt       string  `json:"created_at"`
+	UpdatedAt       string  `json:"updated_at"`
 }
 
 // CreateStrategy saves a new strategy.
@@ -179,9 +183,9 @@ func (s *Store) CreateStrategy(st *Strategy) error {
 		st.Version = 1
 	}
 	_, err := s.db.Exec(
-		`INSERT INTO strategies (id, name, code, params, symbol, interval, finder_id, mode, version, created_at, updated_at)
-		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-		st.ID, st.Name, st.Code, st.Params, st.Symbol, st.Interval, st.FinderID, st.Mode, st.Version, st.CreatedAt, st.UpdatedAt,
+		`INSERT INTO strategies (id, name, code, params, symbol, interval, finder_id, mode, version, max_positions, switch_margin_pct, created_at, updated_at)
+		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		st.ID, st.Name, st.Code, st.Params, st.Symbol, st.Interval, st.FinderID, st.Mode, st.Version, st.MaxPositions, st.SwitchMarginPct, st.CreatedAt, st.UpdatedAt,
 	)
 	return err
 }
@@ -190,9 +194,9 @@ func (s *Store) CreateStrategy(st *Strategy) error {
 func (s *Store) UpdateStrategy(st *Strategy) error {
 	st.UpdatedAt = time.Now().UTC().Format(time.RFC3339)
 	_, err := s.db.Exec(
-		`UPDATE strategies SET name=?, code=?, params=?, symbol=?, interval=?, finder_id=?, mode=?, version=?, updated_at=?
+		`UPDATE strategies SET name=?, code=?, params=?, symbol=?, interval=?, finder_id=?, mode=?, version=?, max_positions=?, switch_margin_pct=?, updated_at=?
 		 WHERE id=?`,
-		st.Name, st.Code, st.Params, st.Symbol, st.Interval, st.FinderID, st.Mode, st.Version, st.UpdatedAt, st.ID,
+		st.Name, st.Code, st.Params, st.Symbol, st.Interval, st.FinderID, st.Mode, st.Version, st.MaxPositions, st.SwitchMarginPct, st.UpdatedAt, st.ID,
 	)
 	return err
 }
@@ -200,7 +204,7 @@ func (s *Store) UpdateStrategy(st *Strategy) error {
 // GetStrategy retrieves a strategy by ID.
 func (s *Store) GetStrategy(id string) (*Strategy, error) {
 	row := s.db.QueryRow(
-		`SELECT id, name, code, params, symbol, interval, finder_id, mode, version, created_at, updated_at
+		`SELECT id, name, code, params, symbol, interval, finder_id, mode, version, max_positions, switch_margin_pct, created_at, updated_at
 		 FROM strategies WHERE id=?`, id,
 	)
 	return scanStrategy(row)
@@ -209,7 +213,7 @@ func (s *Store) GetStrategy(id string) (*Strategy, error) {
 // ListStrategies returns all strategies.
 func (s *Store) ListStrategies() ([]Strategy, error) {
 	rows, err := s.db.Query(
-		`SELECT id, name, code, params, symbol, interval, finder_id, mode, version, created_at, updated_at
+		`SELECT id, name, code, params, symbol, interval, finder_id, mode, version, max_positions, switch_margin_pct, created_at, updated_at
 		 FROM strategies ORDER BY updated_at DESC`,
 	)
 	if err != nil {
@@ -241,7 +245,7 @@ type Finder struct {
 	ID        string `json:"id"`
 	Name      string `json:"name"`
 	Code      string `json:"code"`
-	Params    string `json:"params"`
+	Params    string `json:"params_json"`
 	CreatedAt string `json:"created_at"`
 	UpdatedAt string `json:"updated_at"`
 }
@@ -277,9 +281,31 @@ func (s *Store) ListFinders() ([]Finder, error) {
 	return finders, rows.Err()
 }
 
+// GetFinder retrieves a single finder by ID.
+func (s *Store) GetFinder(id string) (*Finder, error) {
+	var f Finder
+	err := s.db.QueryRow(
+		`SELECT id, name, code, params, created_at, updated_at FROM finders WHERE id=?`, id,
+	).Scan(&f.ID, &f.Name, &f.Code, &f.Params, &f.CreatedAt, &f.UpdatedAt)
+	if err != nil {
+		return nil, err
+	}
+	return &f, nil
+}
+
 // DeleteFinder removes a finder.
 func (s *Store) DeleteFinder(id string) error {
 	_, err := s.db.Exec(`DELETE FROM finders WHERE id=?`, id)
+	return err
+}
+
+// UpdateFinder updates an existing finder.
+func (s *Store) UpdateFinder(f *Finder) error {
+	f.UpdatedAt = time.Now().UTC().Format(time.RFC3339)
+	_, err := s.db.Exec(
+		`UPDATE finders SET name=?, code=?, params=?, updated_at=? WHERE id=?`,
+		f.Name, f.Code, f.Params, f.UpdatedAt, f.ID,
+	)
 	return err
 }
 
@@ -436,7 +462,7 @@ func (s *Store) GetCandles(symbol, interval string, limit int) ([]Candle, error)
 
 func scanStrategy(row *sql.Row) (*Strategy, error) {
 	var st Strategy
-	err := row.Scan(&st.ID, &st.Name, &st.Code, &st.Params, &st.Symbol, &st.Interval, &st.FinderID, &st.Mode, &st.Version, &st.CreatedAt, &st.UpdatedAt)
+	err := row.Scan(&st.ID, &st.Name, &st.Code, &st.Params, &st.Symbol, &st.Interval, &st.FinderID, &st.Mode, &st.Version, &st.MaxPositions, &st.SwitchMarginPct, &st.CreatedAt, &st.UpdatedAt)
 	if err != nil {
 		return nil, err
 	}
@@ -445,7 +471,7 @@ func scanStrategy(row *sql.Row) (*Strategy, error) {
 
 func scanStrategyFromRows(rows *sql.Rows) (*Strategy, error) {
 	var st Strategy
-	err := rows.Scan(&st.ID, &st.Name, &st.Code, &st.Params, &st.Symbol, &st.Interval, &st.FinderID, &st.Mode, &st.Version, &st.CreatedAt, &st.UpdatedAt)
+	err := rows.Scan(&st.ID, &st.Name, &st.Code, &st.Params, &st.Symbol, &st.Interval, &st.FinderID, &st.Mode, &st.Version, &st.MaxPositions, &st.SwitchMarginPct, &st.CreatedAt, &st.UpdatedAt)
 	if err != nil {
 		return nil, err
 	}

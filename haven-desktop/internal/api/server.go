@@ -70,14 +70,17 @@ func (s *Server) registerRoutes() {
 
 	// Strategies
 	s.mux.HandleFunc("GET /strategies", s.handleListStrategies)
-	s.mux.HandleFunc("POST /strategies", s.handleCreateStrategy)
 	s.mux.HandleFunc("GET /strategies/{id}", s.handleGetStrategy)
+	s.mux.HandleFunc("POST /strategies", s.handleCreateStrategy)
+	s.mux.HandleFunc("PATCH /strategies/{id}", s.handleUpdateStrategy)
 	s.mux.HandleFunc("PUT /strategies/{id}", s.handleUpdateStrategy)
 	s.mux.HandleFunc("DELETE /strategies/{id}", s.handleDeleteStrategy)
 
 	// Finders
 	s.mux.HandleFunc("GET /finders", s.handleListFinders)
+	s.mux.HandleFunc("GET /finders/{id}", s.handleGetFinder)
 	s.mux.HandleFunc("POST /finders", s.handleCreateFinder)
+	s.mux.HandleFunc("PATCH /finders/{id}", s.handleUpdateFinder)
 	s.mux.HandleFunc("DELETE /finders/{id}", s.handleDeleteFinder)
 
 	// Trades
@@ -160,8 +163,26 @@ func (s *Server) handleGetStrategy(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) handleUpdateStrategy(w http.ResponseWriter, r *http.Request) {
 	id := r.PathValue("id")
+
+	// Read body once to handle special fields like clear_finder
+	var raw map[string]interface{}
+	if err := json.NewDecoder(r.Body).Decode(&raw); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid JSON")
+		return
+	}
+
+	// If clear_finder is set, blank the finder_id
+	if v, ok := raw["clear_finder"]; ok {
+		if b, _ := v.(bool); b {
+			raw["finder_id"] = ""
+		}
+		delete(raw, "clear_finder")
+	}
+
+	// Re-marshal and decode into Strategy
+	body, _ := json.Marshal(raw)
 	var st db.Strategy
-	if err := json.NewDecoder(r.Body).Decode(&st); err != nil {
+	if err := json.Unmarshal(body, &st); err != nil {
 		writeError(w, http.StatusBadRequest, "invalid JSON")
 		return
 	}
@@ -196,6 +217,16 @@ func (s *Server) handleListFinders(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, finders)
 }
 
+func (s *Server) handleGetFinder(w http.ResponseWriter, r *http.Request) {
+	id := r.PathValue("id")
+	f, err := s.store.GetFinder(id)
+	if err != nil {
+		writeError(w, http.StatusNotFound, "finder not found")
+		return
+	}
+	writeJSON(w, http.StatusOK, f)
+}
+
 func (s *Server) handleCreateFinder(w http.ResponseWriter, r *http.Request) {
 	var f db.Finder
 	if err := json.NewDecoder(r.Body).Decode(&f); err != nil {
@@ -210,6 +241,22 @@ func (s *Server) handleCreateFinder(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, http.StatusCreated, f)
+}
+
+func (s *Server) handleUpdateFinder(w http.ResponseWriter, r *http.Request) {
+	id := r.PathValue("id")
+	var f db.Finder
+	if err := json.NewDecoder(r.Body).Decode(&f); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid JSON")
+		return
+	}
+	f.ID = id
+	f.UpdatedAt = time.Now().UTC().Format(time.RFC3339)
+	if err := s.store.UpdateFinder(&f); err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, f)
 }
 
 func (s *Server) handleDeleteFinder(w http.ResponseWriter, r *http.Request) {
