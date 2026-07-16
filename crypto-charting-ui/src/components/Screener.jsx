@@ -44,6 +44,27 @@ export default function Screener({ onToggle, selectedTokens, signals = [], sortB
     return sym.includes(qLower) || name.includes(qLower) || disp.includes(qLower);
   });
 
+  // Sort client-side so the display column and row order never mismatch.
+  // The server fetch provides the initial sort; client sort keeps it consistent
+  // when the user changes the dropdown before the refetch completes.
+  const sortedSignals = [...filteredSignals].sort((a, b) => {
+    switch (sortBy) {
+      case 'market_cap':
+        return (b.market_cap || 0) - (a.market_cap || 0);
+      case 'mcap_vol': {
+        const sa = Math.log10(Math.max(a.market_cap || 1, 1)) * (a.volume_24h || 0);
+        const sb = Math.log10(Math.max(b.market_cap || 1, 1)) * (b.volume_24h || 0);
+        return sb - sa;
+      }
+      case 'vol_24h':
+        return (b.volume_24h || 0) - (a.volume_24h || 0);
+      case 'price_change_24h':
+        return (b.price_change_24h || 0) - (a.price_change_24h || 0);
+      default:
+        return (b.volume_24h || 0) - (a.volume_24h || 0);
+    }
+  });
+
   // Debounced Binance Alpha + local typeahead (beyond client-side signal filter)
   useEffect(() => {
     if (debounceRef.current) clearTimeout(debounceRef.current);
@@ -226,20 +247,13 @@ export default function Screener({ onToggle, selectedTokens, signals = [], sortB
         {q.length >= 2 ? ' · typeahead active' : ''}
       </div>
       <div className="screener-list">
-        {signals.length === 0 ? (
+        {sortedSignals.length === 0 ? (
           <div style={{ padding: 20, textAlign: 'center', color: 'var(--text-muted)' }}>
             <div className="mkt-ticker-empty">Loading scanner…</div>
             <div style={{ fontSize: 11, marginTop: 8 }}>Waiting for live signal feed — or search Binance Alpha above</div>
           </div>
-        ) : filteredSignals.length === 0 ? (
-          <div style={{ padding: 20, textAlign: 'center', color: 'var(--text-muted)' }}>
-            No tokens match in the live feed.
-            {q.length >= 2 && extraHits.length === 0 && !searching
-              ? ' Try another spelling, or wait for Binance Alpha results.'
-              : ' Check Binance Alpha results above if shown.'}
-          </div>
         ) : (
-          filteredSignals.map((sig) => {
+          sortedSignals.map((sig) => {
             const isSelected = selectedTokens.some(t => t.symbol === sig.symbol);
             const chg = sig.price_change_24h;
             const chgUp = (chg || 0) >= 0;
