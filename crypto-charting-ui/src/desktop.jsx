@@ -1,8 +1,8 @@
 // Desktop-mode entry point for the Haven desktop app.
-// When VITE_DESKTOP_MODE is set, the app runs without Clerk — the Go backend
-// handles subscription verification and the frontend just connects to localhost.
+// The desktop app runs its own API server on localhost — no cloud services needed
+// for the core app. Subscription verification happens through the local Go backend.
 //
-// Build with: VITE_DESKTOP_MODE=true VITE_API_URL=http://localhost:8000 npm run build
+// Build with: VITE_DESKTOP_MODE=true npm run build
 import { StrictMode, useState, useEffect } from 'react'
 import { createRoot } from 'react-dom/client'
 import './index.css'
@@ -10,7 +10,8 @@ import './haven-saas.css'
 import App from './App.jsx'
 import HavenLogo from './components/HavenLogo.jsx'
 
-const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:8000';
+// Desktop always talks to the local Go API server — never a remote URL.
+const API_URL = 'http://localhost:8000';
 
 function DesktopGate() {
   const [status, setStatus] = useState('checking'); // checking | active | expired | error
