@@ -37,9 +37,9 @@ func main() {
 	}
 	defer store.Close()
 
-	// Start market data service
+	// Start market data service (non-blocking — fetches in background)
 	marketSvc := market.NewService(store, logger)
-	marketSvc.Start(context.Background(), 60)
+	go marketSvc.Start(context.Background(), 60)
 
 	// Start local API server on a goroutine
 	apiSrv := api.NewServer(store, logger, marketSvc)

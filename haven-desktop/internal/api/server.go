@@ -96,6 +96,7 @@ func (s *Server) registerRoutes() {
 
 	// Market data
 	s.mux.HandleFunc("GET /candles", s.handleGetCandles)
+	s.mux.HandleFunc("GET /klines/{symbol}", s.handleGetKlines)
 	s.mux.HandleFunc("GET /tokens", s.handleListTokens)
 	s.mux.HandleFunc("GET /market/prices", s.handleGetPrices)
 	s.mux.HandleFunc("GET /signals", s.handleGetSignals)
@@ -517,6 +518,59 @@ func (s *Server) handleGetChains(w http.ResponseWriter, r *http.Request) {
 		},
 	}
 	writeJSON(w, http.StatusOK, chains)
+}
+
+// handleGetKlines returns candles in the array-of-arrays format that
+// lightweight-charts expects: { data: [[time, open, high, low, close, volume, ...], ...] }
+func (s *Server) handleGetKlines(w http.ResponseWriter, r *http.Request) {
+	symbol := r.PathValue("symbol")
+	interval := r.URL.Query().Get("interval")
+	if interval == "" {
+		interval = "1h"
+	}
+
+	limit := 500
+	if l := r.URL.Query().Get("limit"); l != "" {
+		if n, err := strconv.Atoi(l); err == nil && n > 0 && n <= 1500 {
+			limit = n
+		}
+	}
+
+	if s.marketService == nil {
+		writeJSON(w, http.StatusOK, map[string]interface{}{"data": []interface{}{}})
+		return
+	}
+
+	candles, err := s.marketService.FetchAndCacheCandles(r.Context(), symbol, interval, limit)
+	if err != nil || len(candles) == 0 {
+		writeJSON(w, http.StatusOK, map[string]interface{}{"data": []interface{}{}})
+		return
+	}
+
+	// Convert to array-of-arrays format: [openTime, open, high, low, close, volume, closeTime, ...]
+	data := make([][]interface{}, len(candles))
+	for i, c := range candles {
+		data[i] = []interface{}{
+			c.Time,                       // 0: openTime
+			fmtNum(c.Open),               // 1: open
+			fmtNum(c.High),               // 2: high
+			fmtNum(c.Low),                // 3: low
+			fmtNum(c.Close),              // 4: close
+			fmtNum(c.Volume),             // 5: volume
+			c.Time + 3600000,             // 6: closeTime (approximate for 1h)
+			fmtNum(c.Close * c.Volume),   // 7: quoteVolume
+			0,                            // 8: trades
+			fmtNum(c.Volume),             // 9: takerBuyBaseVolume
+			fmtNum(c.Close * c.Volume),   // 10: takerBuyQuoteVolume
+			0,                            // 11: ignore
+		}
+	}
+
+	writeJSON(w, http.StatusOK, map[string]interface{}{"data": data})
+}
+
+func fmtNum(v float64) string {
+	return strconv.FormatFloat(v, 'f', -1, 64)
 }
 
 // --- Helpers ---
