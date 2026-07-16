@@ -149,7 +149,7 @@ func (s *Service) refreshCatalogue(ctx context.Context) {
 	s.lastFetch = time.Now()
 	s.mu.Unlock()
 
-	s.logger.Debug("token catalogue refreshed", "count", len(tokens))
+	s.logger.Info("token catalogue refreshed", "count", len(tokens))
 }
 
 func (s *Service) refreshTickers(ctx context.Context) {

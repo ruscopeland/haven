@@ -11,6 +11,7 @@ import (
 	"fmt"
 	"log/slog"
 	"net/http"
+	"sort"
 	"strconv"
 	"time"
 
@@ -97,6 +98,8 @@ func (s *Server) registerRoutes() {
 	s.mux.HandleFunc("GET /candles", s.handleGetCandles)
 	s.mux.HandleFunc("GET /tokens", s.handleListTokens)
 	s.mux.HandleFunc("GET /market/prices", s.handleGetPrices)
+	s.mux.HandleFunc("GET /signals", s.handleGetSignals)
+	s.mux.HandleFunc("GET /chains", s.handleGetChains)
 }
 
 // --- Health ---
@@ -433,6 +436,87 @@ func (s *Server) handleGetPrices(w http.ResponseWriter, r *http.Request) {
 		prices[t.Symbol] = t.Price
 	}
 	writeJSON(w, http.StatusOK, prices)
+}
+
+// SignalResponse mirrors the old cloud API's /signals response format
+// that the React screener expects.
+type SignalResponse struct {
+	Symbol         string  `json:"symbol"`
+	Name           string  `json:"name"`
+	DisplaySymbol  string  `json:"display_symbol"`
+	Timestamp      int64   `json:"timestamp"`
+	PriceChange24h float64 `json:"price_change_24h"`
+	Volume24h      float64 `json:"volume_24h"`
+	MarketCap      float64 `json:"market_cap"`
+	AlphaRank      int     `json:"alpha_rank"`
+	LastPrice      float64 `json:"last_price"`
+}
+
+func (s *Server) handleGetSignals(w http.ResponseWriter, r *http.Request) {
+	if s.marketService == nil {
+		writeJSON(w, http.StatusOK, []SignalResponse{})
+		return
+	}
+
+	tokens := s.marketService.GetTokens()
+	now := time.Now().UnixMilli()
+	signals := make([]SignalResponse, 0, len(tokens))
+
+	for i, t := range tokens {
+		signals = append(signals, SignalResponse{
+			Symbol:         t.Symbol,
+			Name:           t.Name,
+			DisplaySymbol:  t.Symbol,
+			Timestamp:      now,
+			PriceChange24h: t.PriceChange24h,
+			Volume24h:      t.Volume24h,
+			MarketCap:      0,
+			AlphaRank:      i + 1,
+			LastPrice:      t.Price,
+		})
+	}
+
+	// Sort by volume (default)
+	sortBy := r.URL.Query().Get("sort_by")
+	if sortBy == "" {
+		sortBy = "vol_24h"
+	}
+
+	sort.Slice(signals, func(i, j int) bool {
+		switch sortBy {
+		case "price_change":
+			return signals[i].PriceChange24h > signals[j].PriceChange24h
+		case "market_cap":
+			return signals[i].MarketCap > signals[j].MarketCap
+		default: // vol_24h
+			return signals[i].Volume24h > signals[j].Volume24h
+		}
+	})
+
+	limit := 400
+	if l := r.URL.Query().Get("limit"); l != "" {
+		if n, err := strconv.Atoi(l); err == nil && n > 0 && n <= 500 {
+			limit = n
+		}
+	}
+	if len(signals) > limit {
+		signals = signals[:limit]
+	}
+
+	writeJSON(w, http.StatusOK, signals)
+}
+
+func (s *Server) handleGetChains(w http.ResponseWriter, r *http.Request) {
+	chains := []map[string]interface{}{
+		{
+			"id":       "bsc",
+			"chain_id": "56",
+			"name":     "BNB Smart Chain",
+			"native_symbol": "BNB",
+			"rpc_url":  "https://bsc-dataseed.binance.org",
+		},
+	}
+	writeJSON(w, http.StatusOK, chains)
 }
 
 // --- Helpers ---
