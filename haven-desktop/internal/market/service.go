@@ -2,7 +2,9 @@ package market
 
 import (
 	"context"
+	"fmt"
 	"log/slog"
+	"strings"
 	"sync"
 	"time"
 
@@ -94,8 +96,7 @@ func (s *Service) Tokens() []TokenInfo {
 	return s.tokens
 }
 
-// FetchAndCacheCandles retrieves candles for a symbol+interval pair,
-// caching the result in the database.
+// FetchAndCacheCandles retrieves candles for a symbol+interval pair.
 func (s *Service) FetchAndCacheCandles(ctx context.Context, symbol, interval string, limit int) ([]db.Candle, error) {
 	// Check cache first
 	cached, err := s.store.GetCandles(symbol, interval, limit)
@@ -103,11 +104,13 @@ func (s *Service) FetchAndCacheCandles(ctx context.Context, symbol, interval str
 		return cached, nil
 	}
 
-	klines, err := s.client.FetchKlines(ctx, symbol, interval, limit)
+	// Look up alphaId for this display symbol
+	alphaID := s.lookupAlphaID(symbol)
+
+	klines, err := s.client.FetchKlines(ctx, alphaID, interval, limit)
 	if err != nil {
-		// Return whatever we have cached
 		if len(cached) > 0 {
-			s.logger.Warn("binance alpha klines failed, using cached", "symbol", symbol, "interval", interval, "error", err)
+			s.logger.Warn("klines fetch failed, using cached", "symbol", symbol, "error", err)
 			return cached, nil
 		}
 		return nil, err
@@ -159,7 +162,7 @@ func (s *Service) refreshTickers(ctx context.Context) {
 	}
 
 	var wg sync.WaitGroup
-	sem := make(chan struct{}, 10) // max 10 concurrent
+	sem := make(chan struct{}, 10)
 
 	for i := range tokens {
 		wg.Add(1)
@@ -168,24 +171,40 @@ func (s *Service) refreshTickers(ctx context.Context) {
 			sem <- struct{}{}
 			defer func() { <-sem }()
 
-			ticker, err := s.client.FetchTicker(ctx, t.Symbol)
+			ticker, err := s.client.FetchTicker(ctx, t.AlphaID)
 			if err != nil {
 				return
 			}
 
-			// Store latest ticker in settings for the API
 			s.mu.Lock()
 			for idx := range s.tokens {
 				if s.tokens[idx].AlphaID == t.AlphaID {
-					s.tokens[idx].Price = ticker.Price
-					s.tokens[idx].PriceChange24h = ticker.PriceChangePercent
-					s.tokens[idx].Volume24h = ticker.QuoteVolume24h
+					s.tokens[idx].Price = parseFloat(ticker.LastPrice)
+					s.tokens[idx].PriceChange24h = parseFloat(ticker.PriceChangePercent)
+					s.tokens[idx].Volume24h = parseFloat(ticker.QuoteVolume)
 					break
 				}
 			}
 			s.mu.Unlock()
 		}(tokens[i])
 	}
-
 	wg.Wait()
+}
+
+// lookupAlphaID finds the alphaId for a given display symbol.
+func (s *Service) lookupAlphaID(symbol string) string {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	for _, t := range s.tokens {
+		if strings.EqualFold(t.Symbol, symbol) {
+			return t.AlphaID
+		}
+	}
+	return ""
+}
+
+func parseFloat(s string) float64 {
+	var f float64
+	fmt.Sscanf(s, "%f", &f)
+	return f
 }

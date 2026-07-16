@@ -1,6 +1,8 @@
 // Package market provides Binance Alpha market data integration.
-// It fetches token catalogues, candles, tickers, and streams real-time prices
-// using the user's own Binance account (no API key needed for Alpha public endpoints).
+// Token catalogue comes from the BAPI endpoint. Ticker and klines use the
+// official SAPI endpoints with alpha_{number} symbol format.
+//
+// Docs: https://developers.binance.com/en/docs/catalog/advanced-trading-alpha-trading/api/rest-api/market-data
 package market
 
 import (
@@ -9,12 +11,13 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"strings"
 	"time"
 )
 
-const baseURL = "https://www.binance.com/bapi/defi/v1"
+const bapiBase = "https://www.binance.com/bapi/defi/v1"
 
-// Client handles HTTP requests to Binance Alpha's public API.
+// Client handles HTTP requests to Binance Alpha's API.
 type Client struct {
 	httpClient *http.Client
 }
@@ -22,77 +25,74 @@ type Client struct {
 // NewClient creates a Binance Alpha client.
 func NewClient() *Client {
 	return &Client{
-		httpClient: &http.Client{
-			Timeout: 30 * time.Second,
-		},
+		httpClient: &http.Client{Timeout: 30 * time.Second},
 	}
-}
-
-// AlphaResponse wraps a decoded Binance Alpha API response.
-type AlphaResponse struct {
-	Data json.RawMessage `json:"data"`
-	Code string          `json:"code"`
 }
 
 // TokenInfo represents a token from the Binance Alpha catalogue.
 type TokenInfo struct {
-	AlphaID         string  `json:"alphaId"`
+	AlphaID         string  `json:"alpha_id"`
 	Symbol          string  `json:"symbol"`
 	Name            string  `json:"name"`
-	ChainID         string  `json:"chainId"`
-	ContractAddress string  `json:"contractAddress"`
-	Price           float64 `json:"price,string"`
-	PriceChange24h  float64 `json:"priceChange24h,string"`
-	Volume24h       float64 `json:"volume24h,string"`
-	MarketCap       float64 `json:"marketCap,string"`
+	ChainID         string  `json:"chain_id"`
+	ContractAddress string  `json:"contract_address"`
+	Price           float64 `json:"price"`
+	PriceChange24h  float64 `json:"price_change_24h"`
+	Volume24h       float64 `json:"volume_24h"`
+	MarketCap       float64 `json:"market_cap"`
 }
 
-// TickerData holds current ticker information for a token.
+// TickerData holds current ticker information from the BAPI endpoint.
 type TickerData struct {
-	Symbol             string  `json:"symbol"`
-	Price              float64 `json:"price,string"`
-	PriceChange        float64 `json:"priceChange,string"`
-	PriceChangePercent float64 `json:"priceChangePercent,string"`
-	High24h            float64 `json:"highPrice,string"`
-	Low24h             float64 `json:"lowPrice,string"`
-	Volume24h          float64 `json:"volume,string"`
-	QuoteVolume24h     float64 `json:"quoteVolume,string"`
+	Symbol             string `json:"symbol"`
+	PriceChange        string `json:"priceChange"`
+	PriceChangePercent string `json:"priceChangePercent"`
+	LastPrice          string `json:"lastPrice"`
+	HighPrice          string `json:"highPrice"`
+	LowPrice           string `json:"lowPrice"`
+	Volume             string `json:"volume"`
+	QuoteVolume        string `json:"quoteVolume"`
 }
 
-// KlineBar is a single OHLCV candle from Binance Alpha.
+// KlineBar is a single OHLCV candle.
+// Response format: [openTime, open, high, low, close, volume, closeTime, quoteVol, trades, takerBuyBase, takerBuyQuote, ignore]
 type KlineBar struct {
-	OpenTime  int64   `json:"0"`
-	Open      float64 `json:"1,string"`
-	High      float64 `json:"2,string"`
-	Low       float64 `json:"3,string"`
-	Close     float64 `json:"4,string"`
-	Volume    float64 `json:"5,string"`
-	CloseTime int64   `json:"6"`
+	OpenTime  int64
+	Open      float64
+	High      float64
+	Low       float64
+	Close     float64
+	Volume    float64
+	CloseTime int64
 }
 
-// doGet performs a GET request to the Binance Alpha API with retries.
-func (c *Client) doGet(ctx context.Context, path string, params map[string]string) (json.RawMessage, error) {
-	url := baseURL + path
-	req, err := http.NewRequestWithContext(ctx, "GET", url, nil)
-	if err != nil {
-		return nil, fmt.Errorf("create request: %w", err)
-	}
-	req.Header.Set("User-Agent", "Haven-Desktop/1.0")
-	req.Header.Set("Accept", "application/json")
+// --- BAPI helpers (token list, ticker, klines all use the BAPI endpoint) ---
 
-	if len(params) > 0 {
-		q := req.URL.Query()
-		for k, v := range params {
-			q.Add(k, v)
-		}
-		req.URL.RawQuery = q.Encode()
-	}
+type bapiResponse struct {
+	Data json.RawMessage `json:"data"`
+	Code string          `json:"code"`
+}
 
+func (c *Client) bapiGet(ctx context.Context, path string) (json.RawMessage, error) {
+	url := bapiBase + path
+	return c.doRequest(ctx, url)
+}
+
+// --- Generic HTTP ---
+
+func (c *Client) doRequest(ctx context.Context, url string) (json.RawMessage, error) {
 	var lastErr error
 	for attempt := 0; attempt < 3; attempt++ {
 		if attempt > 0 {
 			time.Sleep(time.Duration(500*(1<<attempt)) * time.Millisecond)
 		}
+
+		req, err := http.NewRequestWithContext(ctx, "GET", url, nil)
+		if err != nil {
+			return nil, err
+		}
+		req.Header.Set("User-Agent", "Haven-Desktop/1.0")
+		req.Header.Set("Accept", "application/json")
 
 		resp, err := c.httpClient.Do(req)
 		if err != nil {
@@ -100,35 +100,35 @@ func (c *Client) doGet(ctx context.Context, path string, params map[string]strin
 			continue
 		}
 
-		body, err := io.ReadAll(io.LimitReader(resp.Body, 10<<20)) // 10MB limit
+		body, err := io.ReadAll(io.LimitReader(resp.Body, 10<<20))
 		resp.Body.Close()
 		if err != nil {
 			lastErr = err
 			continue
 		}
 
-		var alphaResp AlphaResponse
-		if err := json.Unmarshal(body, &alphaResp); err != nil {
+		var bapiResp bapiResponse
+		if err := json.Unmarshal(body, &bapiResp); err != nil {
 			lastErr = fmt.Errorf("decode: %w", err)
 			continue
 		}
-
-		if alphaResp.Code == "000000" {
-			return alphaResp.Data, nil
+		if bapiResp.Code == "000000" {
+			return bapiResp.Data, nil
 		}
+		lastErr = fmt.Errorf("bapi error: code=%s", bapiResp.Code)
 
-		lastErr = fmt.Errorf("alpha api error: code=%s", alphaResp.Code)
 		if resp.StatusCode < 500 && resp.StatusCode != 429 {
-			break // don't retry client errors
+			break
 		}
 	}
-
-	return nil, fmt.Errorf("binance alpha request failed after retries: %w", lastErr)
+	return nil, fmt.Errorf("request failed: %w", lastErr)
 }
 
-// FetchTokens retrieves the full token catalogue from Binance Alpha (BSC only).
+// --- Public API ---
+
+// FetchTokens retrieves the token catalogue (BAPI endpoint).
 func (c *Client) FetchTokens(ctx context.Context) ([]TokenInfo, error) {
-	data, err := c.doGet(ctx, "/public/wallet-direct/buw/wallet/cex/alpha/all/token/list", nil)
+	data, err := c.bapiGet(ctx, "/public/wallet-direct/buw/wallet/cex/alpha/all/token/list")
 	if err != nil {
 		return nil, err
 	}
@@ -141,7 +141,7 @@ func (c *Client) FetchTokens(ctx context.Context) ([]TokenInfo, error) {
 	var tokens []TokenInfo
 	for _, row := range raw {
 		chainID, _ := row["chainId"].(string)
-		if chainID != "56" { // BSC only
+		if chainID != "56" {
 			continue
 		}
 		addr, _ := row["contractAddress"].(string)
@@ -149,38 +149,41 @@ func (c *Client) FetchTokens(ctx context.Context) ([]TokenInfo, error) {
 			continue
 		}
 
+		alphaID := strVal(row, "alphaId")
 		t := TokenInfo{
-			AlphaID:         strVal(row, "alphaId"),
+			AlphaID:         alphaID,
 			Symbol:          strVal(row, "symbol"),
 			Name:            strVal(row, "name"),
 			ChainID:         chainID,
 			ContractAddress: addr,
 		}
 		if t.Symbol == "" {
-			t.Symbol = t.AlphaID
+			t.Symbol = alphaID
 		}
 		tokens = append(tokens, t)
 	}
-
 	return tokens, nil
 }
 
-// FetchTicker retrieves the current ticker for a symbol.
-func (c *Client) FetchTicker(ctx context.Context, symbol string) (*TickerData, error) {
-	data, err := c.doGet(ctx, "/public/alpha-trade/ticker", map[string]string{"symbol": symbol})
+// FetchTicker retrieves the 24hr ticker using {alphaId}USDT format (BAPI).
+func (c *Client) FetchTicker(ctx context.Context, alphaID string) (*TickerData, error) {
+	symbol := alphaID + "USDT"
+	path := fmt.Sprintf("/public/alpha-trade/ticker?symbol=%s", symbol)
+
+	body, err := c.bapiGet(ctx, path)
 	if err != nil {
 		return nil, err
 	}
 
 	var ticker TickerData
-	if err := json.Unmarshal(data, &ticker); err != nil {
+	if err := json.Unmarshal(body, &ticker); err != nil {
 		return nil, fmt.Errorf("decode ticker: %w", err)
 	}
 	return &ticker, nil
 }
 
-// FetchKlines retrieves historical candles for a symbol.
-func (c *Client) FetchKlines(ctx context.Context, symbol, interval string, limit int) ([]KlineBar, error) {
+// FetchKlines retrieves historical candles using {alphaId}USDT format (BAPI).
+func (c *Client) FetchKlines(ctx context.Context, alphaID, interval string, limit int) ([]KlineBar, error) {
 	if limit < 1 {
 		limit = 500
 	}
@@ -188,18 +191,18 @@ func (c *Client) FetchKlines(ctx context.Context, symbol, interval string, limit
 		limit = 1500
 	}
 
-	data, err := c.doGet(ctx, "/public/alpha-trade/klines", map[string]string{
-		"symbol":   symbol,
-		"interval": interval,
-		"limit":    fmt.Sprintf("%d", limit),
-	})
+	symbol := alphaID + "USDT"
+	path := fmt.Sprintf("/public/alpha-trade/klines?symbol=%s&interval=%s&limit=%d",
+		symbol, interval, limit)
+
+	body, err := c.bapiGet(ctx, path)
 	if err != nil {
 		return nil, err
 	}
 
-	// The API returns a JSON array of arrays
+	// Response is [[openTime, open, high, low, close, volume, closeTime, ...], ...]
 	var raw [][]interface{}
-	if err := json.Unmarshal(data, &raw); err != nil {
+	if err := json.Unmarshal(body, &raw); err != nil {
 		return nil, fmt.Errorf("decode klines: %w", err)
 	}
 
@@ -218,7 +221,6 @@ func (c *Client) FetchKlines(ctx context.Context, symbol, interval string, limit
 			CloseTime: toInt64(row[6]),
 		})
 	}
-
 	return klines, nil
 }
 
@@ -226,7 +228,7 @@ func (c *Client) FetchKlines(ctx context.Context, symbol, interval string, limit
 
 func strVal(m map[string]interface{}, key string) string {
 	if v, ok := m[key].(string); ok {
-		return v
+		return strings.TrimSpace(v)
 	}
 	return ""
 }
