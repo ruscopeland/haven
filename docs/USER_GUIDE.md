@@ -58,6 +58,9 @@ Engine executes markers/strategies with size/impact/security guards.
 - Backtest → paper → live.  
 - Token Finder ranks with your code; strategies can consume ranks.  
 - In-app Guide panels document the authoring contract.
+- The AI assistant can help translate your own idea into code, explain code, and suggest revisions. It cannot supply a proven or automatically working strategy; you remain responsible for the strategy idea, rules, review, and trading decisions.
+- Strategies and finder logic you create are your work. The assistant is an informational coding tool, not financial, investment, legal, or tax advice. Review code, inspect backtest results, and run DRY before using anything live.
+- To the maximum extent permitted by law, Haven, its operators, affiliates, contributors, service providers, and assistant providers are not responsible for strategy results or trading losses.
 
 ---
 

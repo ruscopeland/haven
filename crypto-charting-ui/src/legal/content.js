@@ -318,6 +318,8 @@ export const DOCS_SECTIONS = [
     body: [
       'Strategies: code or templates that decide when to buy/sell using market context.',
       'Always backtest, then paper (DRY) before LIVE.',
+      'The AI assistant can help translate your own instructions into code, but cannot provide a proven or automatically working strategy. You own the strategy idea, rules, review, and trading decisions.',
+      'Strategy and finder logic you create are your work. Assistant output is informational coding help, not financial, investment, legal, or tax advice; review code, backtest, and paper-trade before LIVE.',
       'Token Finder ranks tokens with your scoring logic; strategies can consume rankings.',
       'See in-app Guide panels and strategy-sdk docs for authoring contracts.',
       'Bot slots depend on plan (paper trial vs paid).',

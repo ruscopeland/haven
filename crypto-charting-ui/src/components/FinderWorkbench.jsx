@@ -49,6 +49,12 @@ export default function FinderWorkbench() {
   const [dirty, setDirty] = useState(false);
   const [saveMsg, setSaveMsg] = useState('');
   const [showGuide, setShowGuide] = useState(false);
+  const [showCodeEditor, setShowCodeEditor] = useState(false);
+  const [showSaveDialog, setShowSaveDialog] = useState(false);
+  const [saveName, setSaveName] = useState('');
+  const [confirmOverwrite, setConfirmOverwrite] = useState(false);
+  const codeDialogRef = useRef(null);
+  const saveDialogRef = useRef(null);
 
   // Dataset controls (each change refetches /universe once).
   const [lookbackDays, setLookbackDays] = useState(3);
@@ -96,6 +102,20 @@ export default function FinderWorkbench() {
 
   const patchDraft = (patch) => { setDraft(d => ({ ...d, ...patch })); setDirty(true); };
 
+  useEffect(() => {
+    const dialog = codeDialogRef.current;
+    if (!dialog) return;
+    if (showCodeEditor && !dialog.open) dialog.showModal();
+    if (!showCodeEditor && dialog.open) dialog.close();
+  }, [showCodeEditor]);
+
+  useEffect(() => {
+    const dialog = saveDialogRef.current;
+    if (!dialog) return;
+    if (showSaveDialog && !dialog.open) dialog.showModal();
+    if (!showSaveDialog && dialog.open) dialog.close();
+  }, [showSaveDialog]);
+
   const selectFinder = async (id) => {
     try {
       const res = await fetch(`${API_URL}/finders/${id}`);
@@ -108,13 +128,15 @@ export default function FinderWorkbench() {
     } catch (err) { console.error('Failed to load finder', err); }
   };
 
-  const saveDraft = async () => {
-    const body = {
+  const draftBody = () => ({
       name: draft.name,
       code: draft.code,
       interval: draft.interval,
       params_json: JSON.stringify(draft.params || {}),
-    };
+    });
+
+  const saveDraft = async () => {
+    const body = draftBody();
     try {
       const res = draft.id
         ? await fetch(`${API_URL}/finders/${draft.id}`, {
@@ -128,9 +150,56 @@ export default function FinderWorkbench() {
       setSaveMsg('Saved ✓');
       setTimeout(() => setSaveMsg(''), 2000);
       fetchList();
+      return true;
     } catch (err) {
       setSaveMsg(`Save failed: ${err.message}`);
+      return false;
     }
+  };
+
+  const saveFinderAs = async (name) => {
+    try {
+      const res = await fetch(`${API_URL}/finders`, {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ ...draftBody(), name }),
+      });
+      if (!res.ok) throw new Error((await res.json()).detail || res.statusText);
+      const f = await res.json();
+      setDraft(d => ({ ...d, id: f.id, name: f.name }));
+      setDirty(false);
+      setSaveMsg('Saved ✓');
+      setTimeout(() => setSaveMsg(''), 2000);
+      fetchList();
+      return true;
+    } catch (err) {
+      setSaveMsg(`Save failed: ${err.message}`);
+      return false;
+    }
+  };
+
+  const openSaveDialog = () => {
+    setSaveName(draft.name);
+    setConfirmOverwrite(false);
+    setShowSaveDialog(true);
+  };
+
+  const submitSaveName = () => {
+    const name = saveName.trim();
+    if (!name) return;
+    if (draft.id && name === selectedRow?.name) {
+      setConfirmOverwrite(true);
+      return;
+    }
+    saveFinderAs(name).then((saved) => { if (saved) setShowSaveDialog(false); });
+  };
+
+  const overwriteSavedFinder = () => {
+    saveDraft().then((saved) => { if (saved) setShowSaveDialog(false); });
+  };
+
+  const saveCodeAndClose = () => {
+    setShowCodeEditor(false);
+    openSaveDialog();
   };
 
   const deleteFinder = async () => {
@@ -219,7 +288,25 @@ export default function FinderWorkbench() {
     () => (result ? colorMap(result.rankings, topN) : new Map()),
     [result, topN]);
 
-  const selectedRow = useMemo(() => list.find(f => f.id === draft.id) || null, [list, draft.id]);
+  const selectedRow = list.find(f => f.id === draft.id) || null;
+
+  const selectedFinderKey = draft.id
+    ? `saved:${draft.id}`
+    : (() => {
+        const templateIndex = FINDER_TEMPLATES.findIndex(t => t.name === draft.name && t.code === draft.code);
+        return templateIndex >= 0 ? `template:${templateIndex}` : 'draft';
+      })();
+
+  const selectFinderFromMenu = (value) => {
+    if (value.startsWith('saved:')) {
+      selectFinder(value.slice('saved:'.length));
+      return;
+    }
+    if (value.startsWith('template:')) {
+      const template = FINDER_TEMPLATES[parseInt(value.slice('template:'.length), 10)];
+      if (template) { setDraft(newDraftFromTemplate(template)); setDirty(true); }
+    }
+  };
 
   return (
     <div className="workbench">
@@ -229,43 +316,31 @@ export default function FinderWorkbench() {
           <span className="wb-title">Token Finders</span>
           <select
             className="wb-select"
-            value=""
-            onChange={(e) => {
-              const tpl = FINDER_TEMPLATES[parseInt(e.target.value, 10)];
-              if (tpl) { setDraft(newDraftFromTemplate(tpl)); setDirty(true); }
-            }}
+            aria-label="Select a token finder"
+            value={selectedFinderKey}
+            onChange={(e) => selectFinderFromMenu(e.target.value)}
           >
-            <option value="">+ New from template…</option>
-            {FINDER_TEMPLATES.map((t, i) => <option key={t.name} value={i}>{t.name}</option>)}
+            {selectedFinderKey === 'draft' && <option value="draft">Current unsaved finder</option>}
+            <optgroup label="Built-in token finders">
+              {FINDER_TEMPLATES.map((t, i) => <option key={t.name} value={`template:${i}`}>{t.name}</option>)}
+            </optgroup>
+            <optgroup label="Saved token finders">
+              {list.map(f => <option key={f.id} value={`saved:${f.id}`}>{f.name}</option>)}
+            </optgroup>
           </select>
         </div>
 
-        <div className="wb-list">
-          {list.map(f => (
-            <div
-              key={f.id}
-              className={`wb-list-item ${f.id === draft.id ? 'active' : ''}`}
-              onClick={() => selectFinder(f.id)}
-            >
-              <div className="wb-list-main">
-                <span className="wb-list-name">{f.name}</span>
-                <span className="wb-list-sub">{f.interval}</span>
-              </div>
-              <div className="wb-list-badges">
-                {f.last_error && <span className="wb-err-dot" title={f.last_error}>●</span>}
-              </div>
-            </div>
-          ))}
-          {list.length === 0 && <div className="bt-muted wb-list-empty">No saved finders yet</div>}
-        </div>
-
         <div className="wb-config">
-          <input
-            className="wb-input wb-name"
-            value={draft.name}
-            onChange={(e) => patchDraft({ name: e.target.value })}
-            placeholder="Finder name"
-          />
+          <div className="wb-name-row">
+            <input
+              className="wb-input wb-name"
+              value={draft.name}
+              onChange={(e) => patchDraft({ name: e.target.value })}
+              placeholder="Token Finder name"
+              aria-label="Token Finder name"
+            />
+            <button type="button" className="wb-btn wb-save" disabled={!dirty} onClick={openSaveDialog}>Save</button>
+          </div>
           {Object.keys(paramDefaults).length > 0 && (
             <div className="wb-params">
               {Object.entries(paramDefaults).map(([k, def]) => (
@@ -284,24 +359,17 @@ export default function FinderWorkbench() {
           )}
         </div>
 
-        <div className="wb-editor">
-          <CodeMirror
-            value={draft.code}
-            height="100%"
-            theme="dark"
-            extensions={[javascript()]}
-            onChange={(val) => patchDraft({ code: val })}
-            basicSetup={{ lineNumbers: true, foldGutter: false }}
-          />
+        <div className="wb-code-launch">
+          <div>
+            <div className="wb-title">Advanced token finder editor</div>
+            <div className="bt-muted">Advanced token finder editor, used for editing the token finder at the code level, for users who like coding. If coding is not your thing, you can get the same results by telling the LLM below and it will do the coding for you.</div>
+          </div>
+          <button type="button" className="wb-btn wb-save" onClick={() => setShowCodeEditor(true)}>Advanced token finder editor</button>
         </div>
         {codeError && <div className="bt-error wb-code-error">⚠ {codeError}</div>}
 
         <div className="wb-actions">
-          <button className="wb-btn wb-save" onClick={saveDraft}>
-            {draft.id ? 'Save' : 'Save as new'}{dirty ? ' *' : ''}
-          </button>
           {draft.id && <button className="wb-btn wb-delete" onClick={deleteFinder}>Delete</button>}
-          <button className="wb-btn wb-guide" onClick={() => setShowGuide(true)}>📖 Guide</button>
           <span className="wb-save-msg">{saveMsg}</span>
         </div>
 
@@ -437,6 +505,71 @@ export default function FinderWorkbench() {
           onInsert={(code) => { patchDraft({ code }); setShowGuide(false); }}
         />
       )}
+
+      <dialog
+        ref={codeDialogRef}
+        className="wb-code-dialog"
+        aria-labelledby="finder-code-editor-title"
+        onClose={() => setShowCodeEditor(false)}
+      >
+        <div className="wb-code-dialog-header">
+          <div>
+            <h2 id="finder-code-editor-title">Token Finder code</h2>
+            <p className="bt-muted">Changes update this Token Finder draft. Save to apply them to the saved Token Finder.</p>
+          </div>
+          <div className="wb-code-dialog-header-actions">
+            <button type="button" className="wb-btn wb-guide" onClick={() => { setShowCodeEditor(false); setShowGuide(true); }}>Guide</button>
+            <button type="button" className="wb-btn wb-guide" onClick={() => setShowCodeEditor(false)}>Close</button>
+          </div>
+        </div>
+        <div className="wb-code-dialog-editor">
+          <CodeMirror
+            value={draft.code}
+            height="100%"
+            theme="dark"
+            extensions={[javascript()]}
+            onChange={(val) => patchDraft({ code: val })}
+            basicSetup={{ lineNumbers: true, foldGutter: false }}
+          />
+        </div>
+        {codeError && <div className="bt-error wb-code-error">⚠ {codeError}</div>}
+        <div className="wb-code-dialog-actions">
+          <button type="button" className="wb-btn wb-guide" onClick={() => setShowCodeEditor(false)}>Cancel</button>
+          <button type="button" className="wb-btn wb-save" onClick={saveCodeAndClose}>Save &amp; close</button>
+        </div>
+      </dialog>
+
+      <dialog
+        ref={saveDialogRef}
+        className="wb-save-dialog"
+        aria-labelledby="save-finder-title"
+        onClose={() => { setShowSaveDialog(false); setConfirmOverwrite(false); }}
+      >
+        <div className="wb-code-dialog-header">
+          <h2 id="save-finder-title">{confirmOverwrite ? 'Overwrite saved Token Finder?' : 'Save Token Finder as'}</h2>
+          <button type="button" className="wb-btn wb-guide" onClick={() => setShowSaveDialog(false)}>Close</button>
+        </div>
+        {confirmOverwrite ? (
+          <div className="wb-save-dialog-body">
+            <p>This will replace the saved Token Finder named <strong>{selectedRow?.name}</strong>.</p>
+            <div className="wb-code-dialog-actions">
+              <button type="button" className="wb-btn wb-guide" onClick={() => setConfirmOverwrite(false)}>No</button>
+              <button type="button" className="wb-btn wb-save" onClick={overwriteSavedFinder}>Yes, overwrite</button>
+            </div>
+          </div>
+        ) : (
+          <div className="wb-save-dialog-body">
+            <label className="wb-save-name-label">Token Finder name
+              <input className="wb-input" value={saveName} onChange={(e) => setSaveName(e.target.value)} autoFocus />
+            </label>
+            <p className="bt-muted">Change the name to save these settings to a new Token Finder file, or leave the name as is to overwrite the existing one. Your saved Token Finder allowance depends on your current tier.</p>
+            <div className="wb-code-dialog-actions">
+              <button type="button" className="wb-btn wb-guide" onClick={() => setShowSaveDialog(false)}>Cancel</button>
+              <button type="button" className="wb-btn wb-save" disabled={!saveName.trim()} onClick={submitSaveName}>Continue</button>
+            </div>
+          </div>
+        )}
+      </dialog>
     </div>
   );
 }

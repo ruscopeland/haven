@@ -97,6 +97,8 @@
 .wb-input:focus, .wb-select:focus { border-color: var(--accent-blue); }
 .wb-select { flex: 1; cursor: pointer; }
 .wb-name { font-weight: 600; }
+.wb-name-row { display: flex; align-items: center; gap: 8px; }
+.wb-name-row .wb-name { flex: 1; }
 
 .wb-params {
   display: grid;
@@ -122,6 +124,62 @@
 .wb-editor .cm-editor { height: 100%; background: var(--bg-color); }
 .wb-editor .cm-gutters { background: var(--bg-secondary); border-right: 1px solid var(--border-color); }
 
+.wb-code-launch {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 10px 12px;
+  border-bottom: 1px solid var(--border-color);
+}
+.wb-code-launch .bt-muted { font-size: 0.7rem; margin-top: 3px; }
+
+.wb-code-dialog {
+  width: min(1100px, 94vw);
+  height: min(820px, 86dvh);
+  padding: 0;
+  border: 1px solid var(--border-color);
+  border-radius: 10px;
+  background: var(--bg-secondary);
+  color: var(--text-primary);
+}
+.wb-code-dialog::backdrop { background: rgba(0, 0, 0, 0.6); }
+.wb-code-dialog-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 12px 14px;
+  border-bottom: 1px solid var(--border-color);
+}
+.wb-code-dialog-header h2 { margin: 0 0 3px; font-size: 0.95rem; }
+.wb-code-dialog-header p { margin: 0; font-size: 0.7rem; }
+.wb-code-dialog-header-actions { display: flex; align-items: center; gap: 8px; }
+.wb-code-dialog-editor { height: calc(100% - 126px); min-height: 260px; }
+.wb-code-dialog-editor .cm-editor { height: 100%; background: var(--bg-color); }
+.wb-code-dialog-editor .cm-gutters { background: var(--bg-secondary); border-right: 1px solid var(--border-color); }
+.wb-code-dialog-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+  padding: 10px 14px;
+  border-top: 1px solid var(--border-color);
+}
+
+.wb-save-dialog {
+  width: min(440px, 92vw);
+  padding: 0;
+  border: 1px solid var(--border-color);
+  border-radius: 10px;
+  background: var(--bg-secondary);
+  color: var(--text-primary);
+}
+.wb-save-dialog::backdrop { background: rgba(0, 0, 0, 0.6); }
+.wb-save-dialog-body { padding: 14px; }
+.wb-save-dialog-body p { font-size: 0.75rem; line-height: 1.45; }
+.wb-save-name-label { display: flex; flex-direction: column; gap: 5px; font-size: 0.72rem; color: var(--text-secondary); }
+.wb-save-name-label .wb-input { width: 100%; }
+
 .wb-code-error { margin: 0 12px 8px; }
 
 /* actions */
@@ -145,6 +203,8 @@
 }
 .wb-btn:hover { filter: brightness(1.2); }
 .wb-save { background: var(--accent-blue); color: #fff; }
+.wb-save:enabled { background: #8b5cf6; }
+.wb-save:disabled { background: var(--bg-tertiary); color: var(--text-secondary); cursor: not-allowed; }
 .wb-delete { background: var(--bg-tertiary); color: var(--accent-red); }
 .wb-save-msg { font-size: 0.7rem; color: var(--text-secondary); }
 
@@ -551,6 +611,30 @@
 }
 .asst-mini-btn:hover:not(:disabled) { color: var(--text-primary); }
 .asst-mini-btn:disabled { opacity: 0.5; cursor: default; }
+
+.asst-guide-dialog {
+  width: min(620px, 92vw);
+  max-height: 82dvh;
+  padding: 0;
+  border: 1px solid var(--border-color);
+  border-radius: 10px;
+  background: var(--bg-secondary);
+  color: var(--text-primary);
+}
+.asst-guide-dialog::backdrop { background: rgba(0, 0, 0, 0.6); }
+.asst-guide-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 12px 14px;
+  border-bottom: 1px solid var(--border-color);
+}
+.asst-guide-header h2 { margin: 0; font-size: 0.95rem; }
+.asst-guide-body { overflow-y: auto; padding: 14px; font-size: 0.78rem; line-height: 1.5; }
+.asst-guide-body h3 { margin: 14px 0 4px; font-size: 0.82rem; color: var(--text-primary); }
+.asst-guide-body h3:first-child { margin-top: 0; }
+.asst-guide-body p { margin: 0 0 8px; }
 
 .asst-messages {
   max-height: 260px;

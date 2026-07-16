@@ -65,11 +65,12 @@ export default function StrategyWorkbench({ signals = [], initialSelectId = null
   const [pfUniverse, setPfUniverse] = useState(null);   // normalized universe of the last portfolio run
   const [showGuide, setShowGuide] = useState(false);
   const [showSlots, setShowSlots] = useState(false);    // "bot slots full" dialog (deploy hit a 409)
-  // Simple = templates + params + actions; Code = full editor (default for power users
-  // who already have a draft with custom code).
-  const [editorMode, setEditorMode] = useState(() => {
-    try { return localStorage.getItem('strategyEditorMode') || 'simple'; } catch { return 'simple'; }
-  });
+  const [showCodeEditor, setShowCodeEditor] = useState(false);
+  const [showSaveDialog, setShowSaveDialog] = useState(false);
+  const [saveName, setSaveName] = useState('');
+  const [confirmOverwrite, setConfirmOverwrite] = useState(false);
+  const codeDialogRef = useRef(null);
+  const saveDialogRef = useRef(null);
   const dataCache = useRef(new Map());   // `${symbol}|${interval}` → { bars, at }
   const universeCache = useRef(new Map()); // `${interval}` → { normalized, at }
   const finderCache = useRef(new Map());   // finderId → { code, params, updatedAt }
@@ -131,6 +132,20 @@ export default function StrategyWorkbench({ signals = [], initialSelectId = null
 
   const patchDraft = (patch) => { setDraft(d => ({ ...d, ...patch })); setDirty(true); };
 
+  useEffect(() => {
+    const dialog = codeDialogRef.current;
+    if (!dialog) return;
+    if (showCodeEditor && !dialog.open) dialog.showModal();
+    if (!showCodeEditor && dialog.open) dialog.close();
+  }, [showCodeEditor]);
+
+  useEffect(() => {
+    const dialog = saveDialogRef.current;
+    if (!dialog) return;
+    if (showSaveDialog && !dialog.open) dialog.showModal();
+    if (!showSaveDialog && dialog.open) dialog.close();
+  }, [showSaveDialog]);
+
   // ── CRUD ────────────────────────────────────────────────────────────────
   const selectStrategy = async (id) => {
     try {
@@ -187,7 +202,7 @@ export default function StrategyWorkbench({ signals = [], initialSelectId = null
         `"${selectedRow.name}" is deployed (${selectedRow.mode.toUpperCase()}) — saving updates ` +
         `the running bot with this new definition (it restarts and re-warms from history).\n\n` +
         `OK = update the running bot.\nCancel = go back (use "Save as copy" to keep it untouched).`);
-      if (!ok) return;
+      if (!ok) return false;
     }
     const body = {
       ...draftBody(),
@@ -207,29 +222,56 @@ export default function StrategyWorkbench({ signals = [], initialSelectId = null
       setSaveMsg('Saved ✓');
       setTimeout(() => setSaveMsg(''), 2000);
       fetchList();
+      return true;
     } catch (err) {
       setSaveMsg(`Save failed: ${err.message}`);
+      return false;
     }
   };
 
-  // Fork the current editor contents into a NEW saved strategy, leaving the
-  // selected one (and its stats/deployment) untouched.
-  const saveCopy = async () => {
-    const body = draftBody();
-    if (selectedRow && body.name === selectedRow.name) body.name = `${body.name} (copy)`;
+  const saveCodeAndClose = () => {
+    setShowCodeEditor(false);
+    openSaveDialog();
+  };
+
+  const saveDraftAs = async (name) => {
     try {
       const res = await fetch(`${API_URL}/strategies`, {
-        method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ ...draftBody(), name }),
+      });
       if (!res.ok) throw new Error((await res.json()).detail || res.statusText);
       const s = await res.json();
       setDraft(d => ({ ...d, id: s.id, name: s.name }));
       setDirty(false);
-      setSaveMsg('Saved as copy ✓');
+      setSaveMsg('Saved ✓');
       setTimeout(() => setSaveMsg(''), 2000);
       fetchList();
+      return true;
     } catch (err) {
       setSaveMsg(`Save failed: ${err.message}`);
+      return false;
     }
+  };
+
+  const openSaveDialog = () => {
+    setSaveName(draft.name);
+    setConfirmOverwrite(false);
+    setShowSaveDialog(true);
+  };
+
+  const submitSaveName = () => {
+    const name = saveName.trim();
+    if (!name) return;
+    if (draft.id && name === selectedRow?.name) {
+      setConfirmOverwrite(true);
+      return;
+    }
+    saveDraftAs(name).then((saved) => { if (saved) setShowSaveDialog(false); });
+  };
+
+  const overwriteSavedStrategy = () => {
+    saveDraft().then((saved) => { if (saved) setShowSaveDialog(false); });
   };
 
   const deleteStrategy = async () => {
@@ -416,57 +458,44 @@ export default function StrategyWorkbench({ signals = [], initialSelectId = null
     return (sym) => prettySymbol(sym, names.get(sym));
   }, [signals]);
 
+  const selectedStrategyKey = draft.id
+    ? `saved:${draft.id}`
+    : (() => {
+        const templateIndex = TEMPLATES.findIndex(t => t.name === draft.name && t.code === draft.code);
+        return templateIndex >= 0 ? `template:${templateIndex}` : 'draft';
+      })();
+
+  const selectStrategyFromMenu = (value) => {
+    if (value.startsWith('saved:')) {
+      selectStrategy(value.slice('saved:'.length));
+      return;
+    }
+    if (value.startsWith('template:')) {
+      const template = TEMPLATES[parseInt(value.slice('template:'.length), 10)];
+      if (template) { setDraft(newDraftFromTemplate(template, draft.symbol)); setDirty(true); }
+    }
+  };
+
   return (
     <div className="workbench">
       {/* ── Left: list + config + editor ── */}
       <div className="wb-left">
         <div className="wb-list-header">
           <span className="wb-title">Strategies</span>
-          <div className="wb-mode-toggle" title="Simple hides the code editor; Code shows full JS">
-            <button type="button" className={editorMode === 'simple' ? 'active' : ''}
-              onClick={() => { setEditorMode('simple'); try { localStorage.setItem('strategyEditorMode', 'simple'); } catch { /* storage may be disabled */ } }}>
-              Simple
-            </button>
-            <button type="button" className={editorMode === 'code' ? 'active' : ''}
-              onClick={() => { setEditorMode('code'); try { localStorage.setItem('strategyEditorMode', 'code'); } catch { /* storage may be disabled */ } }}>
-              Code
-            </button>
-          </div>
           <select
             className="wb-select"
-            value=""
-            onChange={(e) => {
-              const tpl = TEMPLATES[parseInt(e.target.value, 10)];
-              if (tpl) { setDraft(newDraftFromTemplate(tpl, draft.symbol)); setDirty(true); }
-            }}
+            aria-label="Select a strategy"
+            value={selectedStrategyKey}
+            onChange={(e) => selectStrategyFromMenu(e.target.value)}
           >
-            <option value="">+ New from template…</option>
-            {TEMPLATES.map((t, i) => <option key={t.name} value={i}>{t.name}</option>)}
+            {selectedStrategyKey === 'draft' && <option value="draft">Current unsaved draft</option>}
+            <optgroup label="Built-in strategies">
+              {TEMPLATES.map((t, i) => <option key={t.name} value={`template:${i}`}>{t.name}</option>)}
+            </optgroup>
+            <optgroup label="Saved strategies">
+              {list.map(s => <option key={s.id} value={`saved:${s.id}`}>{s.name}</option>)}
+            </optgroup>
           </select>
-        </div>
-
-        <div className="wb-list">
-          {list.map(s => (
-            <div
-              key={s.id}
-              className={`wb-list-item ${s.id === draft.id ? 'active' : ''}`}
-              onClick={() => selectStrategy(s.id)}
-            >
-              <div className="wb-list-main">
-                <span className="wb-list-name">{s.name}</span>
-                <span className="wb-list-sub">
-                  {s.finder_id
-                    ? `🔍 ${finders.find(f => f.id === s.finder_id)?.name || 'finder'} ×${s.max_positions || 1}`
-                    : s.symbol.replace('USDT', '')} · {s.interval}
-                </span>
-              </div>
-              <div className="wb-list-badges">
-                {s.last_error && <span className="wb-err-dot" title={s.last_error}>●</span>}
-                <span className={`wb-mode-badge mode-${s.mode}`}>{s.mode.toUpperCase()}</span>
-              </div>
-            </div>
-          ))}
-          {list.length === 0 && <div className="bt-muted wb-list-empty">No saved strategies yet</div>}
         </div>
 
         <div className="wb-config">
@@ -481,12 +510,16 @@ export default function StrategyWorkbench({ signals = [], initialSelectId = null
               <b className="wb-new-tag">New draft — not saved yet</b>
             )}
           </div>
-          <input
-            className="wb-input wb-name"
-            value={draft.name}
-            onChange={(e) => patchDraft({ name: e.target.value })}
-            placeholder="Strategy name"
-          />
+          <div className="wb-name-row">
+            <input
+              className="wb-input wb-name"
+              value={draft.name}
+              onChange={(e) => patchDraft({ name: e.target.value })}
+              placeholder="Strategy name"
+              aria-label="Strategy name"
+            />
+            <button type="button" className="wb-btn wb-save" disabled={!dirty} onClick={openSaveDialog}>Save</button>
+          </div>
           <div className="wb-config-row">
             <select
               className="wb-select"
@@ -554,46 +587,17 @@ export default function StrategyWorkbench({ signals = [], initialSelectId = null
           )}
         </div>
 
-        {editorMode === 'code' ? (
-          <div className="wb-editor">
-            <CodeMirror
-              value={draft.code}
-              height="100%"
-              theme="dark"
-              extensions={[javascript()]}
-              onChange={(val) => patchDraft({ code: val })}
-              basicSetup={{ lineNumbers: true, foldGutter: false }}
-            />
+        <div className="wb-code-launch">
+          <div>
+            <div className="wb-title">Advanced strategy editor</div>
+            <div className="bt-muted">Advanced strategy editor, used for editing the strategy at the code level, for users who like coding. If coding is not your thing, you can get the same results by telling the LLM below and it will do the coding for you.</div>
           </div>
-        ) : (
-          <div className="wb-editor" style={{
-            display: 'flex', alignItems: 'center', justifyContent: 'center',
-            padding: 16, color: 'var(--text-muted)', fontSize: 12, textAlign: 'center', lineHeight: 1.5,
-          }}>
-            <div>
-              <div style={{ fontWeight: 600, color: 'var(--text-bright)', marginBottom: 6 }}>Simple mode</div>
-              Pick a template, set params, backtest, then deploy paper.
-              Switch to <b>Code</b> to edit the strategy JS.
-              <div style={{ marginTop: 8, fontSize: 11 }}>
-                LIVE is only armed from the Performance page — not here.
-              </div>
-            </div>
-          </div>
-        )}
+          <button type="button" className="wb-btn wb-save" onClick={() => setShowCodeEditor(true)}>Advanced strategy editor</button>
+        </div>
         {codeError && <div className="bt-error wb-code-error">⚠ {codeError}</div>}
 
         <div className="wb-actions">
-          <button className="wb-btn wb-save" onClick={saveDraft}>
-            {draft.id ? 'Save' : 'Save as new'}{dirty ? ' *' : ''}
-          </button>
-          {draft.id && (
-            <button className="wb-btn" title="Save these edits as a NEW strategy — the selected one keeps its code, stats and deployment"
-              onClick={saveCopy}>
-              Save as copy
-            </button>
-          )}
           {draft.id && <button className="wb-btn wb-delete" onClick={deleteStrategy}>Delete</button>}
-          <button className="wb-btn wb-guide" onClick={() => setShowGuide(true)}>Guide</button>
           {draft.id && onOpenStrategyPage && (
             <button className="wb-btn wb-guide" title="How is this bot doing? Stats, equity, every fill on a chart — and the LIVE switch."
               onClick={() => onOpenStrategyPage(draft.id)}>
@@ -715,6 +719,71 @@ export default function StrategyWorkbench({ signals = [], initialSelectId = null
           onInsert={(code) => { patchDraft({ code }); setShowGuide(false); }}
         />
       )}
+
+      <dialog
+        ref={codeDialogRef}
+        className="wb-code-dialog"
+        aria-labelledby="strategy-code-editor-title"
+        onClose={() => setShowCodeEditor(false)}
+      >
+        <div className="wb-code-dialog-header">
+          <div>
+            <h2 id="strategy-code-editor-title">Strategy code</h2>
+            <p className="bt-muted">Changes update this strategy draft. Save to apply them to the saved strategy.</p>
+          </div>
+          <div className="wb-code-dialog-header-actions">
+            <button type="button" className="wb-btn wb-guide" onClick={() => { setShowCodeEditor(false); setShowGuide(true); }}>Guide</button>
+            <button type="button" className="wb-btn wb-guide" onClick={() => setShowCodeEditor(false)}>Close</button>
+          </div>
+        </div>
+        <div className="wb-code-dialog-editor">
+          <CodeMirror
+            value={draft.code}
+            height="100%"
+            theme="dark"
+            extensions={[javascript()]}
+            onChange={(val) => patchDraft({ code: val })}
+            basicSetup={{ lineNumbers: true, foldGutter: false }}
+          />
+        </div>
+        {codeError && <div className="bt-error wb-code-error">⚠ {codeError}</div>}
+        <div className="wb-code-dialog-actions">
+          <button type="button" className="wb-btn wb-guide" onClick={() => setShowCodeEditor(false)}>Cancel</button>
+          <button type="button" className="wb-btn wb-save" onClick={saveCodeAndClose}>Save &amp; close</button>
+        </div>
+      </dialog>
+
+      <dialog
+        ref={saveDialogRef}
+        className="wb-save-dialog"
+        aria-labelledby="save-strategy-title"
+        onClose={() => { setShowSaveDialog(false); setConfirmOverwrite(false); }}
+      >
+        <div className="wb-code-dialog-header">
+          <h2 id="save-strategy-title">{confirmOverwrite ? 'Overwrite saved strategy?' : 'Save strategy as'}</h2>
+          <button type="button" className="wb-btn wb-guide" onClick={() => setShowSaveDialog(false)}>Close</button>
+        </div>
+        {confirmOverwrite ? (
+          <div className="wb-save-dialog-body">
+            <p>This will replace the saved strategy named <strong>{selectedRow?.name}</strong>.</p>
+            <div className="wb-code-dialog-actions">
+              <button type="button" className="wb-btn wb-guide" onClick={() => setConfirmOverwrite(false)}>No</button>
+              <button type="button" className="wb-btn wb-save" onClick={overwriteSavedStrategy}>Yes, overwrite</button>
+            </div>
+          </div>
+        ) : (
+          <div className="wb-save-dialog-body">
+            <label className="wb-save-name-label">Strategy name
+              <input className="wb-input" value={saveName} onChange={(e) => setSaveName(e.target.value)} autoFocus />
+            </label>
+            <p className="bt-muted">Change the name to save these settings to a new strategy file, or leave the name as is to overwrite the existing one. You are allowed 5 saved strategies on your current tier.</p>
+            <div className="wb-code-dialog-actions">
+              <button type="button" className="wb-btn wb-guide" onClick={() => setShowSaveDialog(false)}>Cancel</button>
+              <button type="button" className="wb-btn wb-save" disabled={!saveName.trim()} onClick={submitSaveName}>Continue</button>
+            </div>
+          </div>
+        )}
+      </dialog>
 
       {/* Deploy hit the plan's bot-slot cap (409): show what's running and let
           the user free a slot without leaving the page. Stopped bots keep
