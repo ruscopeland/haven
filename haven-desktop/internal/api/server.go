@@ -10,6 +10,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"log/slog"
+	"math"
 	"net/http"
 	"sort"
 	"strconv"
@@ -486,10 +487,15 @@ func (s *Server) handleGetSignals(w http.ResponseWriter, r *http.Request) {
 
 	sort.Slice(signals, func(i, j int) bool {
 		switch sortBy {
-		case "price_change":
+		case "price_change", "price_change_24h":
 			return signals[i].PriceChange24h > signals[j].PriceChange24h
 		case "market_cap":
 			return signals[i].MarketCap > signals[j].MarketCap
+		case "mcap_vol":
+			// Combined score: log(mcap) * vol for ranking
+			si := math.Log10(max(signals[i].MarketCap, 1)) * signals[i].Volume24h
+			sj := math.Log10(max(signals[j].MarketCap, 1)) * signals[j].Volume24h
+			return si > sj
 		default: // vol_24h
 			return signals[i].Volume24h > signals[j].Volume24h
 		}
@@ -590,7 +596,7 @@ func (s *Server) handleGetUniverse(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	minVol := 50000.0
+	minVol := 0.0 // default: no filter — tickers load async, they may not be ready yet
 	if v := r.URL.Query().Get("min_vol_24h"); v != "" {
 		if n, err := strconv.ParseFloat(v, 64); err == nil {
 			minVol = n
