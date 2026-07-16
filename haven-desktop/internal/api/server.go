@@ -97,6 +97,7 @@ func (s *Server) registerRoutes() {
 	// Market data
 	s.mux.HandleFunc("GET /candles", s.handleGetCandles)
 	s.mux.HandleFunc("GET /klines/{symbol}", s.handleGetKlines)
+	s.mux.HandleFunc("GET /universe", s.handleGetUniverse)
 	s.mux.HandleFunc("GET /tokens", s.handleListTokens)
 	s.mux.HandleFunc("GET /market/prices", s.handleGetPrices)
 	s.mux.HandleFunc("GET /signals", s.handleGetSignals)
@@ -571,6 +572,175 @@ func (s *Server) handleGetKlines(w http.ResponseWriter, r *http.Request) {
 
 func fmtNum(v float64) string {
 	return strconv.FormatFloat(v, 'f', -1, 64)
+}
+
+// handleGetUniverse returns aligned OHLCV arrays for the top tokens by volume.
+// The finder workbench uses this to rank tokens across a common timeline.
+func (s *Server) handleGetUniverse(w http.ResponseWriter, r *http.Request) {
+	interval := r.URL.Query().Get("interval")
+	if interval == "" {
+		interval = "15m"
+	}
+
+	now := time.Now().UnixMilli()
+	startMs := now - 3*86400000 // default: 3 days
+	if s := r.URL.Query().Get("start_ms"); s != "" {
+		if n, err := strconv.ParseInt(s, 10, 64); err == nil {
+			startMs = n
+		}
+	}
+
+	minVol := 50000.0
+	if v := r.URL.Query().Get("min_vol_24h"); v != "" {
+		if n, err := strconv.ParseFloat(v, 64); err == nil {
+			minVol = n
+		}
+	}
+
+	maxTokens := 20
+	if s.marketService == nil {
+		writeJSON(w, http.StatusOK, map[string]interface{}{
+			"interval": interval, "times": []int64{}, "tokens": []interface{}{}, "source": "binance_alpha",
+		})
+		return
+	}
+
+	// Get top tokens by volume
+	allTokens := s.marketService.GetTokens()
+	sort.Slice(allTokens, func(i, j int) bool {
+		return allTokens[i].Volume24h > allTokens[j].Volume24h
+	})
+
+	var selected []TokenEntry
+	for _, t := range allTokens {
+		if t.Volume24h >= minVol && t.AlphaID != "" {
+			selected = append(selected, t)
+			if len(selected) >= maxTokens {
+				break
+			}
+		}
+	}
+
+	if len(selected) == 0 {
+		writeJSON(w, http.StatusOK, map[string]interface{}{
+			"interval": interval, "times": []int64{}, "tokens": []interface{}{}, "source": "binance_alpha",
+		})
+		return
+	}
+
+	// Compute time range
+	intervalMs := intervalMs(interval)
+	if intervalMs == 0 {
+		intervalMs = 900000 // default 15m
+	}
+	startMs = startMs - (startMs % intervalMs)
+	now = now - (now % intervalMs)
+	if startMs >= now {
+		startMs = now - 86400000
+	}
+
+	endMs := now
+	totalBars := int((endMs - startMs) / intervalMs)
+	if totalBars > 2880 { // cap at ~30 days of 15m bars
+		startMs = endMs - int64(2880)*intervalMs
+		totalBars = 2880
+	}
+
+	times := make([]int64, totalBars)
+	for i := 0; i < totalBars; i++ {
+		times[i] = startMs + int64(i)*intervalMs
+	}
+
+	// Fetch candles for each token and align
+	type tokenData struct {
+		Symbol         string    `json:"symbol"`
+		Name           string    `json:"name"`
+		Chain          string    `json:"chain"`
+		Volume24h      float64   `json:"volume24h"`
+		PriceChange24h float64   `json:"priceChange24h"`
+		O              []*float64 `json:"o"`
+		H              []*float64 `json:"h"`
+		L              []*float64 `json:"l"`
+		C              []*float64 `json:"c"`
+		Volume         []*float64 `json:"volume"`
+	}
+
+	var result []tokenData
+	for _, tok := range selected {
+		candles, err := s.marketService.FetchAndCacheCandles(r.Context(), tok.Symbol, interval, totalBars+10)
+		if err != nil || len(candles) == 0 {
+			continue
+		}
+
+		idx := make(map[int64]int, len(candles))
+		for _, c := range candles {
+			idx[c.Time] = 1 // mark presence
+		}
+
+		td := tokenData{
+			Symbol:         tok.Symbol,
+			Name:           tok.Name,
+			Chain:          "bsc",
+			Volume24h:      tok.Volume24h,
+			PriceChange24h: tok.PriceChange24h,
+			O:              make([]*float64, totalBars),
+			H:              make([]*float64, totalBars),
+			L:              make([]*float64, totalBars),
+			C:              make([]*float64, totalBars),
+			Volume:         make([]*float64, totalBars),
+		}
+
+		ci := 0
+		for ti, t := range times {
+			for ci < len(candles) && candles[ci].Time < t {
+				ci++
+			}
+			if ci < len(candles) && candles[ci].Time == t {
+				v := candles[ci]
+				td.O[ti] = fptr(v.Open)
+				td.H[ti] = fptr(v.High)
+				td.L[ti] = fptr(v.Low)
+				td.C[ti] = fptr(v.Close)
+				td.Volume[ti] = fptr(v.Volume)
+			}
+		}
+
+		// Only include if we have at least some data
+		hasData := false
+		for _, c := range td.C {
+			if c != nil {
+				hasData = true
+				break
+			}
+		}
+		if hasData {
+			result = append(result, td)
+		}
+		_ = idx
+	}
+
+	writeJSON(w, http.StatusOK, map[string]interface{}{
+		"interval": interval,
+		"times":    times,
+		"tokens":   result,
+		"source":   "binance_alpha",
+	})
+}
+
+func fptr(v float64) *float64 { return &v }
+
+func intervalMs(interval string) int64 {
+	switch interval {
+	case "1m": return 60000
+	case "3m": return 180000
+	case "5m": return 300000
+	case "15m": return 900000
+	case "30m": return 1800000
+	case "1h": return 3600000
+	case "4h": return 14400000
+	case "1d": return 86400000
+	}
+	return 0
 }
 
 // --- Helpers ---
