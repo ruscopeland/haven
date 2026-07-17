@@ -2,7 +2,7 @@ name: Deploy landing page
 
 on:
   push:
-    branches: [desktop-rewrite]
+    branches: [desktop-rewrite, main]
     paths:
       - 'crypto-charting-ui/src/landing.jsx'
       - 'crypto-charting-ui/landing.html'
