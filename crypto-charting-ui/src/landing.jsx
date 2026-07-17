@@ -26,9 +26,9 @@ const FEATURES = [
     desc: 'Paper-trade strategies risk-free, then switch to live execution when you\'re confident. The same engine runs both modes — no surprises.',
   },
   {
-    icon: '🔐',
-    title: 'Local Wallet Encryption',
-    desc: 'Your private keys are encrypted with your OS credential store (Windows DPAPI, macOS Keychain, Linux keyring). They never touch a cloud server.',
+    icon: '💻',
+    title: 'Runs on Your Machine',
+    desc: 'Everything executes locally — strategies, backtests, and trading. No cloud servers, no hosted accounts. What you build stays on your computer.',
   },
   {
     icon: '🧠',
@@ -50,13 +50,13 @@ const STEPS = [
   },
   {
     num: '2',
-    title: 'Connect Binance',
-    desc: 'Link your Binance account with a read-only API key for market data. Add trading permissions when you\'re ready to go live.',
+    title: 'Explore',
+    desc: 'Backtest strategies and scan tokens with the Token Finder using free Binance Alpha data — no accounts, no API keys.',
   },
   {
     num: '3',
     title: 'Trade',
-    desc: 'Paper-trade first. When you\'re confident, flip the switch to live. Your keys, your computer, your edge.',
+    desc: 'Paper-trade risk-free. When you\'re ready, connect a wallet and go live. The same engine runs both modes — no surprises.',
   },
 ];
 
@@ -92,12 +92,12 @@ const PRICING = [
 
 const FAQ = [
   {
-    q: 'Do I need to connect a wallet to use Haven?',
-    a: 'No. You can backtest, use the Token Finder, and paper-trade without any wallet or API keys. You only need a Binance account when you are ready to go live.',
+    q: 'Do I need any accounts or API keys to get started?',
+    a: 'No. Haven uses Binance Alpha for market data — it\'s free and requires no account. You can backtest, use the Token Finder, and paper-trade immediately after installing. You only need a wallet when you decide to go live.',
   },
   {
-    q: 'Where are my private keys stored?',
-    a: 'Your keys are encrypted and stored locally on your computer using your operating system\'s built-in credential manager (Windows DPAPI, macOS Keychain, or Linux keyring). They never leave your machine.',
+    q: 'How are my wallet credentials protected?',
+    a: 'Wallet credentials are encrypted with your operating system\'s built-in credential store (Windows DPAPI, macOS Keychain, or Linux keyring). They are never sent to any cloud service.',
   },
   {
     q: 'What is Binance Alpha?',
@@ -171,7 +171,7 @@ function Hero() {
         margin: '0 auto 24px',
         lineHeight: 1.4,
       }}>
-        Your keys. Your computer. Your edge.
+        Desktop-first crypto tools. No cloud accounts required.
       </p>
       <p style={{
         fontSize: 15,
@@ -181,8 +181,8 @@ function Hero() {
         lineHeight: 1.6,
       }}>
         Haven is a desktop crypto strategy workspace. Backtest strategies, scan
-        tokens with custom finders, and trade — all with your keys encrypted
-        locally. No cloud custody. No advice. Just tools.
+        tokens with custom finders, and trade — everything runs on your machine.
+        Free market data via Binance Alpha. No API keys needed to start.
       </p>
       <div style={{ display: 'flex', gap: 14, justifyContent: 'center', flexWrap: 'wrap' }}>
         <a href={DOWNLOAD_URL} className="btn-primary btn-lg" style={{ textDecoration: 'none', display: 'inline-block' }}>
@@ -326,7 +326,7 @@ function Safety() {
     }}>
       <div style={{ fontSize: 36, marginBottom: 12 }}>🛡️</div>
       <h2 style={{ fontSize: 22, marginBottom: 16 }}>
-        Your security is the whole point
+        Built to run locally
       </h2>
       <p style={{
         color: 'var(--text-normal)',
@@ -335,9 +335,10 @@ function Safety() {
         fontSize: 15,
         lineHeight: 1.7,
       }}>
-        Wallet keys never leave your computer. Strategy code runs in a sandbox
-        with strict limits. Only you control your funds. Haven is a tool you run
-        — not a service that holds your assets.
+        Haven is a desktop application — not a web service. Strategies execute
+        in a sandboxed runtime on your machine. When you trade, your wallet
+        credentials are encrypted with your operating system\'s built-in
+        security. Nothing leaves your computer without your permission.
       </p>
       <p style={{
         color: 'var(--warning)',
