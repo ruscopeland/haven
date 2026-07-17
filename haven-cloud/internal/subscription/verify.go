@@ -43,16 +43,18 @@ type Entitlement struct {
 	EngineAccess    bool   `json:"engine_access"`
 	DataRefreshSec  int    `json:"data_refresh_sec"`
 	SubscriptionEnd string `json:"subscription_end,omitempty"`
+	BuildWarning    string `json:"build_warning,omitempty"`
 }
 
 // Service handles subscription verification against Clerk.
 type Service struct {
-	verifier   *auth.ClerkVerifier
-	clerkKey   string
-	logger     *slog.Logger
-	tiers      map[string]Tier
-	cache      sync.Map // userID → cachedEntitlement
-	cacheTTL   time.Duration
+	verifier        *auth.ClerkVerifier
+	clerkKey        string
+	logger          *slog.Logger
+	tiers           map[string]Tier
+	cache           sync.Map // userID → cachedEntitlement
+	cacheTTL        time.Duration
+	latestBuildHash string
 }
 
 type cachedEntitlement struct {
@@ -61,13 +63,14 @@ type cachedEntitlement struct {
 }
 
 // NewService creates a subscription verification service.
-func NewService(verifier *auth.ClerkVerifier, clerkKey string, logger *slog.Logger) *Service {
+func NewService(verifier *auth.ClerkVerifier, clerkKey string, logger *slog.Logger, latestBuildHash string) *Service {
 	svc := &Service{
-		verifier: verifier,
-		clerkKey: clerkKey,
-		logger:   logger,
-		tiers:    defaultTiers(),
-		cacheTTL: 5 * time.Minute,
+		verifier:        verifier,
+		clerkKey:        clerkKey,
+		logger:          logger,
+		tiers:           defaultTiers(),
+		cacheTTL:        5 * time.Minute,
+		latestBuildHash: latestBuildHash,
 	}
 	return svc
 }
@@ -154,7 +157,16 @@ func (s *Service) HandleVerify(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Check cache
+	// Parse optional build_hash from request body
+	var req struct {
+		BuildHash string `json:"build_hash"`
+	}
+	// Best-effort body parse — build_hash is optional
+	if body, readErr := io.ReadAll(io.LimitReader(r.Body, 4096)); readErr == nil {
+		json.Unmarshal(body, &req)
+	}
+
+	// Check cache (cache depends only on user ID, not build_hash)
 	if cached, ok := s.cache.Load(user.ID); ok {
 		c := cached.(cachedEntitlement)
 		if time.Now().Before(c.expiresAt) {
@@ -168,6 +180,20 @@ func (s *Service) HandleVerify(w http.ResponseWriter, r *http.Request) {
 		s.logger.Error("resolve entitlement", "user_id", user.ID, "error", err)
 		s.writeError(w, http.StatusInternalServerError, "subscription_error", "Unable to verify subscription")
 		return
+	}
+
+	// Check build hash integrity
+	if s.latestBuildHash != "" && req.BuildHash != "" {
+		if req.BuildHash != s.latestBuildHash {
+			s.logger.Warn("build hash mismatch",
+				"user_id", user.ID,
+				"received", req.BuildHash,
+				"expected", s.latestBuildHash,
+			)
+			entitlement.BuildWarning = "This version of Haven could not be verified. " +
+				"Only download Haven from haven.trading. " +
+				"Unverified software can steal your wallet keys."
+		}
 	}
 
 	// Cache the result

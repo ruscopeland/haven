@@ -28,6 +28,8 @@ type Server struct {
 	logger        *slog.Logger
 	mux           *http.ServeMux
 	marketService MarketProvider
+	buildHash     string
+	buildWarning  string
 }
 
 // MarketProvider is the interface for market data operations.
@@ -48,12 +50,13 @@ type TokenEntry struct {
 }
 
 // NewServer creates a new API server with the given store.
-func NewServer(store *db.Store, logger *slog.Logger, market MarketProvider) *Server {
+func NewServer(store *db.Store, logger *slog.Logger, market MarketProvider, buildHash string) *Server {
 	s := &Server{
 		store:         store,
 		logger:        logger,
 		mux:           http.NewServeMux(),
 		marketService: market,
+		buildHash:     buildHash,
 	}
 	s.registerRoutes()
 	return s
@@ -388,11 +391,17 @@ func (s *Server) handleSubscriptionStatus(w http.ResponseWriter, r *http.Request
 			"app_access":   true,
 			"tier":         "unverified",
 			"needs_verify": true,
+			"build_hash":   s.buildHash,
 		})
 		return
 	}
 	var status map[string]interface{}
 	json.Unmarshal([]byte(data), &status)
+	// Inject current build info
+	status["build_hash"] = s.buildHash
+	if s.buildWarning != "" {
+		status["build_warning"] = s.buildWarning
+	}
 	writeJSON(w, http.StatusOK, status)
 }
 

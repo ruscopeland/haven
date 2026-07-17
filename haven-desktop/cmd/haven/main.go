@@ -20,6 +20,10 @@ import (
 	"github.com/ruscopeland/haven-desktop/internal/market"
 )
 
+// BuildHash is set at build time via -ldflags "-X main.BuildHash=$(git rev-parse HEAD)".
+// It is sent to the cloud service during subscription verification for integrity checking.
+var BuildHash = "dev"
+
 //go:embed all:frontend/dist
 var assets embed.FS
 
@@ -42,7 +46,7 @@ func main() {
 	go marketSvc.Start(context.Background(), 60)
 
 	// Start local API server on a goroutine
-	apiSrv := api.NewServer(store, logger, marketSvc)
+	apiSrv := api.NewServer(store, logger, marketSvc, BuildHash)
 	go func() {
 		port := os.Getenv("HAVEN_PORT")
 		if port == "" {

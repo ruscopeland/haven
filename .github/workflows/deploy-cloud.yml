@@ -1,0 +1,30 @@
+name: Deploy cloud service
+
+on:
+  push:
+    branches: [desktop-rewrite]
+    paths:
+      - 'haven-cloud/**'
+      - '.github/workflows/deploy-cloud.yml'
+  workflow_dispatch:
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    environment: production
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.22'
+
+      - name: Build
+        working-directory: haven-cloud
+        run: CGO_ENABLED=0 go build -ldflags="-s -w" -o server ./cmd/server/
+
+      - name: Deploy to Railway
+        uses: railwayapp/railway-deploy@v1
+        with:
+          railway_token: ${{ secrets.HAVEN_RAILWAY_PROJECT_TOKEN }}
+          service: api

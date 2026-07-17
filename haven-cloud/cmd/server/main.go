@@ -26,11 +26,15 @@ func main() {
 	releaseDir := requireEnv("RELEASE_DIR")
 	port := envOrDefault("PORT", "8080")
 
+	// Optional configuration
+	releasePublicKey := os.Getenv("RELEASE_PUBLIC_KEY")
+	latestBuildHash := os.Getenv("LATEST_BUILD_HASH")
+
 	verifier := auth.NewClerkVerifier(clerkSecret, clerkPublishable, logger)
-	subSvc := subscription.NewService(verifier, clerkSecret, logger)
+	subSvc := subscription.NewService(verifier, clerkSecret, logger, latestBuildHash)
 	assistantSvc := assistant.NewService(deepseekKey, logger)
 	assistantSvc.SetVerifier(verifier)
-	releaseSvc := release.NewService(releaseDir, logger)
+	releaseSvc := release.NewService(releaseDir, logger, releasePublicKey)
 
 	mux := http.NewServeMux()
 

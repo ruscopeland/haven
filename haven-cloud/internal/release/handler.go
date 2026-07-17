@@ -30,15 +30,15 @@ type Service struct {
 }
 
 // NewService creates a release distribution service.
-// RELEASE_PUBLIC_KEY env var should contain the base64-encoded Ed25519 public key.
-func NewService(releaseDir string, logger *slog.Logger) *Service {
+// publicKey should be the base64-encoded Ed25519 public key, or empty to skip verification.
+func NewService(releaseDir string, logger *slog.Logger, publicKeyBase64 string) *Service {
 	svc := &Service{
 		releaseDir: releaseDir,
 		logger:     logger,
 	}
 
-	if pkStr := os.Getenv("RELEASE_PUBLIC_KEY"); pkStr != "" {
-		pk, err := base64.StdEncoding.DecodeString(pkStr)
+	if publicKeyBase64 != "" {
+		pk, err := base64.StdEncoding.DecodeString(publicKeyBase64)
 		if err != nil {
 			logger.Error("invalid RELEASE_PUBLIC_KEY", "error", err)
 		} else {

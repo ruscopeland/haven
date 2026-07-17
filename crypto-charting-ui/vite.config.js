@@ -15,6 +15,12 @@ export default defineConfig({
   plugins: [react()],
   build: {
     license: true,
+    rollupOptions: {
+      input: {
+        main: path.resolve(__dirname, 'index.html'),
+        landing: path.resolve(__dirname, 'landing.html'),
+      },
+    },
     rolldownOptions: {
       output: {
         entryFileNames: `assets/[name]-[hash]-${buildRevision}.js`,
