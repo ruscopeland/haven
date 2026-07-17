@@ -44,8 +44,11 @@ Copy-Item -Recurse "$root\..\crypto-charting-ui\dist\*" $distDir
 # ---- Step 3: Go Build ----
 Write-Host "[3/4] Building Go binary..." -ForegroundColor Cyan
 Push-Location $root
-$ldflags = ""
-if ($release) { $ldflags = "-s -w -X main.Version=$ver" }
+# Get build hash for integrity checking
+$buildHash = git -C (Resolve-Path "$root\..") rev-parse HEAD 2>$null
+if (-not $buildHash) { $buildHash = "dev" }
+$ldflags = "-X main.BuildHash=$buildHash"
+if ($release) { $ldflags = "-s -w -X main.Version=$ver -X main.BuildHash=$buildHash" }
 $exeName = if ($IsLinux) { "haven-desktop" } elseif ($IsMacOS) { "haven-desktop" } else { "haven-desktop.exe" }
 go build -ldflags "$ldflags" -o "$binDir\$exeName" ./cmd/haven/
 if ($LASTEXITCODE -ne 0) { throw "Go build failed" }
@@ -98,7 +101,56 @@ if ($release) {
     $manifest | ConvertTo-Json | Out-File -Encoding UTF8 "$binDir\$($manifest.filename).manifest.json"
     Write-Host "  Manifest: bin/$($manifest.filename).manifest.json" -ForegroundColor Green
 
-    # Sign manifest if release key is available
+    # ---- Sign manifest with Ed25519 release key ----
+    Write-Host ""
+    $manifestPath = "$binDir\$($manifest.filename).manifest.json"
+    $signScript = @"
+import base64, hashlib, json, os, subprocess, time, sys
+from pathlib import Path
+from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
+from cryptography.hazmat.primitives import serialization
+
+manifest_path = sys.argv[1]
+manifest = json.loads(Path(manifest_path).read_text())
+
+# Load key via DPAPI
+local_dir = Path(os.environ.get('LOCALAPPDATA', Path.home())) / 'Haven'
+private_path = local_dir / 'engine-release-signing.dpapi'
+if not private_path.is_file():
+    print('WARNING: No release signing key found — skipping signature')
+    sys.exit(0)
+
+result = subprocess.run(
+    ['powershell.exe', '-NoProfile', '-NonInteractive', '-Command',
+     'Add-Type -AssemblyName System.Security; ' +
+     '\$protected = [Convert]::FromBase64String([Console]::In.ReadToEnd().Trim()); ' +
+     '\$plain = [System.Security.Cryptography.ProtectedData]::Unprotect(' +
+     '\$protected, \$null, [System.Security.Cryptography.DataProtectionScope]::CurrentUser); ' +
+     '[Text.Encoding]::UTF8.GetString(\$plain)'],
+    input=private_path.read_text(encoding='utf8'), text=True, capture_output=True)
+if result.returncode:
+    print('WARNING: Failed to unlock release key — skipping signature')
+    sys.exit(0)
+
+private_key = Ed25519PrivateKey.from_private_bytes(base64.b64decode(result.stdout.strip()))
+
+unsigned = {'version': manifest['version'], 'sha256': manifest['sha256'],
+            'created_at': int(time.time()), 'algorithm': 'Ed25519'}
+canonical = json.dumps(unsigned, sort_keys=True, separators=(',', ':')).encode()
+signature = base64.b64encode(private_key.sign(canonical)).decode()
+
+signed = {**unsigned, 'signature': signature,
+          'filename': manifest.get('filename', ''),
+          'platform': manifest.get('platform', '')}
+Path(manifest_path).with_suffix('.signed.json').write_text(
+    json.dumps(signed, indent=2) + '\n', encoding='utf8')
+print(f'  Signed manifest: {Path(manifest_path).with_suffix(".signed.json")}')
+"@
+    
+    $signScript | Out-File -Encoding UTF8 "$env:TEMP\haven_sign.py"
+    python "$env:TEMP\haven_sign.py" "$manifestPath" 2>&1
+    Remove-Item "$env:TEMP\haven_sign.py" -ErrorAction SilentlyContinue
+
     Write-Host ""
     Write-Host "Release files in bin/:" -ForegroundColor Green
     Get-ChildItem $binDir | Where-Object { $_.Name -like "haven-$ver*" } | ForEach-Object {

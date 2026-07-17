@@ -4,6 +4,7 @@
 package api
 
 import (
+	"bytes"
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
@@ -12,6 +13,7 @@ import (
 	"log/slog"
 	"math"
 	"net/http"
+	"os"
 	"sort"
 	"strconv"
 	"strings"
@@ -30,6 +32,7 @@ type Server struct {
 	marketService MarketProvider
 	buildHash     string
 	buildWarning  string
+	cloudURL      string
 }
 
 // MarketProvider is the interface for market data operations.
@@ -51,12 +54,17 @@ type TokenEntry struct {
 
 // NewServer creates a new API server with the given store.
 func NewServer(store *db.Store, logger *slog.Logger, market MarketProvider, buildHash string) *Server {
+	cloudURL := os.Getenv("HAVEN_CLOUD_URL")
+	if cloudURL == "" {
+		cloudURL = "https://api.haven.trading"
+	}
 	s := &Server{
 		store:         store,
 		logger:        logger,
 		mux:           http.NewServeMux(),
 		marketService: market,
 		buildHash:     buildHash,
+		cloudURL:      cloudURL,
 	}
 	s.registerRoutes()
 	return s
@@ -414,22 +422,94 @@ func (s *Server) handleSubscriptionVerify(w http.ResponseWriter, r *http.Request
 		return
 	}
 
-	// TODO: Call cloud service to verify subscription
-	// For now, accept any token and return active trial
-	entitlement := map[string]interface{}{
-		"app_access":      true,
-		"tier":            "starter",
-		"trial_end":       "",
-		"max_strategies":  5,
-		"max_finders":     2,
-		"max_bots":        1,
-		"universe_tokens": 20,
-		"live_trading":    false,
-		"finder_enabled":  false,
-		"engine_access":   true,
-		"data_refresh_sec": 30,
+	
+	if req.ClerkToken == "" {
+		writeError(w, http.StatusBadRequest, "clerk_token is required")
+		return
 	}
 
+	// Forward to the cloud verification service (with build_hash for integrity)
+	cloudBody := map[string]interface{}{
+		"clerk_token": req.ClerkToken,
+		"build_hash":  s.buildHash,
+	}
+	bodyBytes, _ := json.Marshal(cloudBody)
+
+	cloudReq, err := http.NewRequest("POST", s.cloudURL+"/v1/subscription/verify", bytes.NewReader(bodyBytes))
+	if err != nil {
+		s.logger.Error("create cloud request", "error", err)
+		s.fallbackEntitlement(w)
+		return
+	}
+	cloudReq.Header.Set("Content-Type", "application/json")
+
+	client := &http.Client{Timeout: 10 * time.Second}
+	resp, err := client.Do(cloudReq)
+	if err != nil {
+		s.logger.Warn("cloud verify unreachable, using cached status", "error", err)
+		if cached, _ := s.store.GetSetting("subscription_status"); cached != "" {
+			var status map[string]interface{}
+			json.Unmarshal([]byte(cached), &status)
+			status["build_hash"] = s.buildHash
+			status["cloud_unreachable"] = true
+			writeJSON(w, http.StatusOK, status)
+			return
+		}
+		s.fallbackEntitlement(w)
+		return
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		s.logger.Warn("cloud verify returned error", "status", resp.StatusCode)
+		s.fallbackEntitlement(w)
+		return
+	}
+
+	var entitlement map[string]interface{}
+	if err := json.NewDecoder(resp.Body).Decode(&entitlement); err != nil {
+		s.logger.Error("decode cloud response", "error", err)
+		s.fallbackEntitlement(w)
+		return
+	}
+
+	// Handle build warning from cloud
+	if warning, ok := entitlement["build_warning"].(string); ok && warning != "" {
+		s.buildWarning = warning
+		s.logger.Warn("cloud build warning received", "warning", warning)
+	}
+
+	// Cache the entitlement locally
+	data, _ := json.Marshal(entitlement)
+	s.store.SetSetting("subscription_status", string(data))
+
+	writeJSON(w, http.StatusOK, entitlement)
+}
+
+// fallbackEntitlement returns a minimal entitlement when the cloud is
+// temporarily unreachable. The app re-verifies every 15 minutes.
+func (s *Server) fallbackEntitlement(w http.ResponseWriter) {
+	if cached, _ := s.store.GetSetting("subscription_status"); cached != "" {
+		var status map[string]interface{}
+		json.Unmarshal([]byte(cached), &status)
+		status["build_hash"] = s.buildHash
+		status["cloud_unreachable"] = true
+		writeJSON(w, http.StatusOK, status)
+		return
+	}
+	entitlement := map[string]interface{}{
+		"app_access":        true,
+		"tier":              "trial",
+		"max_strategies":    5,
+		"max_finders":       2,
+		"max_bots":          1,
+		"universe_tokens":   200,
+		"live_trading":      false,
+		"finder_enabled":    false,
+		"engine_access":     true,
+		"data_refresh_sec":  30,
+		"cloud_unreachable": true,
+	}
 	data, _ := json.Marshal(entitlement)
 	s.store.SetSetting("subscription_status", string(data))
 	writeJSON(w, http.StatusOK, entitlement)
