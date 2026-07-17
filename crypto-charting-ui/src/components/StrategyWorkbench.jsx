@@ -69,6 +69,8 @@ export default function StrategyWorkbench({ signals = [], initialSelectId = null
   const [showSaveDialog, setShowSaveDialog] = useState(false);
   const [saveName, setSaveName] = useState('');
   const [confirmOverwrite, setConfirmOverwrite] = useState(false);
+  const [savePending, setSavePending] = useState(false);
+  const [saveDialogError, setSaveDialogError] = useState('');
   const codeDialogRef = useRef(null);
   const saveDialogRef = useRef(null);
   const dataCache = useRef(new Map());   // `${symbol}|${interval}` → { bars, at }
@@ -224,7 +226,9 @@ export default function StrategyWorkbench({ signals = [], initialSelectId = null
       fetchList();
       return true;
     } catch (err) {
-      setSaveMsg(`Save failed: ${err.message}`);
+      const message = `Save failed: ${err.message}`;
+      setSaveMsg(message);
+      setSaveDialogError(message);
       return false;
     }
   };
@@ -249,7 +253,9 @@ export default function StrategyWorkbench({ signals = [], initialSelectId = null
       fetchList();
       return true;
     } catch (err) {
-      setSaveMsg(`Save failed: ${err.message}`);
+      const message = `Save failed: ${err.message}`;
+      setSaveMsg(message);
+      setSaveDialogError(message);
       return false;
     }
   };
@@ -257,17 +263,25 @@ export default function StrategyWorkbench({ signals = [], initialSelectId = null
   const openSaveDialog = () => {
     setSaveName(draft.name);
     setConfirmOverwrite(false);
+    setSaveDialogError('');
     setShowSaveDialog(true);
   };
 
-  const submitSaveName = () => {
+  const submitSaveName = async () => {
     const name = saveName.trim();
-    if (!name) return;
+    if (!name || savePending) return;
     if (draft.id && name === selectedRow?.name) {
       setConfirmOverwrite(true);
       return;
     }
-    saveDraftAs(name).then((saved) => { if (saved) setShowSaveDialog(false); });
+    setSaveDialogError('');
+    setSavePending(true);
+    try {
+      const saved = await saveDraftAs(name);
+      if (saved) setShowSaveDialog(false);
+    } finally {
+      setSavePending(false);
+    }
   };
 
   const overwriteSavedStrategy = () => {
@@ -626,7 +640,7 @@ export default function StrategyWorkbench({ signals = [], initialSelectId = null
         <AssistantPanel
           mode="strategy"
           code={draft.code}
-          onInsertCode={(code) => patchDraft({ code })}
+          onInsertCode={(code, name) => patchDraft({ code, ...(name ? { name } : {}) })}
         />
       </div>
 
@@ -772,16 +786,17 @@ export default function StrategyWorkbench({ signals = [], initialSelectId = null
             </div>
           </div>
         ) : (
-          <div className="wb-save-dialog-body">
+          <form className="wb-save-dialog-body" onSubmit={(event) => { event.preventDefault(); submitSaveName(); }}>
             <label className="wb-save-name-label">Strategy name
-              <input className="wb-input" value={saveName} onChange={(e) => setSaveName(e.target.value)} autoFocus />
+              <input name="strategyName" className="wb-input" value={saveName} onChange={(e) => setSaveName(e.target.value)} autoFocus required />
             </label>
             <p className="bt-muted">Change the name to save these settings to a new strategy file, or leave the name as is to overwrite the existing one. You are allowed 5 saved strategies on your current tier.</p>
+            {saveDialogError && <div className="bt-error wb-save-dialog-error" role="alert">{saveDialogError}</div>}
             <div className="wb-code-dialog-actions">
-              <button type="button" className="wb-btn wb-guide" onClick={() => setShowSaveDialog(false)}>Cancel</button>
-              <button type="button" className="wb-btn wb-save" disabled={!saveName.trim()} onClick={submitSaveName}>Continue</button>
+              <button type="button" className="wb-btn wb-guide" disabled={savePending} onClick={() => setShowSaveDialog(false)}>Cancel</button>
+              <button type="submit" className="wb-btn wb-save" disabled={savePending || !saveName.trim()}>{savePending ? 'Saving…' : 'Continue'}</button>
             </div>
-          </div>
+          </form>
         )}
       </dialog>
 

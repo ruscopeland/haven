@@ -680,6 +680,17 @@
   white-space: pre;
 }
 .asst-error { margin: 0 12px 6px; }
+.asst-insert-notice {
+  margin: 0 12px 8px;
+  padding: 8px 10px;
+  border: 1px solid rgba(60, 210, 140, 0.35);
+  border-radius: 5px;
+  background: rgba(60, 210, 140, 0.08);
+  color: var(--text-primary);
+  font-size: 0.72rem;
+}
+
+.wb-save-dialog-error { margin: 0; }
 
 .asst-input-row {
   display: flex;

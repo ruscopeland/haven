@@ -2,16 +2,57 @@
 // Strategies and Token Finder pages. It talks ONLY to the server-side proxy
 // (POST /assistant/chat) so the DeepSeek key never reaches the browser; the
 // server scopes each turn (by `mode`) to helping author this page's JS. Code
-// blocks in a reply carry an "Insert into editor" button (same idea as
-// GuidePanel) that replaces the editor contents via the parent's onInsertCode.
+// blocks in a reply are inserted into the editor automatically and retain an
+// "Insert into editor" button so the user can re-apply an earlier reply.
 import { useState, useRef, useEffect } from 'react';
 
 const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:8000';
 
+const CODE_BLOCK_RE = /```[a-zA-Z0-9]*\n?([\s\S]*?)```/g;
+
+const NAME_CONCEPTS = [
+  [/\brsi\b/i, 'RSI'],
+  [/\bmacd\b/i, 'MACD'],
+  [/\bema\b/i, 'EMA'],
+  [/\bsma\b/i, 'SMA'],
+  [/bollinger/i, 'Bollinger'],
+  [/\batr\b/i, 'ATR'],
+  [/volum/i, 'Volume'],
+  [/momentum/i, 'Momentum'],
+  [/breakout|highest|new high/i, 'Breakout'],
+  [/trend/i, 'Trend'],
+  [/oversold|dip/i, 'Dip'],
+  [/reversion|mean/i, 'Reversion'],
+  [/volatil/i, 'Volatility'],
+];
+
+function firstCodeBlock(content) {
+  const match = new RegExp(CODE_BLOCK_RE.source).exec(content);
+  return match ? match[1].replace(/\n$/, '') : '';
+}
+
+function suggestedName(code, mode) {
+  const concepts = NAME_CONCEPTS
+    .filter(([pattern]) => pattern.test(code))
+    .map(([, name]) => name);
+  const uniqueConcepts = [...new Set(concepts)];
+  const lead = uniqueConcepts.length > 0
+    ? uniqueConcepts[Math.floor(Math.random() * uniqueConcepts.length)]
+    : (mode === 'finder' ? 'Token' : 'Market');
+  const secondChoices = uniqueConcepts.filter(concept => concept !== lead);
+  const second = secondChoices.length > 0 && Math.random() < 0.5
+    ? ` ${secondChoices[Math.floor(Math.random() * secondChoices.length)]}`
+    : '';
+  const endings = mode === 'finder'
+    ? ['Scout', 'Radar', 'Lens', 'Compass', 'Beacon']
+    : ['Pulse', 'Wave', 'Compass', 'Beacon', 'Signal'];
+  return `${lead}${second} ${endings[Math.floor(Math.random() * endings.length)]}`;
+}
+
 // Split a reply into text + ```fenced code``` segments so code can be inserted.
 function renderContent(content, onInsertCode) {
   const out = [];
-  const re = /```[a-zA-Z0-9]*\n?([\s\S]*?)```/g;
+  const re = new RegExp(CODE_BLOCK_RE.source, 'g');
   let last = 0, m, key = 0;
   while ((m = re.exec(content)) !== null) {
     if (m.index > last) {
@@ -21,7 +62,7 @@ function renderContent(content, onInsertCode) {
     out.push(
       <div className="asst-codeblock" key={key++}>
         {onInsertCode && (
-          <button className="guide-insert" onClick={() => onInsertCode(code)}>
+          <button type="button" className="guide-insert" onClick={() => onInsertCode(code)}>
             Insert into editor
           </button>
         )}
@@ -41,12 +82,20 @@ export default function AssistantPanel({ mode = 'strategy', code = '', onInsertC
   const [input, setInput] = useState('');
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
+  const [insertNotice, setInsertNotice] = useState('');
   const [collapsed, setCollapsed] = useState(false);
   const [showGuide, setShowGuide] = useState(false);
   const scrollRef = useRef(null);
   const guideDialogRef = useRef(null);
 
   const label = mode === 'finder' ? 'finder' : 'strategy';
+
+  const insertCode = (generatedCode) => {
+    if (!generatedCode || !onInsertCode) return;
+    const name = suggestedName(generatedCode, mode);
+    onInsertCode(generatedCode, name);
+    setInsertNotice(`Inserted into the editor as “${name}”. Press Save if you wish to keep it.`);
+  };
 
   useEffect(() => {
     if (scrollRef.current) scrollRef.current.scrollTop = scrollRef.current.scrollHeight;
@@ -75,7 +124,10 @@ export default function AssistantPanel({ mode = 'strategy', code = '', onInsertC
       });
       const data = await res.json().catch(() => ({}));
       if (!res.ok) throw new Error(data.detail || `Request failed (${res.status})`);
-      setMessages([...next, { role: 'assistant', content: data.reply || '(empty reply)' }]);
+      const reply = data.reply || '(empty reply)';
+      setMessages([...next, { role: 'assistant', content: reply }]);
+      const generatedCode = firstCodeBlock(reply);
+      if (generatedCode) insertCode(generatedCode);
     } catch (e) {
       setError(e.message || 'Request failed');
     } finally {
@@ -96,14 +148,14 @@ export default function AssistantPanel({ mode = 'strategy', code = '', onInsertC
         <span className="wb-title">🤖 AI assistant</span>
         <span className="asst-sub">Type in your idea, and it takes care of the coding for you. Read the guide to see what it can and can’t do.</span>
         <div className="asst-header-actions">
-          <button className="asst-mini-btn" onClick={() => setShowGuide(true)}>Guide</button>
+          <button type="button" className="asst-mini-btn" onClick={() => setShowGuide(true)}>Guide</button>
           {messages.length > 0 && (
-            <button className="asst-mini-btn" disabled={loading}
-                    onClick={() => { setMessages([]); setError(''); }}>
+            <button type="button" className="asst-mini-btn" disabled={loading}
+                    onClick={() => { setMessages([]); setError(''); setInsertNotice(''); }}>
               Clear
             </button>
           )}
-          <button className="asst-mini-btn" onClick={() => setCollapsed(c => !c)}>
+          <button type="button" className="asst-mini-btn" onClick={() => setCollapsed(c => !c)}>
             {collapsed ? 'Show' : 'Hide'}
           </button>
         </div>
@@ -117,7 +169,7 @@ export default function AssistantPanel({ mode = 'strategy', code = '', onInsertC
               <div key={i} className={`asst-msg asst-${msg.role}`}>
                 <div className="asst-role">{msg.role === 'user' ? 'You' : 'Assistant'}</div>
                 <div className="asst-body">
-                  {renderContent(msg.content, msg.role === 'assistant' ? onInsertCode : null)}
+                  {renderContent(msg.content, msg.role === 'assistant' ? insertCode : null)}
                 </div>
               </div>
             ))}
@@ -131,6 +183,7 @@ export default function AssistantPanel({ mode = 'strategy', code = '', onInsertC
           )}
 
           {error && <div className="bt-error asst-error">⚠ {error}</div>}
+          {insertNotice && <div className="asst-insert-notice" role="status">{insertNotice}</div>}
 
           <div className="asst-input-row">
             <textarea
@@ -142,7 +195,7 @@ export default function AssistantPanel({ mode = 'strategy', code = '', onInsertC
               onKeyDown={onKeyDown}
               disabled={loading}
             />
-            <button className="wb-btn wb-save asst-send"
+            <button type="button" className="wb-btn wb-save asst-send"
                     onClick={send} disabled={loading || !input.trim()}>
               {loading ? '…' : 'Send'}
             </button>
@@ -162,7 +215,7 @@ export default function AssistantPanel({ mode = 'strategy', code = '', onInsertC
         </header>
         <div className="asst-guide-body">
           <h3>What it can do</h3>
-          <p>Describe your idea, rules, or an error, and the assistant can help turn that into Haven {label} code, explain existing code, or suggest a revision. Review every proposed change before inserting it.</p>
+          <p>Describe your idea, rules, or an error, and the assistant can help turn that into Haven {label} code, explain existing code, or suggest a revision. When it replies with a complete script, Haven inserts it into the editor with a script-inspired name. Review it, then press Save if you want to keep it.</p>
           <h3>What it cannot do</h3>
           <p>It cannot give you a proven or automatically working strategy. You must develop the strategy idea, rules, risk choices, and judgment yourself. It does its best to interpret what you ask for, but it can misunderstand, make mistakes, or produce code that is unsuitable for your goal.</p>
           <h3>Your work and your responsibility</h3>
