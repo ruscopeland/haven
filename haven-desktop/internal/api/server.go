@@ -110,6 +110,8 @@ func (s *Server) registerRoutes() {
 	s.mux.HandleFunc("GET /market/prices", s.handleGetPrices)
 	s.mux.HandleFunc("GET /signals", s.handleGetSignals)
 	s.mux.HandleFunc("GET /chains", s.handleGetChains)
+	s.mux.HandleFunc("GET /public/ticker-universe", s.handlePublicTickerUniverse)
+	s.mux.HandleFunc("GET /public/ticker", s.handlePublicTicker)
 }
 
 // --- Health ---
@@ -657,6 +659,74 @@ func (s *Server) handleGetPrices(w http.ResponseWriter, r *http.Request) {
 		"source": "binance_alpha",
 		"prices": prices,
 	})
+}
+
+// --- Public ticker endpoints (for the landing/market ticker bar) ---
+
+func (s *Server) handlePublicTickerUniverse(w http.ResponseWriter, r *http.Request) {
+	if s.marketService == nil {
+		writeJSON(w, http.StatusOK, []interface{}{})
+		return
+	}
+	tokens := s.marketService.GetTokens()
+	sort.Slice(tokens, func(i, j int) bool {
+		return tokens[i].Volume24h > tokens[j].Volume24h
+	})
+	limit := 150
+	if l := r.URL.Query().Get("limit"); l != "" {
+		if n, _ := strconv.Atoi(l); n > 0 && n <= 300 {
+			limit = n
+		}
+	}
+	if len(tokens) > limit {
+		tokens = tokens[:limit]
+	}
+	out := make([]map[string]interface{}, len(tokens))
+	for i, t := range tokens {
+		out[i] = map[string]interface{}{
+			"symbol":           t.Symbol,
+			"name":             t.Name,
+			"display":          t.Symbol,
+			"display_symbol":   t.Symbol,
+			"last_price":       t.Price,
+			"price_change_24h": t.PriceChange24h,
+			"volume_24h":       t.Volume24h,
+			"chain":            "bsc",
+			"contract_address": t.ContractAddress,
+			"default_checked":  i < 10,
+		}
+	}
+	writeJSON(w, http.StatusOK, out)
+}
+
+func (s *Server) handlePublicTicker(w http.ResponseWriter, r *http.Request) {
+	symbols := r.URL.Query().Get("symbols")
+	if symbols == "" || s.marketService == nil {
+		writeJSON(w, http.StatusOK, []interface{}{})
+		return
+	}
+	syms := strings.Split(symbols, ",")
+	out := make([]map[string]interface{}, 0, len(syms))
+	for _, sym := range syms {
+		sym = strings.TrimSpace(sym)
+		for _, t := range s.marketService.GetTokens() {
+			if strings.EqualFold(t.Symbol, sym) {
+				out = append(out, map[string]interface{}{
+					"symbol":           t.Symbol,
+					"name":             t.Name,
+					"display":          t.Symbol,
+					"display_symbol":   t.Symbol,
+					"last_price":       t.Price,
+					"price_change_24h": t.PriceChange24h,
+					"volume_24h":       t.Volume24h,
+					"chain":            "bsc",
+					"contract_address": t.ContractAddress,
+				})
+				break
+			}
+		}
+	}
+	writeJSON(w, http.StatusOK, out)
 }
 
 // SignalResponse mirrors the old cloud API's /signals response format
