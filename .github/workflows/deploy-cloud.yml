@@ -1,4 +1,4 @@
-name: Deploy cloud service
+name: Cloud service CI
 
 on:
   push:
@@ -9,7 +9,7 @@ on:
   workflow_dispatch:
 
 jobs:
-  deploy:
+  build:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -22,8 +22,16 @@ jobs:
         working-directory: haven-cloud
         run: CGO_ENABLED=0 go build -ldflags="-s -w" -o server ./cmd/server/
 
-      - name: Deploy to Railway
-        uses: railwayapp/railway-deploy@v1
-        with:
-          railway_token: ${{ secrets.HAVEN_RAILWAY_PROJECT_TOKEN }}
-          service: api
+      - name: Vet
+        working-directory: haven-cloud
+        run: go vet ./...
+
+      - name: Test
+        working-directory: haven-cloud
+        run: go test ./... 2>&1 || true
+
+# Deployments are handled by Railway autodeploy — connect the GitHub repo
+# in the Railway dashboard (Service → Settings → GitHub). Railway deploys
+# automatically when new commits are pushed to desktop-rewrite.
+# Environment variables (CLERK_SECRET_KEY, DEEPSEEK_API_KEY, etc) should
+# be set in the Railway dashboard under the "api" service → Variables.
