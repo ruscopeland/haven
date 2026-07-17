@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useRef, useState, useMemo } from 'react';
 
 const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:8000';
 
@@ -45,25 +45,25 @@ export default function Screener({ onToggle, selectedTokens, signals = [], sortB
   });
 
   // Sort client-side so the display column and row order never mismatch.
-  // The server fetch provides the initial sort; client sort keeps it consistent
-  // when the user changes the dropdown before the refetch completes.
-  const sortedSignals = [...filteredSignals].sort((a, b) => {
-    switch (sortBy) {
-      case 'market_cap':
-        return (b.market_cap || 0) - (a.market_cap || 0);
-      case 'mcap_vol': {
-        const sa = Math.log10(Math.max(a.market_cap || 1, 1)) * (a.volume_24h || 0);
-        const sb = Math.log10(Math.max(b.market_cap || 1, 1)) * (b.volume_24h || 0);
-        return sb - sa;
+  const sortedSignals = useMemo(() => {
+    return [...filteredSignals].sort((a, b) => {
+      switch (sortBy) {
+        case 'market_cap':
+          return (b.market_cap || 0) - (a.market_cap || 0);
+        case 'mcap_vol': {
+          const sa = Math.log10(Math.max(a.market_cap || 1, 1)) * (a.volume_24h || 0);
+          const sb = Math.log10(Math.max(b.market_cap || 1, 1)) * (b.volume_24h || 0);
+          return sb - sa;
+        }
+        case 'vol_24h':
+          return (b.volume_24h || 0) - (a.volume_24h || 0);
+        case 'price_change_24h':
+          return (b.price_change_24h || 0) - (a.price_change_24h || 0);
+        default:
+          return (b.volume_24h || 0) - (a.volume_24h || 0);
       }
-      case 'vol_24h':
-        return (b.volume_24h || 0) - (a.volume_24h || 0);
-      case 'price_change_24h':
-        return (b.price_change_24h || 0) - (a.price_change_24h || 0);
-      default:
-        return (b.volume_24h || 0) - (a.volume_24h || 0);
-    }
-  });
+    });
+  }, [filteredSignals, sortBy]);
 
   // Debounced Binance Alpha + local typeahead (beyond client-side signal filter)
   useEffect(() => {

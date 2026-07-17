@@ -915,6 +915,18 @@ func (s *Server) handleGetUniverse(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
+	// If vol filter removed everything (tickers not loaded yet), use top tokens anyway
+	if len(selected) == 0 && minVol > 0 {
+		for _, t := range allTokens {
+			if t.AlphaID != "" {
+				selected = append(selected, t)
+				if len(selected) >= maxTokens {
+					break
+				}
+			}
+		}
+	}
+
 	if len(selected) == 0 {
 		writeJSON(w, http.StatusOK, map[string]interface{}{
 			"interval": interval, "times": []int64{}, "tokens": []interface{}{}, "source": "binance_alpha",
