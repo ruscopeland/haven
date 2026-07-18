@@ -117,6 +117,9 @@ function Dashboard() {
             <a href={DOWNLOAD_URL} className="btn-primary" style={{ textDecoration:'none', display:'inline-block', fontSize:14, padding:'8px 24px' }}>Download for Windows</a>
             <p style={{ marginTop:8, fontSize:11, color:'var(--text-muted)' }}>
               macOS coming soon · <a href="https://github.com/ruscopeland/haven/releases/download/v1.2.0-desktop/haven-desktop-v1.2.0-linux.tar.gz" style={{ color:'var(--text-muted)', textDecoration:'underline' }}>Download for Linux</a>
+              <span style={{ display:'block', marginTop:4, fontSize:10, color:'var(--text-muted)' }}>
+                tar -xzf haven-desktop-v1.2.0-linux.tar.gz &amp;&amp; chmod +x haven-desktop-v1.2.0-linux &amp;&amp; ./haven-desktop-v1.2.0-linux
+              </span>
             </p>
           </div>
           <div style={{ ...card, textAlign:'center', fontSize:11, color:'var(--text-muted)', maxWidth:240 }}>
