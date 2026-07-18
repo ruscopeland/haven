@@ -13,6 +13,7 @@ import HavenLogo from './components/HavenLogo'
 import LegalDocView from './components/LegalDoc'
 import LegalFooter from './components/LegalFooter'
 import UpgradeBanner from './components/UpgradeBanner'
+import WalletSetup from './components/WalletSetup'
 import { RISK_SUMMARY_SHORT } from './legal/content.js'
 
 const StrategyWorkbench = lazy(() => import('./components/StrategyWorkbench.jsx'));
@@ -376,6 +377,7 @@ function App() {
             onSelectToken={openTokenPage}
             onGoSettings={() => navigate('settings')}
             onGoStrategies={() => navigate('strategies')}
+            onGoWallet={() => navigate('wallet')}
           />
         ) : view === 'portfolio' ? (
           <PortfolioView
@@ -400,7 +402,9 @@ function App() {
             onEdit={openStrategyEditor}
           />
         ) : view === 'settings' ? (
-          <SettingsView onOpenLegal={openLegalPage} />
+          <SettingsView onOpenLegal={openLegalPage} onGoWallet={() => navigate('wallet')} />
+        ) : view === 'wallet' ? (
+          <WalletSetup onBack={() => navigate('settings')} onWalletReady={() => navigate('dashboard')} />
         ) : view === 'docs' ? (
           <LegalDocView
             docKey={legalDoc || 'docs'}

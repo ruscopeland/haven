@@ -116,7 +116,28 @@ export default function useWalletData() {
   const [natives, setNatives] = useState({});
   const [error, setError] = useState(null);
   const [loading, setLoading] = useState(false);
+  const [recovering, setRecovering] = useState(false);
   const decimalsCache = useRef({});
+
+  // On first mount, if localStorage has no address, try to recover it from
+  // the backend credential store (survives localStorage clear / WebView2 reset).
+  useEffect(() => {
+    if (getSavedAddress()) return; // already have an address
+    let alive = true;
+    (async () => {
+      try {
+        const r = await fetch(`${API_URL}/wallet/status`);
+        if (!r.ok) return;
+        const d = await r.json();
+        if (d.configured && d.address && alive) {
+          localStorage.setItem(ADDR_KEY, d.address);
+          setAddressState(d.address);
+        }
+      } catch { /* backend not ready yet — will retry next poll */ }
+      if (alive) setRecovering(false);
+    })();
+    return () => { alive = false; };
+  }, []);
 
   const setAddress = useCallback((a) => {
     const trimmed = (a || '').trim();
