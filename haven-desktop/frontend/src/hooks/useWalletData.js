@@ -15,9 +15,9 @@ import {
 const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:8000';
 const ADDR_KEY = 'alpha_wallet_address';
 const EXTRA_CONTRACTS_KEY = 'havenWalletExtraContracts'; // JSON: { bsc: ['0x…'], … }
-const SCAN_CHAINS = ['bsc', 'ethereum', 'base'];
+const SCAN_CHAINS = ['bsc', 'ethereum', 'base', 'arbitrum', 'polygon', 'optimism', 'avalanche'];
 
-const NATIVE_PRICE_SYMBOL = { bsc: 'BNB', ethereum: 'ETH', base: 'ETH' };
+const NATIVE_PRICE_SYMBOL = { bsc: 'BNB', ethereum: 'ETH', base: 'ETH', arbitrum: 'ETH', polygon: 'POL', optimism: 'ETH', avalanche: 'AVAX' };
 
 export function getSavedAddress() {
   // Multi-tenant rule: never default every account to a shared wallet.
@@ -53,9 +53,13 @@ function loadExtraContracts() {
 
 function normChain(c) {
   const s = String(c || 'bsc').toLowerCase();
-  if (s === '56') return 'bsc';
-  if (s === '1') return 'ethereum';
-  if (s === '8453') return 'base';
+  if (s === '56')    return 'bsc';
+  if (s === '1')     return 'ethereum';
+  if (s === '8453')  return 'base';
+  if (s === '42161') return 'arbitrum';
+  if (s === '137')   return 'polygon';
+  if (s === '10')    return 'optimism';
+  if (s === '43114') return 'avalanche';
   return s;
 }
 
@@ -159,7 +163,8 @@ export default function useWalletData() {
         ]);
         if (!alive) return;
 
-        const byChain = { bsc: new Map(), ethereum: new Map(), base: new Map() };
+        const byChain = {};
+        for (const c of SCAN_CHAINS) byChain[c] = new Map();
         const addRow = (t) => {
           if (!t || !/^0x[0-9a-fA-F]{40}$/.test(t.contract_address || '')) return;
           const chain = normChain(t.chain_id || 'bsc');

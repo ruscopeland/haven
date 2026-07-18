@@ -141,10 +141,6 @@ func (c *Client) FetchTokens(ctx context.Context) ([]TokenInfo, error) {
 	var tokens []TokenInfo
 	for _, row := range raw {
 		chainID, _ := row["chainId"].(string)
-		// Keep tokens from chains the frontend wallet scanner supports
-		if chainID != "56" && chainID != "1" && chainID != "8453" {
-			continue
-		}
 		addr, _ := row["contractAddress"].(string)
 		if addr == "" || len(addr) < 10 {
 			continue

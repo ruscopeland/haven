@@ -5,15 +5,23 @@ import { Interface, isAddress } from 'ethers';
 const MULTICALL3_ADDRESS = '0xcA11bde05977b3631167028862bE2a173976CA11';
 
 export const CHAIN_RPC = {
-  bsc: 'https://bsc-dataseed.binance.org/',
-  ethereum: 'https://ethereum.publicnode.com',
-  base: 'https://base.publicnode.com',
+  bsc:        'https://bsc-dataseed.binance.org/',
+  ethereum:   'https://ethereum.publicnode.com',
+  base:       'https://base.publicnode.com',
+  arbitrum:   'https://arb1.arbitrum.io/rpc',
+  polygon:    'https://polygon-rpc.com',
+  optimism:   'https://mainnet.optimism.io',
+  avalanche:  'https://api.avax.network/ext/bc/C/rpc',
 };
 
 export const CHAIN_NATIVE = {
-  bsc: { symbol: 'BNB', name: 'BNB', decimals: 18 },
-  ethereum: { symbol: 'ETH', name: 'Ether', decimals: 18 },
-  base: { symbol: 'ETH', name: 'Ether (Base)', decimals: 18 },
+  bsc:        { symbol: 'BNB',  name: 'BNB',                 decimals: 18 },
+  ethereum:   { symbol: 'ETH',  name: 'Ether',               decimals: 18 },
+  base:       { symbol: 'ETH',  name: 'Ether (Base)',         decimals: 18 },
+  arbitrum:   { symbol: 'ETH',  name: 'Ether (Arbitrum)',     decimals: 18 },
+  polygon:    { symbol: 'POL',  name: 'POL (Polygon)',         decimals: 18 },
+  optimism:   { symbol: 'ETH',  name: 'Ether (Optimism)',     decimals: 18 },
+  avalanche:  { symbol: 'AVAX', name: 'Avalanche',            decimals: 18 },
 };
 
 const multicallIface = new Interface([

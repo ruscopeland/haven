@@ -965,27 +965,13 @@ func (s *Server) handleGetSignals(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) handleGetChains(w http.ResponseWriter, r *http.Request) {
 	chains := []map[string]interface{}{
-		{
-			"id":            "bsc",
-			"chain_id":      "56",
-			"name":          "BNB Smart Chain",
-			"native_symbol": "BNB",
-			"rpc_url":       "https://bsc-dataseed.binance.org",
-		},
-		{
-			"id":            "ethereum",
-			"chain_id":      "1",
-			"name":          "Ethereum",
-			"native_symbol": "ETH",
-			"rpc_url":       "https://eth.llamarpc.com",
-		},
-		{
-			"id":            "base",
-			"chain_id":      "8453",
-			"name":          "Base",
-			"native_symbol": "ETH",
-			"rpc_url":       "https://mainnet.base.org",
-		},
+		{"id": "bsc",       "chain_id": "56",    "name": "BNB Smart Chain", "native_symbol": "BNB",  "rpc_url": "https://bsc-dataseed.binance.org"},
+		{"id": "ethereum",  "chain_id": "1",     "name": "Ethereum",        "native_symbol": "ETH",  "rpc_url": "https://eth.llamarpc.com"},
+		{"id": "base",      "chain_id": "8453",  "name": "Base",            "native_symbol": "ETH",  "rpc_url": "https://mainnet.base.org"},
+		{"id": "arbitrum",  "chain_id": "42161", "name": "Arbitrum One",    "native_symbol": "ETH",  "rpc_url": "https://arb1.arbitrum.io/rpc"},
+		{"id": "polygon",   "chain_id": "137",   "name": "Polygon PoS",     "native_symbol": "POL",  "rpc_url": "https://polygon-rpc.com"},
+		{"id": "optimism",  "chain_id": "10",    "name": "Optimism",        "native_symbol": "ETH",  "rpc_url": "https://mainnet.optimism.io"},
+		{"id": "avalanche", "chain_id": "43114", "name": "Avalanche C-Chain","native_symbol": "AVAX", "rpc_url": "https://api.avax.network/ext/bc/C/rpc"},
 	}
 	writeJSON(w, http.StatusOK, chains)
 }
@@ -995,10 +981,18 @@ func chainName(numericID string) string {
 	switch numericID {
 	case "1":
 		return "ethereum"
+	case "10":
+		return "optimism"
 	case "56":
 		return "bsc"
+	case "137":
+		return "polygon"
 	case "8453":
 		return "base"
+	case "42161":
+		return "arbitrum"
+	case "43114":
+		return "avalanche"
 	default:
 		return "bsc"
 	}
