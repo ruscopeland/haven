@@ -121,9 +121,14 @@ function Dashboard() {
             </p>
             <a href={DOWNLOAD_URL} className="btn-primary" style={{ textDecoration:'none', display:'inline-block', fontSize:14, padding:'8px 24px' }}>Download for Windows</a>
             <a href={LINUX_URL} className="btn-primary" style={{ textDecoration:'none', display:'inline-block', fontSize:14, padding:'8px 24px' }}>Download for Linux</a>
-            <div style={{ marginTop:10, background:'rgba(255,255,255,0.03)', border:'1px solid rgba(255,255,255,0.08)', borderRadius:8, padding:'8px 12px', fontSize:11, color:'var(--text-muted)', maxWidth:500, margin:'10px auto 0', textAlign:'left' }}>
-              <div style={{ color:'var(--text-bright)', marginBottom:4, fontWeight:600 }}>Linux: extract, make executable, then run</div>
-              <code style={{ background:'rgba(0,0,0,0.3)', padding:'3px 6px', borderRadius:4, fontSize:11, wordBreak:'break-all' }}>{LINUX_CMD}</code>
+            <div style={{ marginTop:12, background:'rgba(255,255,255,0.03)', border:'1px solid rgba(255,255,255,0.08)', borderRadius:8, padding:'12px 14px', fontSize:12, color:'var(--text-muted)', maxWidth:520, margin:'12px auto 0', textAlign:'left', lineHeight:1.8 }}>
+              <div style={{ color:'var(--text-bright)', marginBottom:8, fontWeight:600, fontSize:13 }}>After downloading, open a terminal:</div>
+              <div><span style={{ color:'var(--primary)' }}>1.</span> Go to your Downloads folder:<br/><code style={{ background:'rgba(0,0,0,0.3)', padding:'2px 6px', borderRadius:4, fontSize:11 }}>cd ~/Downloads</code></div>
+              <div style={{ marginTop:6 }}><span style={{ color:'var(--primary)' }}>2.</span> Copy and paste this command, then press Enter:</div>
+              <code style={{ display:'block', background:'rgba(0,0,0,0.4)', padding:'6px 10px', borderRadius:6, fontSize:11, marginTop:4, wordBreak:'break-all', color:'#c9d1d9' }}>{LINUX_CMD}</code>
+              <div style={{ marginTop:8, fontSize:11, color:'var(--text-muted)' }}>
+                To launch from anywhere: <code style={{ background:'rgba(0,0,0,0.3)', padding:'1px 5px', borderRadius:3 }}>sudo mv haven-desktop-v1.2.0-linux /usr/local/bin/haven && haven</code>
+              </div>
             </div>
           </div>
           <div style={{ ...card, textAlign:'center', fontSize:11, color:'var(--text-muted)', maxWidth:240 }}>
