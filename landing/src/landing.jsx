@@ -4,13 +4,9 @@ import { createRoot } from 'react-dom/client';
 import './index.css';
 import './haven-saas.css';
 import { RISK_SUMMARY_SHORT } from './legal/content.js';
+import heroVideo from './hero.mp4';
 
 const splashCSS = `
-  @keyframes haven-shake {
-    0%,100%{transform:translate(0,0)} 15%{transform:translate(-6px,3px)}
-    35%{transform:translate(5px,-4px)} 55%{transform:translate(-4px,5px)}
-    75%{transform:translate(7px,-2px)} 90%{transform:translate(-2px,-4px)}
-  }
   @keyframes haven-shrink { 0%{transform:scale(1);opacity:1} 100%{transform:scale(0);opacity:0} }
   @keyframes haven-grow { 0%{transform:scale(0);opacity:0} 100%{transform:scale(1);opacity:1} }
 `;
@@ -42,27 +38,22 @@ function SplashScreen({ onTrigger }) {
   const [phase, setPhase] = useState('idle');
   const trigger = useCallback(() => {
     if (phase !== 'idle') return;
-    setPhase('shaking');
-    setTimeout(() => setPhase('shrinking'), 500);
-    setTimeout(() => { setPhase('gone'); onTrigger(); }, 750);
+    setPhase('shrinking');
+    setTimeout(() => { setPhase('gone'); onTrigger(); }, 500);
   }, [phase, onTrigger]);
   if (phase === 'gone') return null;
   return (
-    <div onMouseMove={trigger} style={{ position:'fixed',inset:0,zIndex:9999,display:'flex',alignItems:'center',justifyContent:'center',background:'#0d1117' }}>
-      <svg width="min(55vw,55vh)" height="min(55vw,55vh)" viewBox="0 0 64 64" fill="none" xmlns="http://www.w3.org/2000/svg"
+    <div onClick={trigger} style={{ position:'fixed',inset:0,zIndex:9999,display:'flex',alignItems:'center',justifyContent:'center',background:'#0d1117', cursor:'pointer' }}>
+      <video autoPlay loop muted playsInline
         style={{
-          animation: phase==='shaking'?'haven-shake .5s ease-in-out':phase==='shrinking'?'haven-shrink .25s ease-in forwards':'none',
+          width: 'min(55vw,55vh)',
+          height: 'min(55vw,55vh)',
+          objectFit: 'contain',
+          animation: phase==='shrinking'?'haven-shrink .25s ease-in forwards':'none',
           transformOrigin:'center center',
         }}>
-        <defs>
-          <linearGradient id="hg" x1="8" y1="8" x2="56" y2="56" gradientUnits="userSpaceOnUse">
-            <stop stopColor="#67e8f9"/><stop offset=".45" stopColor="#a78bfa"/><stop offset="1" stopColor="#7c3aed"/>
-          </linearGradient>
-        </defs>
-        <path stroke="url(#hg)" strokeWidth="2.5" fill="rgba(13,20,38,0.85)" d="M32 4L56 18v28L32 60 8 46V18z"/>
-        <path fill="url(#hg)" d="M22 20h5.2v9.2h9.6V20H42v24h-5.2v-9.8h-9.6V44H22V20z"/>
-        <circle cx="32" cy="32" r="2.2" fill="#67e8f9"/>
-      </svg>
+        <source src={heroVideo} type="video/mp4" />
+      </video>
     </div>
   );
 }
