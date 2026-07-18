@@ -5,7 +5,26 @@ import { useAuth, SignIn, UserButton } from '@clerk/clerk-react'
 const API = 'http://localhost:8000'
 const RECHECK_MS = 4 * 60 * 60 * 1000 // 4 hours
 
-export default function App() {
+const trialEntitlement = {
+  app_access: true,
+  tier: 'trial',
+  max_strategies: 5,
+  max_finders: 2,
+  max_bots: 1,
+  universe_tokens: 200,
+  live_trading: true,
+  finder_enabled: true,
+  engine_access: true,
+  data_refresh_sec: 30,
+  llm_messages_per_window: 5,
+  llm_window_minutes: 15,
+}
+
+export default function App({ standalone }) {
+  // Standalone mode: no Clerk, just show dashboard with trial entitlement
+  if (standalone) {
+    return <Dashboard entitlement={trialEntitlement} standalone={true} />
+  }
   const { isSignedIn, isLoaded, getToken } = useAuth()
   const [entitlement, setEntitlement] = useState(null)
   const [status, setStatus] = useState('loading') // loading | active | locked
