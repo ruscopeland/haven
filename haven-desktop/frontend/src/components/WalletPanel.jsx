@@ -11,8 +11,8 @@ const RECENT_TRADE_MS = 14 * 24 * 60 * 60 * 1000; // "a couple of weeks"
 // Holdings scan the FULL Alpha token universe (see useWalletData.js), so
 // small leftover dust is common — hide it UNLESS the token was traded
 // recently, since the user is still actively watching that one.
-export default function WalletPanel({ wallet, prices, tokenMap, signals, pnlBySymbol, lastTradeBySymbol, onSelectToken }) {
-  const { address, setAddress, bnb, bnbPrice, tokens, error } = wallet;
+export default function WalletPanel({ wallet, prices, tokenMap, signals, pnlBySymbol, lastTradeBySymbol, onSelectToken, onGoWallet }) {
+  const { address, setAddress, tokens, error } = wallet;
   const [editing, setEditing] = useState(false);
   const [draft, setDraft] = useState(address);
 
@@ -39,8 +39,6 @@ export default function WalletPanel({ wallet, prices, tokenMap, signals, pnlBySy
     return { rows: visible, hiddenCount: all.length - visible.length };
   }, [tokens, prices, change24h, pnlBySymbol, tokenMap, lastTradeBySymbol]);
 
-  const bnbUsd = bnb != null && bnbPrice != null ? bnb * bnbPrice : null;
-
   return (
     <div className="dash-panel">
       <div style={{ display: 'flex', alignItems: 'baseline', gap: 12, flexWrap: 'wrap' }}>
@@ -57,7 +55,7 @@ export default function WalletPanel({ wallet, prices, tokenMap, signals, pnlBySy
               {address ? `${address.slice(0, 8)}…${address.slice(-6)}` : 'No address set'}
             </span>
             <button type="button" className="strat-edit-btn" style={{ fontSize: 11 }}
-              onClick={() => { setDraft(address); setEditing(true); }}>
+              onClick={() => onGoWallet ? onGoWallet() : setEditing(true)}>
               {address ? 'Change' : 'Add wallet'}
             </button>
           </span>
@@ -76,23 +74,29 @@ export default function WalletPanel({ wallet, prices, tokenMap, signals, pnlBySy
             <div style={{ textAlign: 'right' }}>P/L</div>
           </div>
 
-          {/* BNB — gas + quote currency, no token page for it */}
-          <div className="holding-row">
-            <div className="holding-info">
-              <div className="token-icon-placeholder" style={{ background: `linear-gradient(135deg, ${tokenColor(null, true)} 0%, #1e1e2d 100%)` }}>BNB</div>
-              <div style={{ minWidth: 0 }}>
-                <div className="h-symbol">BNB</div>
-                <div className="h-name">BNB Chain native coin</div>
+          {/* Native coins — gas + quote currency for each chain */}
+          {Object.entries(wallet.natives || {}).map(([chain, n]) => {
+            if (!n || n.qty == null) return null;
+            const usd = n.usd ?? (n.qty * (n.priceUsd ?? 0));
+            return (
+              <div key={chain} className="holding-row">
+                <div className="holding-info">
+                  <div className="token-icon-placeholder" style={{ background: `linear-gradient(135deg, ${tokenColor(null, true)} 0%, #1e1e2d 100%)` }}>{n.symbol}</div>
+                  <div style={{ minWidth: 0 }}>
+                    <div className="h-symbol">{n.symbol}</div>
+                    <div className="h-name">{n.name || `${chain} native coin`}</div>
+                  </div>
+                </div>
+                <div className="h-num">{n.priceUsd != null ? `$${fmtPrice(n.priceUsd)}` : '…'}</div>
+                <div className="h-sub">—</div>
+                <div>
+                  <div className="h-num">{fmtQty(n.qty)}</div>
+                  <div className="h-sub">{n.priceUsd != null ? fmtUsd(usd) : '…'}</div>
+                </div>
+                <div className="h-sub" style={{ textAlign: 'right' }}>—</div>
               </div>
-            </div>
-            <div className="h-num">{bnbPrice != null ? `$${fmtPrice(bnbPrice)}` : '…'}</div>
-            <div className="h-sub">—</div>
-            <div>
-              <div className="h-num">{bnb != null ? fmtQty(bnb) : '…'}</div>
-              <div className="h-sub">{bnbUsd != null ? fmtUsd(bnbUsd) : '…'}</div>
-            </div>
-            <div className="h-sub" style={{ textAlign: 'right' }}>—</div>
-          </div>
+            );
+          })}
 
           {rows.map(t => (
             <div key={t.symbol} className="holding-row clickable" title={`Open ${t.name || t.symbol} page`}

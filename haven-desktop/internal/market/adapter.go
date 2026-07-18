@@ -16,6 +16,7 @@ func (s *Service) GetTokens() []api.TokenEntry {
 			AlphaID:         t.AlphaID,
 			Symbol:          t.Symbol,
 			Name:            t.Name,
+			ChainID:         t.ChainID,
 			ContractAddress: t.ContractAddress,
 			Price:           t.Price,
 			PriceChange24h:  t.PriceChange24h,

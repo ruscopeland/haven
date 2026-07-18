@@ -48,6 +48,7 @@ type TokenEntry struct {
 	AlphaID         string  `json:"alpha_id"`
 	Symbol          string  `json:"symbol"`
 	Name            string  `json:"name"`
+	ChainID         string  `json:"chain_id"`
 	ContractAddress string  `json:"contract_address"`
 	Price           float64 `json:"price"`
 	PriceChange24h  float64 `json:"price_change_24h"`
@@ -676,7 +677,7 @@ func (s *Server) handleListTokens(w http.ResponseWriter, r *http.Request) {
 			Name:            t.Name,
 			DisplaySymbol:   t.Symbol,
 			ContractAddress: t.ContractAddress,
-			ChainID:         "bsc",
+			ChainID:         chainName(t.ChainID),
 			AlphaID:         t.AlphaID,
 			Status:          "active",
 			Price:           t.Price,
@@ -713,7 +714,7 @@ func (s *Server) handleGetToken(w http.ResponseWriter, r *http.Request) {
 				"name":             t.Name,
 				"display_symbol":   t.Symbol,
 				"contract_address": t.ContractAddress,
-				"chain_id":         "bsc",
+				"chain_id":         chainName(t.ChainID),
 				"alpha_id":         t.AlphaID,
 				"status":           "active",
 				"decimals":         18,
@@ -744,8 +745,8 @@ func (s *Server) handleTokenSearch(w http.ResponseWriter, r *http.Request) {
 				"name":             t.Name,
 				"display":          t.Symbol,
 				"contract_address": t.ContractAddress,
-				"chain":            "bsc",
-				"chain_id":         "56",
+				"chain":            chainName(t.ChainID),
+				"chain_id":         t.ChainID,
 				"alpha_id":         t.AlphaID,
 				"in_db":            true,
 				"price":            t.Price,
@@ -781,7 +782,7 @@ func (s *Server) handleTokenEnsure(w http.ResponseWriter, r *http.Request) {
 			if req.AlphaID != "" && strings.EqualFold(t.AlphaID, req.AlphaID) {
 				writeJSON(w, http.StatusOK, map[string]interface{}{
 					"symbol": t.Symbol, "name": t.Name, "display": t.Symbol,
-					"chain": "bsc", "contract_address": t.ContractAddress,
+					"chain": chainName(t.ChainID), "contract_address": t.ContractAddress,
 					"status": "active",
 				})
 				return
@@ -851,7 +852,7 @@ func (s *Server) handlePublicTickerUniverse(w http.ResponseWriter, r *http.Reque
 			"last_price":       t.Price,
 			"price_change_24h": t.PriceChange24h,
 			"volume_24h":       t.Volume24h,
-			"chain":            "bsc",
+			"chain":            chainName(t.ChainID),
 			"contract_address": t.ContractAddress,
 			"default_checked":  i < 10,
 		}
@@ -879,7 +880,7 @@ func (s *Server) handlePublicTicker(w http.ResponseWriter, r *http.Request) {
 					"last_price":       t.Price,
 					"price_change_24h": t.PriceChange24h,
 					"volume_24h":       t.Volume24h,
-					"chain":            "bsc",
+					"chain":            chainName(t.ChainID),
 					"contract_address": t.ContractAddress,
 				})
 				break
@@ -965,14 +966,42 @@ func (s *Server) handleGetSignals(w http.ResponseWriter, r *http.Request) {
 func (s *Server) handleGetChains(w http.ResponseWriter, r *http.Request) {
 	chains := []map[string]interface{}{
 		{
-			"id":       "bsc",
-			"chain_id": "56",
-			"name":     "BNB Smart Chain",
+			"id":            "bsc",
+			"chain_id":      "56",
+			"name":          "BNB Smart Chain",
 			"native_symbol": "BNB",
-			"rpc_url":  "https://bsc-dataseed.binance.org",
+			"rpc_url":       "https://bsc-dataseed.binance.org",
+		},
+		{
+			"id":            "ethereum",
+			"chain_id":      "1",
+			"name":          "Ethereum",
+			"native_symbol": "ETH",
+			"rpc_url":       "https://eth.llamarpc.com",
+		},
+		{
+			"id":            "base",
+			"chain_id":      "8453",
+			"name":          "Base",
+			"native_symbol": "ETH",
+			"rpc_url":       "https://mainnet.base.org",
 		},
 	}
 	writeJSON(w, http.StatusOK, chains)
+}
+
+// chainName maps Binance Alpha numeric chain IDs to the names the frontend uses.
+func chainName(numericID string) string {
+	switch numericID {
+	case "1":
+		return "ethereum"
+	case "56":
+		return "bsc"
+	case "8453":
+		return "base"
+	default:
+		return "bsc"
+	}
 }
 
 // handleGetKlines returns candles in the array-of-arrays format that
@@ -1146,7 +1175,7 @@ func (s *Server) handleGetUniverse(w http.ResponseWriter, r *http.Request) {
 		td := tokenData{
 			Symbol:         tok.Symbol,
 			Name:           tok.Name,
-			Chain:          "bsc",
+			Chain:          chainName(tok.ChainID),
 			Volume24h:      tok.Volume24h,
 			PriceChange24h: tok.PriceChange24h,
 			O:              make([]*float64, totalBars),
