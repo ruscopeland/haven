@@ -15,9 +15,21 @@ import {
 const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:8000';
 const ADDR_KEY = 'alpha_wallet_address';
 const EXTRA_CONTRACTS_KEY = 'havenWalletExtraContracts'; // JSON: { bsc: ['0x…'], … }
+const TOKENLIST_CACHE_KEY = 'havenTokenListCache';       // { [url]: { ts, tokens } }
+const TOKENLIST_CACHE_TTL = 24 * 60 * 60 * 1000;        // 24 hours
 const SCAN_CHAINS = ['bsc', 'ethereum', 'base', 'arbitrum', 'polygon', 'optimism', 'avalanche'];
 
 const NATIVE_PRICE_SYMBOL = { bsc: 'BNB', ethereum: 'ETH', base: 'ETH', arbitrum: 'ETH', polygon: 'POL', optimism: 'ETH', avalanche: 'AVAX' };
+
+// Official / community-maintained token lists per chain (standard tokenlists.org format).
+// Each list contains thousands of verified tokens. Fetched at scan time, cached 24h.
+const TOKEN_LIST_SOURCES = [
+  { url: 'https://tokens.uniswap.org',                                              chain: 'ethereum' },
+  { url: 'https://tokens.pancakeswap.finance/pancakeswap-extended.json',             chain: 'bsc' },
+  { url: 'https://unpkg.com/quickswap-default-token-list@latest/build/quickswap-default.tokenlist.json', chain: 'polygon' },
+  { url: 'https://static.optimism.io/optimism.tokenlist.json',                       chain: 'optimism' },
+  { url: 'https://raw.githubusercontent.com/traderjoe-xyz/joe-tokenlists/main/mc.tokenlist.json', chain: 'avalanche' },
+];
 
 export function getSavedAddress() {
   // Multi-tenant rule: never default every account to a shared wallet.
@@ -108,6 +120,64 @@ async function fetchTradeContracts() {
   }
 }
 
+// Fetches official token lists per chain (Uniswap, PancakeSwap, etc.).
+// These cover thousands of established tokens the Binance Alpha catalogue misses.
+// Results are cached in localStorage for 24 hours.
+async function fetchTokenLists() {
+  // Check cache
+  let cache = {};
+  try {
+    const raw = localStorage.getItem(TOKENLIST_CACHE_KEY);
+    if (raw) cache = JSON.parse(raw);
+  } catch { /* corrupt — refetch */ }
+
+  const allTokens = [];
+  const now = Date.now();
+
+  await Promise.all(TOKEN_LIST_SOURCES.map(async ({ url, chain }) => {
+    // Use cache if fresh
+    const entry = cache[url];
+    if (entry && entry.ts && (now - entry.ts) < TOKENLIST_CACHE_TTL && Array.isArray(entry.tokens)) {
+      allTokens.push(...entry.tokens);
+      return;
+    }
+
+    try {
+      const r = await fetch(url);
+      if (!r.ok) return;
+      const data = await r.json();
+      const list = data?.tokens;
+      if (!Array.isArray(list)) return;
+
+      const tokens = [];
+      for (const t of list) {
+        const addr = t?.address;
+        if (!addr || !/^0x[0-9a-fA-F]{40}$/.test(addr)) continue;
+        tokens.push({
+          contract_address: addr,
+          symbol: t.symbol || addr.slice(0, 10),
+          name: t.name || t.symbol || addr.slice(0, 10),
+          chain_id: chain, // already a name like "ethereum", "bsc"
+        });
+      }
+
+      // Cache the result
+      cache[url] = { ts: now, tokens };
+      allTokens.push(...tokens);
+    } catch {
+      // List fetch failed — use stale cache if available
+      if (entry && Array.isArray(entry.tokens)) {
+        allTokens.push(...entry.tokens);
+      }
+    }
+  }));
+
+  // Persist cache
+  try { localStorage.setItem(TOKENLIST_CACHE_KEY, JSON.stringify(cache)); } catch { /* quota exceeded */ }
+
+  return allTokens;
+}
+
 export default function useWalletData() {
   const [address, setAddressState] = useState(getSavedAddress);
   const [bnb, setBnb] = useState(null);
@@ -177,10 +247,11 @@ export default function useWalletData() {
         setBnb(nextNatives.bsc?.qty ?? null);
         setBnbPrice(nextNatives.bsc?.priceUsd ?? null);
 
-        // 2) Build contract catalog from API + trades + extras
-        const [apiTokens, tradeTokens] = await Promise.all([
+        // 2) Build contract catalog from Binance Alpha + token lists + trades + extras
+        const [apiTokens, tradeTokens, listTokens] = await Promise.all([
           fetchAllTokenRows(),
           fetchTradeContracts(),
+          fetchTokenLists(),
         ]);
         if (!alive) return;
 
@@ -202,6 +273,7 @@ export default function useWalletData() {
         };
         for (const t of apiTokens) addRow(t);
         for (const t of tradeTokens) addRow(t);
+        for (const t of listTokens) addRow(t);
 
         const extras = loadExtraContracts();
         for (const chain of SCAN_CHAINS) {
