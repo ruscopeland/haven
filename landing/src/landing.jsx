@@ -35,20 +35,17 @@ function Logo({ size }) {
 // ── Splash ────────────────────────────────────────────────────────────────
 
 function SplashScreen({ onTrigger }) {
-  const [phase, setPhase] = useState('idle');
-  const trigger = useCallback(() => {
-    if (phase !== 'idle') return;
+  const [phase, setPhase] = useState('playing');
+  const done = useCallback(() => {
     setPhase('shrinking');
     setTimeout(() => { setPhase('gone'); onTrigger(); }, 500);
-  }, [phase, onTrigger]);
+  }, [onTrigger]);
   if (phase === 'gone') return null;
   return (
-    <div onClick={trigger} style={{ position:'fixed',inset:0,zIndex:9999,display:'flex',alignItems:'center',justifyContent:'center',background:'#0d1117', cursor:'pointer' }}>
-      <video autoPlay loop muted playsInline
+    <div onClick={done} style={{ position:'fixed',inset:0,zIndex:9999,background:'#0d1117', cursor:'pointer' }}>
+      <video autoPlay muted playsInline onEnded={done}
         style={{
-          width: 'min(55vw,55vh)',
-          height: 'min(55vw,55vh)',
-          objectFit: 'contain',
+          width: '100vw', height: '100vh', objectFit: 'cover',
           animation: phase==='shrinking'?'haven-shrink .25s ease-in forwards':'none',
           transformOrigin:'center center',
         }}>
