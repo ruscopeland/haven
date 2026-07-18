@@ -19,8 +19,10 @@ import (
 	"strings"
 	"time"
 
+	"github.com/ethereum/go-ethereum/crypto"
 	"github.com/google/uuid"
 
+	"github.com/ruscopeland/haven-desktop/internal/credentials"
 	"github.com/ruscopeland/haven-desktop/internal/db"
 )
 
@@ -105,6 +107,11 @@ func (s *Server) registerRoutes() {
 	// Settings
 	s.mux.HandleFunc("GET /settings/{key}", s.handleGetSetting)
 	s.mux.HandleFunc("PUT /settings/{key}", s.handleSetSetting)
+
+	// Wallet
+	s.mux.HandleFunc("POST /wallet/setup", s.handleWalletSetup)
+	s.mux.HandleFunc("GET /wallet/status", s.handleWalletStatus)
+	s.mux.HandleFunc("DELETE /wallet", s.handleWalletForget)
 
 	// Subscription
 	s.mux.HandleFunc("GET /subscription/status", s.handleSubscriptionStatus)
@@ -386,6 +393,71 @@ func (s *Server) handleSetSetting(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]string{"status": "saved"})
+}
+
+// --- Wallet ---
+
+func (s *Server) handleWalletSetup(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		PrivateKey string `json:"private_key"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid JSON")
+		return
+	}
+	key := strings.TrimSpace(req.PrivateKey)
+	if key == "" {
+		writeError(w, http.StatusBadRequest, "private_key is required")
+		return
+	}
+	// Accept with or without 0x prefix
+	if !strings.HasPrefix(key, "0x") && len(key) == 64 {
+		key = "0x" + key
+	}
+	pk, err := crypto.HexToECDSA(strings.TrimPrefix(key, "0x"))
+	if err != nil {
+		writeError(w, http.StatusBadRequest, "invalid private key")
+		return
+	}
+	address := crypto.PubkeyToAddress(pk.PublicKey).Hex()
+	if err := credentials.Store(credentials.WalletKey, key); err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to store key: "+err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]string{
+		"status":  "saved",
+		"address": address,
+	})
+}
+
+func (s *Server) handleWalletStatus(w http.ResponseWriter, r *http.Request) {
+	key, err := credentials.Retrieve(credentials.WalletKey)
+	if err != nil || key == "" {
+		writeJSON(w, http.StatusOK, map[string]interface{}{
+			"configured": false,
+		})
+		return
+	}
+	pk, err := crypto.HexToECDSA(strings.TrimPrefix(key, "0x"))
+	if err != nil {
+		writeJSON(w, http.StatusOK, map[string]interface{}{
+			"configured": false,
+		})
+		return
+	}
+	address := crypto.PubkeyToAddress(pk.PublicKey).Hex()
+	writeJSON(w, http.StatusOK, map[string]interface{}{
+		"configured": true,
+		"address":    address,
+	})
+}
+
+func (s *Server) handleWalletForget(w http.ResponseWriter, r *http.Request) {
+	if err := credentials.Delete(credentials.WalletKey); err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to remove key: "+err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]string{"status": "removed"})
 }
 
 // --- Subscription ---

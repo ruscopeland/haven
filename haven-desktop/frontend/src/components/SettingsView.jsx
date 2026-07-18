@@ -2,6 +2,7 @@ import { useState, useEffect } from 'react';
 import '../dashboard.css';
 import SubscriptionPanel from './SubscriptionPanel.jsx';
 import EngineConnect from './EngineConnect.jsx';
+import WalletSetup from './WalletSetup.jsx';
 import { AlphaBadge } from './AlphaRisk.jsx';
 
 const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:8000';
@@ -103,6 +104,14 @@ export default function SettingsView({ onOpenLegal }) {
             </div>
           </div>
         )}
+      </section>
+
+      <section className="settings-section" id="settings-wallet">
+        <h2>Wallet</h2>
+        <p className="dash-muted" style={{ fontSize: 12, marginBottom: 12 }}>
+          Connect a BSC wallet to view your portfolio and enable live trading.
+        </p>
+        <WalletSetup />
       </section>
 
       <section className="settings-section" id="settings-engine">
