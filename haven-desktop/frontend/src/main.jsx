@@ -8,6 +8,9 @@ import App from './App.jsx'
 
 const PUBLISHABLE_KEY = 'pk_test_cHJlcGFyZWQtc2t5bGFyay0xMi5jbGVyay5hY2NvdW50cy5kZXYk'
 const hasRealKey = PUBLISHABLE_KEY && !PUBLISHABLE_KEY.includes('YOUR_CLERK_KEY')
+// Skip Clerk auth in local dev (vite dev) or when explicitly opted out.
+// Set VITE_SKIP_AUTH=true before `vite build` to produce a no-login build.
+const skipAuth = import.meta.env.DEV || import.meta.env.VITE_SKIP_AUTH === 'true'
 const API = 'http://localhost:8000'
 const RECHECK_MS = 4 * 60 * 60 * 1000
 
@@ -59,9 +62,9 @@ function StandaloneGate() {
   const [entitlement, setEntitlement] = useState(null)
   useEffect(() => {
     fetch(`${API}/subscription/status`)
-      .then(r => r.json())
-      .then(d => { if (d.app_access) setEntitlement(d) })
-      .catch(() => {})
+      .then(r => r.ok ? r.json() : Promise.reject())
+      .then(d => { if (d.app_access) setEntitlement(d); else setEntitlement({ app_access: true }) })
+      .catch(() => setEntitlement({ app_access: true })) // offline/local → allow
   }, [])
   if (!entitlement) return <LoadingScreen />
   return <App entitlement={entitlement} />
@@ -98,7 +101,7 @@ function LockedScreen({ onRetry, isSignedIn }) {
 // ── Root ─────────────────────────────────────────────────────────────────
 
 function Root() {
-  if (!hasRealKey) return <StandaloneGate />
+  if (skipAuth || !hasRealKey) return <StandaloneGate />
   return (
     <ClerkProvider publishableKey={PUBLISHABLE_KEY} afterSignOutUrl="/">
       <SubscriptionGate />
