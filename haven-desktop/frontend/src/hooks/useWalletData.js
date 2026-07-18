@@ -157,7 +157,8 @@ async function fetchTokenLists() {
           contract_address: addr,
           symbol: t.symbol || addr.slice(0, 10),
           name: t.name || t.symbol || addr.slice(0, 10),
-          chain_id: chain, // already a name like "ethereum", "bsc"
+          decimals: typeof t.decimals === 'number' ? t.decimals : 18,
+          chain_id: chain,
         });
       }
 
@@ -268,6 +269,7 @@ export default function useWalletData() {
               name: t.name || t.display_symbol || t.symbol || addr,
               contract_address: t.contract_address,
               chain_id: chain,
+              decimals: t.decimals,
             });
           }
         };
@@ -301,6 +303,13 @@ export default function useWalletData() {
               const bal = balances.get(t.contract_address.toLowerCase());
               return bal != null && bal > 0n;
             });
+            // Pre-populate decimals from token list data (avoids extra multicall)
+            for (const t of held) {
+              const addr = t.contract_address.toLowerCase();
+              if (t.decimals != null && decimalsCache.current[`${chain}:${addr}`] == null) {
+                decimalsCache.current[`${chain}:${addr}`] = t.decimals;
+              }
+            }
             const needDec = held
               .map(t => t.contract_address.toLowerCase())
               .filter(addr => decimalsCache.current[`${chain}:${addr}`] == null);
