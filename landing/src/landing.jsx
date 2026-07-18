@@ -16,6 +16,8 @@ const splashCSS = `
 `;
 
 const DOWNLOAD_URL = 'https://github.com/ruscopeland/haven/releases/download/v1.2.0-desktop/haven-desktop-v1.2.0.exe';
+const LINUX_URL = 'https://github.com/ruscopeland/haven/releases/download/v1.2.0-desktop/haven-desktop-v1.2.0-linux.tar.gz';
+const LINUX_CMD = 'tar -xzf haven-desktop-v1.2.0-linux.tar.gz && chmod +x haven-desktop-v1.2.0-linux && ./haven-desktop-v1.2.0-linux';
 
 // ── SVG logo reuse ────────────────────────────────────────────────────────
 
@@ -82,7 +84,10 @@ function Dashboard() {
       {/* NAV */}
       <div style={{ display:'flex', justifyContent:'space-between', alignItems:'center', padding:'8px 0', flexShrink:0 }}>
         <Logo size={24} />
-        <a href={DOWNLOAD_URL} style={{ background:'var(--primary-gradient)', color:'#fff', padding:'6px 14px', borderRadius:8, fontWeight:600, fontSize:13, textDecoration:'none' }}>Download for Windows</a>
+        <div style={{ display:'flex', gap:8 }}>
+          <a href={DOWNLOAD_URL} style={{ background:'var(--primary-gradient)', color:'#fff', padding:'6px 14px', borderRadius:8, fontWeight:600, fontSize:13, textDecoration:'none' }}>Windows</a>
+          <a href={LINUX_URL} style={{ background:'var(--primary-gradient)', color:'#fff', padding:'6px 14px', borderRadius:8, fontWeight:600, fontSize:13, textDecoration:'none' }}>Linux</a>
+        </div>
       </div>
 
       {/* HERO */}
@@ -115,12 +120,11 @@ function Dashboard() {
               <b>1.</b> Download &nbsp; <b>2.</b> Explore with free data &nbsp; <b>3.</b> Trade when ready
             </p>
             <a href={DOWNLOAD_URL} className="btn-primary" style={{ textDecoration:'none', display:'inline-block', fontSize:14, padding:'8px 24px' }}>Download for Windows</a>
-            <p style={{ marginTop:8, fontSize:11, color:'var(--text-muted)' }}>
-              macOS coming soon · <a href="https://github.com/ruscopeland/haven/releases/download/v1.2.0-desktop/haven-desktop-v1.2.0-linux.tar.gz" style={{ color:'var(--text-muted)', textDecoration:'underline' }}>Download for Linux</a>
-              <span style={{ display:'block', marginTop:4, fontSize:10, color:'var(--text-muted)' }}>
-                tar -xzf haven-desktop-v1.2.0-linux.tar.gz &amp;&amp; chmod +x haven-desktop-v1.2.0-linux &amp;&amp; ./haven-desktop-v1.2.0-linux
-              </span>
-            </p>
+            <a href={LINUX_URL} className="btn-primary" style={{ textDecoration:'none', display:'inline-block', fontSize:14, padding:'8px 24px' }}>Download for Linux</a>
+            <div style={{ marginTop:10, background:'rgba(255,255,255,0.03)', border:'1px solid rgba(255,255,255,0.08)', borderRadius:8, padding:'8px 12px', fontSize:11, color:'var(--text-muted)', maxWidth:500, margin:'10px auto 0', textAlign:'left' }}>
+              <div style={{ color:'var(--text-bright)', marginBottom:4, fontWeight:600 }}>Linux: extract, make executable, then run</div>
+              <code style={{ background:'rgba(0,0,0,0.3)', padding:'3px 6px', borderRadius:4, fontSize:11, wordBreak:'break-all' }}>{LINUX_CMD}</code>
+            </div>
           </div>
           <div style={{ ...card, textAlign:'center', fontSize:11, color:'var(--text-muted)', maxWidth:240 }}>
             <p style={{ margin:'0 0 4px', color:'var(--text-bright)', fontSize:12 }}>{'\u{1F6E1}'} Built to run locally</p>
