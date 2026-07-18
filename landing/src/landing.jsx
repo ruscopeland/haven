@@ -127,7 +127,7 @@ function Dashboard() {
         <div style={{ display:'flex', flexDirection:'column', gap:6 }}>
           <div style={{ fontSize:11, color:'var(--text-muted)', textTransform:'uppercase', letterSpacing:1, padding:'0 2px' }}>Pricing</div>
           {[
-            { name:'Starter', price:9, strategies:5, finders:2, bots:1, live:false },
+            { name:'Starter', price:9, strategies:5, finders:2, bots:1, live:true },
             { name:'Pro', price:29, strategies:20, finders:10, bots:5, live:true, featured:true },
             { name:'Advanced', price:79, strategies:100, finders:50, bots:20, live:true },
           ].map(p => (
