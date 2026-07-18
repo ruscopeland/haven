@@ -101,7 +101,17 @@ func (s *Service) FetchAndCacheCandles(ctx context.Context, symbol, interval str
 	// Check cache first
 	cached, err := s.store.GetCandles(symbol, interval, limit)
 	if err == nil && len(cached) >= limit {
-		return cached, nil
+		// Only use cache if the oldest candle is old enough — otherwise
+		// we might have 500 recent bars from polling but no real history.
+		intervalMs := s.intervalMs[interval]
+		if intervalMs > 0 {
+			expectedOldest := time.Now().UnixMilli() - int64(limit)*intervalMs
+			if len(cached) > 0 && cached[0].Time <= expectedOldest {
+				return cached, nil
+			}
+		} else {
+			return cached, nil
+		}
 	}
 
 	// Look up alphaId for this display symbol
