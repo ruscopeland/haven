@@ -410,11 +410,10 @@ func (s *Server) handleWalletSetup(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "private_key is required")
 		return
 	}
-	// Accept with or without 0x prefix
-	if !strings.HasPrefix(key, "0x") && len(key) == 64 {
-		key = "0x" + key
-	}
-	pk, err := crypto.HexToECDSA(strings.TrimPrefix(key, "0x"))
+	// Strip 0x or 0X prefix (case-insensitive)
+	key = strings.TrimPrefix(key, "0x")
+	key = strings.TrimPrefix(key, "0X")
+	pk, err := crypto.HexToECDSA(key)
 	if err != nil {
 		writeError(w, http.StatusBadRequest, "invalid private key")
 		return

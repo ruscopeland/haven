@@ -6,7 +6,7 @@ import { ethers } from 'ethers'
 
 const API = 'http://localhost:8000'
 
-export default function WalletSetup({ onWalletReady }) {
+export default function WalletSetup({ onWalletReady, onBack }) {
   const [mode, setMode] = useState(null) // null, 'create', 'import'
   const [status, setStatus] = useState(null) // null, 'checking', 'configured', 'none'
   const [address, setAddress] = useState('')
@@ -76,7 +76,10 @@ export default function WalletSetup({ onWalletReady }) {
       if (importType === 'seed') {
         wallet = ethers.Wallet.fromPhrase(importValue.trim())
       } else {
-        wallet = new ethers.Wallet(importValue.trim())
+        // Normalize 0X prefix to 0x so ethers accepts it
+        let key = importValue.trim()
+        if (key.startsWith('0X')) key = '0x' + key.slice(2)
+        wallet = new ethers.Wallet(key)
       }
       await saveKey(wallet.privateKey)
     } catch (e) {
@@ -99,7 +102,9 @@ export default function WalletSetup({ onWalletReady }) {
 
   if (status === 'configured') {
     return (
-      <div style={panel}>
+      <div style={page}>
+        {onBack && <button onClick={onBack} style={backBtn}>← Back</button>}
+        <div style={panel}>
         <h2 style={h2}>Wallet Connected</h2>
         <div style={addrBox}>
           <span style={{ color: '#8b949e', fontSize: 12 }}>Address</span>
@@ -109,6 +114,7 @@ export default function WalletSetup({ onWalletReady }) {
           Your wallet is ready. The Portfolio tab shows your tokens.
         </p>
         <button onClick={handleForget} style={dangerBtn}>Remove Wallet</button>
+        </div>
       </div>
     )
   }
@@ -117,7 +123,9 @@ export default function WalletSetup({ onWalletReady }) {
 
   if (!mode) {
     return (
-      <div style={panel}>
+      <div style={page}>
+        {onBack && <button onClick={onBack} style={backBtn}>← Settings</button>}
+        <div style={panel}>
         <h2 style={h2}>Wallet</h2>
         <p style={{ color: '#8b949e', fontSize: 13, marginBottom: 20 }}>
           Connect a wallet to view your portfolio and trade.
@@ -129,6 +137,7 @@ export default function WalletSetup({ onWalletReady }) {
         <p style={{ color: '#484f58', fontSize: 11, marginTop: 16 }}>
           Recommended: create a new trading wallet. Do not use your cold storage wallet.
         </p>
+        </div>
       </div>
     )
   }
@@ -138,7 +147,9 @@ export default function WalletSetup({ onWalletReady }) {
   if (mode === 'create' && step === 0) {
     const words = seed.split(' ')
     return (
-      <div style={panel}>
+      <div style={page}>
+        {onBack && <button onClick={onBack} style={backBtn}>← Settings</button>}
+        <div style={panel}>
         <h2 style={h2}>Your Recovery Phrase</h2>
         <div style={{ background: '#ffd33d22', border: '1px solid #ffd33d44', borderRadius: 8, padding: 12, marginBottom: 16 }}>
           <p style={{ color: '#ffd33d', fontSize: 12, margin: 0, fontWeight: 600 }}>
@@ -164,6 +175,7 @@ export default function WalletSetup({ onWalletReady }) {
           <button onClick={() => setMode(null)} style={secondaryBtn}>Back</button>
           <button onClick={() => setStep(1)} style={primaryBtn}>I've Written It Down</button>
         </div>
+        </div>
       </div>
     )
   }
@@ -172,7 +184,9 @@ export default function WalletSetup({ onWalletReady }) {
 
   if (mode === 'create' && step === 1) {
     return (
-      <div style={panel}>
+      <div style={page}>
+        {onBack && <button onClick={onBack} style={backBtn}>← Settings</button>}
+        <div style={panel}>
         <h2 style={h2}>Confirm Backup</h2>
         <p style={{ color: '#8b949e', fontSize: 13, marginBottom: 16 }}>
           Your recovery phrase has been shown. Make sure you have it written down.
@@ -188,6 +202,7 @@ export default function WalletSetup({ onWalletReady }) {
           </button>
         </div>
         {error && <p style={{ color: '#f85149', fontSize: 12, marginTop: 12 }}>{error}</p>}
+        </div>
       </div>
     )
   }
@@ -195,7 +210,9 @@ export default function WalletSetup({ onWalletReady }) {
   // ── Import wallet ──────────────────────────────────────────────────────
 
   return (
-    <div style={panel}>
+    <div style={page}>
+      {onBack && <button onClick={onBack} style={backBtn}>← Settings</button>}
+      <div style={panel}>
       <h2 style={h2}>Import Wallet</h2>
       <div style={{ display: 'flex', gap: 8, marginBottom: 16 }}>
         <button
@@ -236,11 +253,15 @@ export default function WalletSetup({ onWalletReady }) {
       <p style={{ color: '#484f58', fontSize: 11, marginTop: 16 }}>
         Your private key is encrypted and stored only on this computer using Windows credential encryption.
       </p>
+      </div>
     </div>
   )
 }
 
 // ── Styles ───────────────────────────────────────────────────────────────
+
+const page = { maxWidth: 620, margin: '20px auto', padding: '0 16px' }
+const backBtn = { background: 'transparent', color: '#58a6ff', border: 'none', cursor: 'pointer', fontSize: 13, padding: 0, marginBottom: 12 }
 
 const panel = {
   background: '#161b22',
