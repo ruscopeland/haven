@@ -34,8 +34,9 @@ export default function WalletPanel({ wallet, prices, tokenMap, signals, pnlBySy
         recentlyTraded: lastTradeAt != null && now - lastTradeAt < RECENT_TRADE_MS,
       };
     });
-    all.sort((a, b) => b.usd - a.usd);
-    const visible = all.filter(t => t.usd >= DUST_USD || t.recentlyTraded);
+    all.sort((a, b) => b.usd - a.usd || b.qty - a.qty);
+    // Show all non-zero holdings. Dust filter only applies when we have a price.
+    const visible = all.filter(t => t.qty > 0 && (t.usd >= DUST_USD || t.price === 0 || t.recentlyTraded));
     return { rows: visible, hiddenCount: all.length - visible.length };
   }, [tokens, prices, change24h, pnlBySymbol, tokenMap, lastTradeBySymbol]);
 
