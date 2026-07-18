@@ -5,6 +5,7 @@ package main
 import (
 	"context"
 	"embed"
+	"io/fs"
 	"log"
 	"log/slog"
 	"net/http"
@@ -25,7 +26,17 @@ import (
 var BuildHash = "dev"
 
 //go:embed all:frontend/dist
-var assets embed.FS
+var embeddedAssets embed.FS
+
+func init() {
+	var err error
+	assets, err = fs.Sub(embeddedAssets, "frontend/dist")
+	if err != nil {
+		panic("frontend/dist not found in embedded files: " + err.Error())
+	}
+}
+
+var assets fs.FS
 
 func main() {
 	logger := slog.New(slog.NewTextHandler(os.Stdout, &slog.HandlerOptions{Level: slog.LevelInfo}))
