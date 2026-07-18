@@ -2,7 +2,6 @@ import { useState, useEffect } from 'react';
 import '../dashboard.css';
 import SubscriptionPanel from './SubscriptionPanel.jsx';
 import EngineConnect from './EngineConnect.jsx';
-import WalletSetup from './WalletSetup.jsx';
 import { AlphaBadge } from './AlphaRisk.jsx';
 
 const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:8000';
@@ -18,7 +17,7 @@ const FIELDS = [
     help: 'Failed marker fires re-arm this many times, then the marker is disabled.' },
 ];
 
-export default function SettingsView({ onOpenLegal }) {
+export default function SettingsView({ onOpenLegal, onGoWallet }) {
   const [saved, setSaved] = useState(null);
   const [draft, setDraft] = useState({});
   const [msg, setMsg] = useState(null);
@@ -111,7 +110,10 @@ export default function SettingsView({ onOpenLegal }) {
         <p className="dash-muted" style={{ fontSize: 12, marginBottom: 12 }}>
           Connect a BSC wallet to view your portfolio and enable live trading.
         </p>
-        <WalletSetup />
+        <button className="btn-primary" style={{ padding: '10px 20px', fontSize: 14 }}
+          onClick={() => onGoWallet ? onGoWallet() : null}>
+          Set up wallet →
+        </button>
       </section>
 
       <section className="settings-section" id="settings-engine">

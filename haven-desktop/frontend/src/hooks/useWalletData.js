@@ -138,13 +138,15 @@ async function fetchTokenLists() {
     // Use cache if fresh
     const entry = cache[url];
     if (entry && entry.ts && (now - entry.ts) < TOKENLIST_CACHE_TTL && Array.isArray(entry.tokens)) {
+      console.log(`wallet: token list cache hit for ${chain} — ${entry.tokens.length} tokens`);
       allTokens.push(...entry.tokens);
       return;
     }
 
     try {
+      console.log(`wallet: fetching token list for ${chain} from ${url}`);
       const r = await fetch(url);
-      if (!r.ok) return;
+      if (!r.ok) { console.warn(`wallet: token list ${chain} HTTP ${r.status}`); return; }
       const data = await r.json();
       const list = data?.tokens;
       if (!Array.isArray(list)) return;
@@ -165,8 +167,9 @@ async function fetchTokenLists() {
       // Cache the result
       cache[url] = { ts: now, tokens };
       allTokens.push(...tokens);
-    } catch {
-      // List fetch failed — use stale cache if available
+      console.log(`wallet: token list ${chain} — ${tokens.length} tokens parsed`);
+    } catch (e) {
+      console.warn(`wallet: token list ${chain} fetch failed:`, e.message);
       if (entry && Array.isArray(entry.tokens)) {
         allTokens.push(...entry.tokens);
       }
@@ -256,6 +259,8 @@ export default function useWalletData() {
         ]);
         if (!alive) return;
 
+        console.log('wallet: tokens from API:', apiTokens.length, 'trade:', tradeTokens.length, 'lists:', listTokens.length);
+
         const byChain = {};
         for (const c of SCAN_CHAINS) byChain[c] = new Map();
         const addRow = (t) => {
@@ -276,6 +281,11 @@ export default function useWalletData() {
         for (const t of apiTokens) addRow(t);
         for (const t of tradeTokens) addRow(t);
         for (const t of listTokens) addRow(t);
+
+        // Log catalog sizes
+        for (const c of SCAN_CHAINS) {
+          console.log(`wallet: byChain[${c}] = ${byChain[c].size} contracts`);
+        }
 
         const extras = loadExtraContracts();
         for (const chain of SCAN_CHAINS) {
@@ -298,7 +308,9 @@ export default function useWalletData() {
             const list = [...(byChain[chain]?.values() || [])];
             if (!list.length) return;
             const contracts = list.map(t => t.contract_address);
+            console.log(`wallet: scanning ${chain} — ${contracts.length} contracts`);
             const balances = await multicallBalanceOf(address, contracts, chain);
+            console.log(`wallet: ${chain} — ${balances.size} non-zero balances found`);
             const held = list.filter(t => {
               const bal = balances.get(t.contract_address.toLowerCase());
               return bal != null && bal > 0n;
@@ -335,6 +347,7 @@ export default function useWalletData() {
         }));
 
         if (!alive) return;
+        console.log(`wallet: scan complete — ${allHeld.length} tokens held`);
         setTokens(allHeld);
         setError(null);
       } catch (e) {

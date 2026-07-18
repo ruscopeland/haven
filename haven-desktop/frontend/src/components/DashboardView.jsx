@@ -17,7 +17,7 @@ const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:8000';
 // duplicate traffic. Wallet balances come from the key-free C2 hook.
 export default function DashboardView({
   signals, onOpenStrategy, onOpenStrategyEditor, onOpenMarkerChart, onSelectToken,
-  onGoSettings, onGoStrategies,
+  onGoSettings, onGoStrategies, onGoWallet,
 }) {
   const [overview, setOverview] = useState(null);
   const [tokenMap, setTokenMap] = useState({});
@@ -93,7 +93,7 @@ export default function DashboardView({
           <StrategyStatusBoard prices={prices} tokenMap={tokenMap} onOpenStrategy={onOpenStrategy}
             onOpenEditor={onOpenStrategyEditor} />
           <WalletPanel wallet={wallet} prices={prices} tokenMap={tokenMap} signals={signals}
-            pnlBySymbol={pnlBySymbol} lastTradeBySymbol={lastTradeBySymbol} onSelectToken={onSelectToken} />
+            pnlBySymbol={pnlBySymbol} lastTradeBySymbol={lastTradeBySymbol} onSelectToken={onSelectToken} onGoWallet={onGoWallet} />
         </div>
         <div className="dash-col">
           <AssetAllocation wallet={wallet} prices={prices} tokenMap={tokenMap} pnlBySymbol={pnlBySymbol} />
