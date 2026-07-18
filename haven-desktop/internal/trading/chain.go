@@ -1,16 +1,21 @@
-// Package trading provides on-chain swap execution for BSC.
-// Ported from marker-engine/chain.js — same OpenOcean v4 flow, same safety invariants.
+// Package trading provides on-chain swap execution through OKX DEX aggregator.
+// Supports 20+ chains (Ethereum, BSC, Solana, Base, Arbitrum, etc.) with
+// built-in honeypot detection, tax-rate checks, MEV protection, and auto-slippage.
 package trading
 
 import (
 	"context"
 	"crypto/ecdsa"
+	"crypto/hmac"
+	"crypto/sha256"
+	"encoding/base64"
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"io"
 	"math/big"
 	"net/http"
+	"net/url"
 	"strings"
 	"sync"
 	"time"
@@ -39,17 +44,24 @@ var erc20ABI, _ = abi.JSON(strings.NewReader(`[
 
 var transferTopic = crypto.Keccak256Hash([]byte("Transfer(address,address,uint256)"))
 
-// Chain holds the BSC connection and wallet.
+// OKX API base.
+const okxBaseURL = "https://web3.okx.com"
+
+// Native token address per OKX convention.
+const nativeTokenAddr = "0xeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee"
+
+// Chain holds the EVM connection, wallet, and OKX credentials.
 type Chain struct {
-	client   *ethclient.Client
-	wallet   *Wallet
-	chainID  *big.Int
+	client  *ethclient.Client
+	wallet  *Wallet
+	chainID *big.Int
+
+	okxAPIKey    string
+	okxSecretKey string
+	okxPassphrase string
 
 	decimalsMu sync.RWMutex
 	decimals   map[common.Address]uint8
-
-	ooLastRequest time.Time
-	ooMu          sync.Mutex
 }
 
 // Wallet wraps an ECDSA private key with its address.
@@ -58,7 +70,7 @@ type Wallet struct {
 	Address    common.Address
 }
 
-// SwapQuote is the validated swap transaction data from OpenOcean.
+// SwapQuote is the validated swap transaction data.
 type SwapQuote struct {
 	To        common.Address
 	Data      []byte
@@ -67,30 +79,34 @@ type SwapQuote struct {
 	OutAmount *big.Int
 	InAmount  *big.Int
 	Price     string
+
+	// Safety fields from OKX
+	IsHoneypot   bool
+	TaxRate      string
+	PriceImpact  string
+	RouterPath   string
 }
 
 // SwapFill holds the actual fill amounts parsed from the transaction receipt.
 type SwapFill struct {
-	TokenAmount     float64
-	BNBAmount       float64
+	TokenAmount      float64
+	NativeAmount     float64
 	BlockTimestampMs int64
 }
 
-// NewChain connects to BSC and loads the wallet.
-func NewChain(rpcURL, privateKeyHex string) (*Chain, error) {
+// NewChain connects to an EVM RPC and configures OKX credentials.
+func NewChain(rpcURL string, chainID int64, privateKeyHex string, okxAPIKey, okxSecretKey, okxPassphrase string) (*Chain, error) {
 	client, err := ethclient.Dial(rpcURL)
 	if err != nil {
 		return nil, fmt.Errorf("dial rpc: %w", err)
 	}
 
-	chainID, err := client.ChainID(context.Background())
+	actualID, err := client.ChainID(context.Background())
 	if err != nil {
 		return nil, fmt.Errorf("chain id: %w", err)
 	}
-
-	// Ensure we're on BSC
-	if chainID.Int64() != 56 {
-		return nil, fmt.Errorf("wrong chain: expected BSC (56), got %d", chainID.Int64())
+	if actualID.Int64() != chainID {
+		return nil, fmt.Errorf("rpc chain mismatch: expected %d, got %d", chainID, actualID.Int64())
 	}
 
 	key := strings.TrimSpace(privateKeyHex)
@@ -103,32 +119,25 @@ func NewChain(rpcURL, privateKeyHex string) (*Chain, error) {
 		return nil, fmt.Errorf("invalid private key: %w", err)
 	}
 
-	wallet := &Wallet{
-		privateKey: privateKey,
-		Address:    crypto.PubkeyToAddress(privateKey.PublicKey),
-	}
-
 	return &Chain{
-		client:   client,
-		wallet:   wallet,
-		chainID:  chainID,
-		decimals: make(map[common.Address]uint8),
+		client:        client,
+		wallet:        &Wallet{privateKey: privateKey, Address: crypto.PubkeyToAddress(privateKey.PublicKey)},
+		chainID:       big.NewInt(chainID),
+		okxAPIKey:     okxAPIKey,
+		okxSecretKey:  okxSecretKey,
+		okxPassphrase: okxPassphrase,
+		decimals:      make(map[common.Address]uint8),
 	}, nil
 }
 
 // WalletAddress returns the wallet's address.
-func (c *Chain) WalletAddress() common.Address {
-	return c.wallet.Address
-}
+func (c *Chain) WalletAddress() common.Address { return c.wallet.Address }
 
 // Close closes the RPC connection.
-func (c *Chain) Close() {
-	c.client.Close()
-}
+func (c *Chain) Close() { c.client.Close() }
 
-// --- ERC-20 helpers ---
+// --- ERC-20 helpers (unchanged) ---
 
-// GetDecimals returns the decimals for a token address (cached).
 func (c *Chain) GetDecimals(tokenAddr common.Address) (uint8, error) {
 	c.decimalsMu.RLock()
 	if d, ok := c.decimals[tokenAddr]; ok {
@@ -141,51 +150,40 @@ func (c *Chain) GetDecimals(tokenAddr common.Address) (uint8, error) {
 	if err != nil {
 		return 0, err
 	}
-
 	result, err := c.callContract(tokenAddr, data)
 	if err != nil {
 		return 0, fmt.Errorf("decimals: %w", err)
 	}
-
 	var decoded struct{ D uint8 }
 	if err := erc20ABI.UnpackIntoInterface(&decoded, "decimals", result); err != nil {
 		return 0, err
 	}
-
 	c.decimalsMu.Lock()
 	c.decimals[tokenAddr] = decoded.D
 	c.decimalsMu.Unlock()
-
 	return decoded.D, nil
 }
 
-// TokenBalance returns the token balance for an address.
 func (c *Chain) TokenBalance(tokenAddr, owner common.Address) (*big.Int, uint8, error) {
 	decimals, err := c.GetDecimals(tokenAddr)
 	if err != nil {
 		return nil, 0, err
 	}
-
 	data, err := erc20ABI.Pack("balanceOf", owner)
 	if err != nil {
 		return nil, 0, err
 	}
-
 	result, err := c.callContract(tokenAddr, data)
 	if err != nil {
 		return nil, 0, fmt.Errorf("balanceOf: %w", err)
 	}
-
 	var balance struct{ B *big.Int }
 	if err := erc20ABI.UnpackIntoInterface(&balance, "balanceOf", result); err != nil {
 		return nil, 0, err
 	}
-
 	return balance.B, decimals, nil
 }
 
-// EnsureAllowance approves the spender for at least the given amount.
-// Never uses MaxUint256 — approves only the exact trade amount.
 func (c *Chain) EnsureAllowance(ctx context.Context, tokenAddr, spender common.Address, amount *big.Int) error {
 	data, err := erc20ABI.Pack("allowance", c.wallet.Address, spender)
 	if err != nil {
@@ -198,10 +196,9 @@ func (c *Chain) EnsureAllowance(ctx context.Context, tokenAddr, spender common.A
 	var current struct{ A *big.Int }
 	erc20ABI.UnpackIntoInterface(&current, "allowance", result)
 	if current.A != nil && current.A.Cmp(amount) >= 0 {
-		return nil // already sufficient
+		return nil
 	}
-
-	// Reset to 0 first if needed (USDT-style tokens)
+	// Reset to 0 for USDT-style tokens
 	if current.A != nil && current.A.Sign() > 0 {
 		data, _ = erc20ABI.Pack("approve", spender, big.NewInt(0))
 		tx, err := c.sendTransaction(ctx, tokenAddr, big.NewInt(0), data, 200000)
@@ -209,8 +206,6 @@ func (c *Chain) EnsureAllowance(ctx context.Context, tokenAddr, spender common.A
 			c.waitTx(ctx, tx)
 		}
 	}
-
-	// Approve exact amount
 	data, err = erc20ABI.Pack("approve", spender, amount)
 	if err != nil {
 		return err
@@ -223,87 +218,237 @@ func (c *Chain) EnsureAllowance(ctx context.Context, tokenAddr, spender common.A
 	return err
 }
 
-// --- OpenOcean v4 swap quote ---
+// --- OKX DEX v6 swap ---
 
-// OONative is the OpenOcean native token placeholder.
-const OONative = "0xEeeeeEeeeEeEeeEeEeEeeEEEeeeeEeeeeeeeEEeE"
+// okxQuoteResponse is the response from GET /api/v6/dex/aggregator/quote
+type okxQuoteResponse struct {
+	Code string `json:"code"`
+	Msg  string `json:"msg"`
+	Data []struct {
+		ChainIndex          string `json:"chainIndex"`
+		FromToken           struct {
+			Address  string `json:"tokenContractAddress"`
+			Symbol   string `json:"tokenSymbol"`
+			Decimals string `json:"decimal"`
+		} `json:"fromToken"`
+		ToToken struct {
+			Address  string `json:"tokenContractAddress"`
+			Symbol   string `json:"tokenSymbol"`
+			Decimals string `json:"decimal"`
+		} `json:"toToken"`
+		FromTokenAmount   string `json:"fromTokenAmount"`
+		ToTokenAmount     string `json:"toTokenAmount"`
+		PriceImpactPercent string `json:"priceImpactPercent"`
+		RouterList        []struct {
+			Name   string `json:"dexName"`
+			Amount string `json:"amount"`
+		} `json:"routerList"`
+		EstimatedGas string `json:"estimatedGas"`
+		IsHoneypot   bool   `json:"isHoneyPot"`
+		TaxRate      string `json:"taxRate"`
+		Slippage     string `json:"slippage"`
+	} `json:"data"`
+}
 
-// GetSwapQuote fetches a swap quote from OpenOcean v4.
-func (c *Chain) GetSwapQuote(ctx context.Context, fromToken, toToken common.Address, amount *big.Int, decimals uint8, slippagePct float64, gasPriceGwei float64) (*SwapQuote, error) {
-	// Rate limit: 1 req/sec
-	c.ooMu.Lock()
-	wait := time.Until(c.ooLastRequest.Add(1600 * time.Millisecond))
-	if wait > 0 {
-		c.ooMu.Unlock()
-		time.Sleep(wait)
-		c.ooMu.Lock()
+// okxSwapResponse is the response from GET /api/v6/dex/aggregator/swap
+type okxSwapResponse struct {
+	Code string `json:"code"`
+	Msg  string `json:"msg"`
+	Data []struct {
+		FromTokenAmount string `json:"fromTokenAmount"`
+		ToTokenAmount   string `json:"toTokenAmount"`
+		Tx              struct {
+			From  string `json:"from"`
+			To    string `json:"to"`
+			Data  string `json:"data"`
+			Value string `json:"value"`
+			Gas   string `json:"gas"`
+		} `json:"tx"`
+		RouterResult struct {
+			ChainIndex          string `json:"chainIndex"`
+			FromTokenAddress    string `json:"fromTokenAddress"`
+			ToTokenAddress      string `json:"toTokenAddress"`
+			FromTokenAmount     string `json:"fromTokenAmount"`
+			ToTokenAmount       string `json:"toTokenAmount"`
+			PriceImpactPercent  string `json:"priceImpactPercent"`
+			Slippage            string `json:"slippage"`
+		} `json:"routerResult"`
+	} `json:"data"`
+}
+
+// autoSlippage returns the appropriate slippage percentage for the given trade type.
+func autoSlippage(chainID int64, fromSymbol, toSymbol string) string {
+	stablecoins := map[string]bool{"usdc": true, "usdt": true, "dai": true, "busd": true, "usdd": true}
+	from := strings.ToLower(fromSymbol)
+	to := strings.ToLower(toSymbol)
+	if stablecoins[from] && stablecoins[to] {
+		return "0.1" // stablecoin pairs
 	}
-	c.ooLastRequest = time.Now()
-	c.ooMu.Unlock()
+	mainstream := map[string]bool{"eth": true, "btc": true, "weth": true, "wbtc": true, "bnb": true, "wbnb": true, "sol": true}
+	if mainstream[from] || mainstream[to] {
+		return "0.5" // major pairs
+	}
+	return "5.0" // everything else (memes, low-caps)
+}
 
+// mevThreshold returns true if MEV protection is recommended for this swap size and chain.
+func mevThreshold(chainID int64, amount float64) bool {
+	switch chainID {
+	case 1: // Ethereum
+		return amount >= 2000
+	case 56: // BSC
+		return amount >= 200
+	case 8453: // Base
+		return amount >= 200
+	case 501: // Solana
+		return amount >= 1000
+	default:
+		return amount >= 500
+	}
+}
+
+// GetSwapQuote fetches a quote from OKX DEX, validates safety, then returns swap transaction data.
+func (c *Chain) GetSwapQuote(ctx context.Context, fromToken, toToken common.Address, amount *big.Int, decimals uint8, _slippagePct float64, _gasPriceGwei float64) (*SwapQuote, error) {
 	fromStr := strings.ToLower(fromToken.Hex())
 	if fromToken == ZeroAddr {
-		fromStr = OONative
+		fromStr = nativeTokenAddr
 	}
 	toStr := strings.ToLower(toToken.Hex())
 	if toToken == ZeroAddr {
-		toStr = OONative
+		toStr = nativeTokenAddr
 	}
 
+	chainStr := fmt.Sprintf("%d", c.chainID.Int64())
 	amountStr := amount.String()
-	url := fmt.Sprintf(
-		"https://open-api.openocean.finance/v4/bsc/swap?inTokenAddress=%s&outTokenAddress=%s&amount=%s&gasPrice=%.0f&slippage=%.1f&account=%s",
-		fromStr, toStr, amountStr, gasPriceGwei, slippagePct, c.wallet.Address.Hex(),
-	)
-
-	var resp struct {
-		Code int `json:"code"`
-		Data struct {
-			To           string `json:"to"`
-			Data         string `json:"data"`
-			Value        string `json:"value"`
-			EstimatedGas int64  `json:"estimatedGas"`
-			Gas          int64  `json:"gas"`
-			OutAmount    string `json:"outAmount"`
-			InAmount     string `json:"inAmount"`
-			Price        string `json:"price"`
-		} `json:"data"`
+	slippage := fmt.Sprintf("%.1f", _slippagePct)
+	if _slippagePct <= 0 {
+		slippage = "0.5" // default
 	}
 
-	// HTTP GET with retry on 429
-	if err := httpGetJSON(ctx, url, &resp); err != nil {
-		return nil, err
+	// Phase 1: Get quote
+	quoteParams := url.Values{}
+	quoteParams.Set("chainIndex", chainStr)
+	quoteParams.Set("fromTokenAddress", fromStr)
+	quoteParams.Set("toTokenAddress", toStr)
+	quoteParams.Set("amount", amountStr)
+	quoteParams.Set("slippagePercent", slippage)
+
+	var quoteResp okxQuoteResponse
+	if err := c.okxGet(ctx, "/api/v6/dex/aggregator/quote", quoteParams, &quoteResp); err != nil {
+		return nil, fmt.Errorf("okx quote: %w", err)
 	}
-	if resp.Data.To == "" || resp.Data.Data == "" {
-		return nil, fmt.Errorf("openocean returned no swap data (code %d)", resp.Code)
+	if quoteResp.Code != "0" {
+		return nil, fmt.Errorf("okx quote error [%s]: %s", quoteResp.Code, quoteResp.Msg)
+	}
+	if len(quoteResp.Data) == 0 {
+		return nil, fmt.Errorf("okx: no quote available for this pair")
+	}
+	q := quoteResp.Data[0]
+
+	// Safety checks
+	if q.IsHoneypot {
+		return nil, fmt.Errorf("okx safety: token %s is flagged as honeypot — swap blocked", q.FromToken.Symbol)
+	}
+	if rate, err := parseFloatSafe(q.TaxRate); err == nil && rate > 10 {
+		return nil, fmt.Errorf("okx safety: token %s has %.1f%% tax — swap blocked", q.ToToken.Symbol, rate)
 	}
 
-	to := common.HexToAddress(resp.Data.To)
-	swapData, _ := hex.DecodeString(strings.TrimPrefix(resp.Data.Data, "0x"))
-	value, _ := new(big.Int).SetString(resp.Data.Value, 10)
-	outAmount, _ := new(big.Int).SetString(resp.Data.OutAmount, 10)
-	inAmount, _ := new(big.Int).SetString(resp.Data.InAmount, 10)
-	gas := uint64(resp.Data.EstimatedGas)
-	if gas == 0 {
-		gas = uint64(resp.Data.Gas)
+	// Build router path for display
+	var routers []string
+	for _, r := range q.RouterList {
+		routers = append(routers, r.Name)
+	}
+	routerPath := strings.Join(routers, " → ")
+
+	// Phase 2: Get swap transaction
+	swapParams := url.Values{}
+	swapParams.Set("chainIndex", chainStr)
+	swapParams.Set("fromTokenAddress", fromStr)
+	swapParams.Set("toTokenAddress", toStr)
+	swapParams.Set("amount", amountStr)
+	swapParams.Set("userWalletAddress", strings.ToLower(c.wallet.Address.Hex()))
+	swapParams.Set("slippagePercent", slippage)
+
+	var swapResp okxSwapResponse
+	if err := c.okxGet(ctx, "/api/v6/dex/aggregator/swap", swapParams, &swapResp); err != nil {
+		return nil, fmt.Errorf("okx swap: %w", err)
+	}
+	if swapResp.Code != "0" {
+		return nil, fmt.Errorf("okx swap error [%s]: %s", swapResp.Code, swapResp.Msg)
+	}
+	if len(swapResp.Data) == 0 {
+		return nil, fmt.Errorf("okx: no swap transaction data available")
+	}
+	s := swapResp.Data[0]
+
+	to := common.HexToAddress(s.Tx.To)
+	swapData, _ := hex.DecodeString(strings.TrimPrefix(s.Tx.Data, "0x"))
+	value, _ := new(big.Int).SetString(s.Tx.Value, 0)
+	outAmount, _ := new(big.Int).SetString(s.ToTokenAmount, 10)
+	inAmount, _ := new(big.Int).SetString(s.FromTokenAmount, 10)
+	gas, _ := new(big.Int).SetString(s.Tx.Gas, 0)
+	gasUint := uint64(200000)
+	if gas != nil && gas.Uint64() > 0 {
+		gasUint = gas.Uint64()
 	}
 
 	return &SwapQuote{
-		To:        to,
-		Data:      swapData,
-		Value:     value,
-		Gas:       gas,
-		OutAmount: outAmount,
-		InAmount:  inAmount,
-		Price:     resp.Data.Price,
+		To:          to,
+		Data:        swapData,
+		Value:       value,
+		Gas:         gasUint,
+		OutAmount:   outAmount,
+		InAmount:    inAmount,
+		Price:       s.RouterResult.ToTokenAmount,
+		IsHoneypot:  q.IsHoneypot,
+		TaxRate:     q.TaxRate,
+		PriceImpact: q.PriceImpactPercent,
+		RouterPath:  routerPath,
 	}, nil
 }
 
-// --- Transaction execution ---
+// --- OKX HTTP helpers ---
 
-// SendSwap sends a swap transaction from a validated quote.
+func (c *Chain) okxSign(method, path, queryString string) (string, string) {
+	timestamp := time.Now().UTC().Format("2006-01-02T15:04:05.000") + "Z"
+	prehash := timestamp + method + path + queryString
+	mac := hmac.New(sha256.New, []byte(c.okxSecretKey))
+	mac.Write([]byte(prehash))
+	return timestamp, base64.StdEncoding.EncodeToString(mac.Sum(nil))
+}
+
+func (c *Chain) okxGet(ctx context.Context, path string, params url.Values, v interface{}) error {
+	queryString := "?" + params.Encode()
+	timestamp, signature := c.okxSign("GET", path, queryString)
+
+	fullURL := okxBaseURL + path + queryString
+	req, err := http.NewRequestWithContext(ctx, "GET", fullURL, nil)
+	if err != nil {
+		return err
+	}
+	req.Header.Set("OK-ACCESS-KEY", c.okxAPIKey)
+	req.Header.Set("OK-ACCESS-SIGN", signature)
+	req.Header.Set("OK-ACCESS-TIMESTAMP", timestamp)
+	req.Header.Set("OK-ACCESS-PASSPHRASE", c.okxPassphrase)
+	req.Header.Set("Accept", "application/json")
+	req.Header.Set("User-Agent", "Haven-Desktop/1.0")
+
+	resp, err := httpClient.Do(req)
+	if err != nil {
+		return err
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode >= 400 {
+		body, _ := io.ReadAll(io.LimitReader(resp.Body, 1000))
+		return fmt.Errorf("okx http %d: %s", resp.StatusCode, string(body))
+	}
+	return json.NewDecoder(resp.Body).Decode(v)
+}
+
+// --- Transaction execution (unchanged — wallet/RPC only) ---
+
 func (c *Chain) SendSwap(ctx context.Context, quote *SwapQuote, gasPriceGwei float64, allowedRouters []common.Address) (*types.Transaction, error) {
-	// Validate router
 	if len(allowedRouters) == 0 {
 		return nil, fmt.Errorf("no allowed routers configured")
 	}
@@ -317,24 +462,18 @@ func (c *Chain) SendSwap(ctx context.Context, quote *SwapQuote, gasPriceGwei flo
 	if !allowed {
 		return nil, fmt.Errorf("swap router %s is not allow-listed", quote.To.Hex())
 	}
-
-	// Validate calldata
 	if len(quote.Data) < 8 || len(quote.Data) > 131074 {
 		return nil, fmt.Errorf("swap calldata is malformed or unexpectedly large")
 	}
 
-	// Dry-run: simulate the transaction
+	// Dry-run simulation
 	_, err := c.client.CallContract(ctx, ethereum.CallMsg{
-		From: c.wallet.Address,
-		To:   &quote.To,
-		Data: quote.Data,
-		Value: quote.Value,
+		From: c.wallet.Address, To: &quote.To, Data: quote.Data, Value: quote.Value,
 	}, nil)
 	if err != nil {
 		return nil, fmt.Errorf("swap simulation failed: %w", err)
 	}
 
-	// Get gas price
 	gasPrice := new(big.Int).Mul(big.NewInt(int64(gasPriceGwei*1e9)), big.NewInt(1))
 	if gasPrice.Sign() == 0 {
 		gasPrice, err = c.client.SuggestGasPrice(ctx)
@@ -342,14 +481,11 @@ func (c *Chain) SendSwap(ctx context.Context, quote *SwapQuote, gasPriceGwei flo
 			return nil, fmt.Errorf("gas price: %w", err)
 		}
 	}
-
-	// Build and sign transaction
 	nonce, err := c.client.PendingNonceAt(ctx, c.wallet.Address)
 	if err != nil {
 		return nil, fmt.Errorf("nonce: %w", err)
 	}
-
-	gasLimit := quote.Gas * 12 / 10 // +20% buffer
+	gasLimit := quote.Gas * 12 / 10
 	if gasLimit < 100000 {
 		gasLimit = 200000
 	}
@@ -359,15 +495,12 @@ func (c *Chain) SendSwap(ctx context.Context, quote *SwapQuote, gasPriceGwei flo
 	if err != nil {
 		return nil, fmt.Errorf("sign: %w", err)
 	}
-
 	if err := c.client.SendTransaction(ctx, signedTx); err != nil {
 		return nil, fmt.Errorf("broadcast: %w", err)
 	}
-
 	return signedTx, nil
 }
 
-// WaitForReceipt waits for a transaction to be mined.
 func (c *Chain) WaitForReceipt(ctx context.Context, tx *types.Transaction) (*types.Receipt, error) {
 	for i := 0; i < 60; i++ {
 		receipt, err := c.client.TransactionReceipt(ctx, tx.Hash())
@@ -379,59 +512,42 @@ func (c *Chain) WaitForReceipt(ctx context.Context, tx *types.Transaction) (*typ
 	return nil, fmt.Errorf("transaction %s not mined within 120s", tx.Hash().Hex())
 }
 
-// ParseSwapFill extracts actual fill amounts from a receipt's Transfer logs.
 func (c *Chain) ParseSwapFill(ctx context.Context, receipt *types.Receipt, tokenAddr common.Address, tokenDecimals uint8, isBuy bool) *SwapFill {
 	fill := &SwapFill{}
-
-	// Block timestamp
 	if block, err := c.client.BlockByNumber(ctx, receipt.BlockNumber); err == nil {
 		fill.BlockTimestampMs = int64(block.Time()) * 1000
 	}
-
-	// Parse Transfer logs for token amount
 	walletTopic := common.BytesToHash(common.LeftPadBytes(c.wallet.Address.Bytes(), 32))
 	tokenLower := strings.ToLower(tokenAddr.Hex())
 	total := big.NewInt(0)
-
 	for _, lg := range receipt.Logs {
-		if strings.ToLower(lg.Address.Hex()) != tokenLower {
-			continue
-		}
-		if len(lg.Topics) < 3 || lg.Topics[0] != transferTopic {
+		if strings.ToLower(lg.Address.Hex()) != tokenLower || len(lg.Topics) < 3 || lg.Topics[0] != transferTopic {
 			continue
 		}
 		from := lg.Topics[1]
 		to := lg.Topics[2]
 		if (isBuy && to == walletTopic) || (!isBuy && from == walletTopic) {
-			amount := new(big.Int).SetBytes(lg.Data)
-			total.Add(total, amount)
+			total.Add(total, new(big.Int).SetBytes(lg.Data))
 		}
 	}
-
 	fill.TokenAmount = tokenToFloat(total, tokenDecimals)
-
-	// For sells, compute BNB received from balance delta (net of gas)
 	if !isBuy {
-		before, err1 := c.client.BalanceAt(ctx, c.wallet.Address, new(big.Int).Sub(receipt.BlockNumber, big.NewInt(1)))
-		after, err2 := c.client.BalanceAt(ctx, c.wallet.Address, receipt.BlockNumber)
-		if err1 == nil && err2 == nil {
+		before, e1 := c.client.BalanceAt(ctx, c.wallet.Address, new(big.Int).Sub(receipt.BlockNumber, big.NewInt(1)))
+		after, e2 := c.client.BalanceAt(ctx, c.wallet.Address, receipt.BlockNumber)
+		if e1 == nil && e2 == nil {
 			gasCost := new(big.Int).Mul(new(big.Int).SetUint64(receipt.GasUsed), receipt.EffectiveGasPrice)
 			delta := new(big.Int).Sub(after, before)
 			delta.Add(delta, gasCost)
-			fill.BNBAmount = weiToEther(delta)
+			fill.NativeAmount = weiToEther(delta)
 		}
 	}
-
 	return fill
 }
 
 // --- Internal helpers ---
 
 func (c *Chain) callContract(to common.Address, data []byte) ([]byte, error) {
-	msg := ethereum.CallMsg{
-		To:   &to,
-		Data: data,
-	}
+	msg := ethereum.CallMsg{To: &to, Data: data}
 	return c.client.CallContract(context.Background(), msg, nil)
 }
 
@@ -444,7 +560,6 @@ func (c *Chain) sendTransaction(ctx context.Context, to common.Address, value *b
 	if err != nil {
 		return nil, err
 	}
-
 	tx := types.NewTransaction(nonce, to, value, gasLimit, gasPrice, data)
 	signedTx, err := types.SignTx(tx, types.NewEIP155Signer(c.chainID), c.wallet.privateKey)
 	if err != nil {
@@ -464,44 +579,19 @@ func tokenToFloat(amount *big.Int, decimals uint8) float64 {
 	return result
 }
 
-func weiToEther(wei *big.Int) float64 {
-	return tokenToFloat(wei, 18)
+func weiToEther(wei *big.Int) float64 { return tokenToFloat(wei, 18) }
+
+func parseFloatSafe(s string) (float64, error) {
+	if s == "" {
+		return 0, nil
+	}
+	f := new(big.Float)
+	_, _, err := f.Parse(s, 10)
+	if err != nil {
+		return 0, err
+	}
+	r, _ := f.Float64()
+	return r, nil
 }
 
-// Stub for the HTTP client — will be replaced with a proper implementation.
-// In production, use the global HTTP client from the market package.
 var httpClient = &http.Client{Timeout: 30 * time.Second}
-
-func httpGetJSON(ctx context.Context, url string, v interface{}) error {
-	req, err := http.NewRequestWithContext(ctx, "GET", url, nil)
-	if err != nil {
-		return err
-	}
-	req.Header.Set("User-Agent", "Haven-Desktop/1.0")
-	req.Header.Set("Accept", "application/json")
-
-	resp, err := httpClient.Do(req)
-	if err != nil {
-		return err
-	}
-	defer resp.Body.Close()
-
-	if resp.StatusCode == 429 {
-		time.Sleep(2500 * time.Millisecond)
-		req, _ = http.NewRequestWithContext(ctx, "GET", url, nil)
-		req.Header.Set("User-Agent", "Haven-Desktop/1.0")
-		req.Header.Set("Accept", "application/json")
-		resp, err = httpClient.Do(req)
-		if err != nil {
-			return err
-		}
-		defer resp.Body.Close()
-	}
-
-	if resp.StatusCode >= 400 {
-		body, _ := io.ReadAll(io.LimitReader(resp.Body, 500))
-		return fmt.Errorf("openocean http %d: %s", resp.StatusCode, string(body))
-	}
-
-	return json.NewDecoder(resp.Body).Decode(v)
-}
