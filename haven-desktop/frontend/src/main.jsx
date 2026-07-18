@@ -5,6 +5,7 @@ import { ClerkProvider, useAuth, SignIn, UserButton } from '@clerk/clerk-react'
 import './index.css'
 import './haven-saas.css'
 import App from './App.jsx'
+import heroVideo from './assets/hero.mp4'
 
 const PUBLISHABLE_KEY = 'pk_test_cHJlcGFyZWQtc2t5bGFyay0xMi5jbGVyay5hY2NvdW50cy5kZXYk'
 const hasRealKey = PUBLISHABLE_KEY && !PUBLISHABLE_KEY.includes('YOUR_CLERK_KEY')
@@ -78,22 +79,31 @@ function LoadingScreen() {
 
 function LockedScreen({ onRetry, isSignedIn }) {
   return (
-    <div style={center}>
-      <h1 style={{fontSize:24,color:'#f0f6fc',marginBottom:16}}>Haven</h1>
-      <p style={{color:'#8b949e',maxWidth:360,textAlign:'center',marginBottom:24}}>
-        {isSignedIn
-          ? 'Your subscription is not active. Please subscribe to continue using Haven.'
-          : 'Sign in to verify your subscription and access Haven.'}
-      </p>
-      {isSignedIn ? (
-        <>
-          <p style={{color:'#8b949e',fontSize:13,marginBottom:16}}>Visit <a href="https://haven.trading" style={{color:'#58a6ff'}}>haven.trading</a> to manage your subscription.</p>
-          <button onClick={onRetry} style={btn}>Retry</button>
-          <div style={{marginTop:16}}><UserButton afterSignOutUrl="/" /></div>
-        </>
-      ) : (
-        <SignIn routing="virtual" />
-      )}
+    <div style={{ minHeight: '100vh', display: 'flex', background: '#0d1117' }}>
+      {/* Left: video */}
+      <div style={{ flex: '1 1 55%', display: 'flex', alignItems: 'center', justifyContent: 'center', overflow: 'hidden' }}>
+        <video autoPlay loop muted playsInline style={{ width: '100%', height: '100%', objectFit: 'cover' }}>
+          <source src={heroVideo} type="video/mp4" />
+        </video>
+      </div>
+      {/* Right: sign-in */}
+      <div style={{ flex: '0 0 45%', display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', padding: 48, minWidth: 400 }}>
+        <h1 style={{fontSize:24,color:'#f0f6fc',marginBottom:16}}>Haven</h1>
+        <p style={{color:'#8b949e',maxWidth:360,textAlign:'center',marginBottom:24}}>
+          {isSignedIn
+            ? 'Your subscription is not active. Please subscribe to continue using Haven.'
+            : 'Sign in to verify your subscription and access Haven.'}
+        </p>
+        {isSignedIn ? (
+          <>
+            <p style={{color:'#8b949e',fontSize:13,marginBottom:16}}>Visit <a href="https://haven.trading" style={{color:'#58a6ff'}}>haven.trading</a> to manage your subscription.</p>
+            <button onClick={onRetry} style={btn}>Retry</button>
+            <div style={{marginTop:16}}><UserButton afterSignOutUrl="/" /></div>
+          </>
+        ) : (
+          <SignIn routing="virtual" />
+        )}
+      </div>
     </div>
   )
 }
