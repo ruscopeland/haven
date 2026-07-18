@@ -243,7 +243,7 @@ func (r *StrategyRunner) processStrategy(ctx context.Context, rs *RunnerState) {
 		}
 
 		// Create a marker for the engine to execute
-		r.createMarkerFromSignal(signal, latestBar.Time)
+		r.createMarkerFromSignal(signal, latestBar.Close)
 
 		if r.onSignal != nil {
 			r.onSignal(signal)
@@ -253,27 +253,30 @@ func (r *StrategyRunner) processStrategy(ctx context.Context, rs *RunnerState) {
 	rs.LastBar = latestBar.Time
 }
 
-func (r *StrategyRunner) createMarkerFromSignal(signal Signal, barTime int64) {
-	conditionValue := 0.0
+func (r *StrategyRunner) createMarkerFromSignal(signal Signal, currentPrice float64) {
 	direction := "above"
 	if signal.Side == "sell" {
 		direction = "below"
 	}
 
-	marker := db.Strategy{} // Reuse the Strategy type for now
-	marker.ID = uuid.New().String()
-	marker.Name = fmt.Sprintf("strategy-signal-%s", signal.StrategyID[:8])
-	marker.Symbol = signal.Symbol
+	m := &db.Marker{
+		ID:             uuid.New().String(),
+		StrategyID:     signal.StrategyID,
+		Symbol:         signal.Symbol,
+		ConditionType:  "price",
+		ConditionValue: currentPrice,
+		Direction:      direction,
+	}
+	if err := r.store.CreateMarker(m); err != nil {
+		r.logger.Error("failed to create marker", "error", err)
+		return
+	}
 
-	_ = conditionValue
-	_ = direction
-	_ = barTime
-
-	// Store as a setting for now (markers table integration pending)
-	r.logger.Info("strategy signal",
+	r.logger.Info("marker created",
+		"id", m.ID,
 		"strategy_id", signal.StrategyID,
 		"symbol", signal.Symbol,
-		"side", signal.Side,
-		"usd", fmt.Sprintf("%.2f", signal.Usd),
+		"direction", direction,
+		"price", fmt.Sprintf("%.4f", currentPrice),
 	)
 }
