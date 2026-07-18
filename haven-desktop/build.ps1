@@ -25,21 +25,17 @@ if ($release) {
 
 # ---- Step 1: React Frontend ----
 Write-Host "[1/4] Building React frontend..." -ForegroundColor Cyan
-Push-Location "$root\..\crypto-charting-ui"
-$env:VITE_API_URL = "http://localhost:8000"
-$env:VITE_DESKTOP_MODE = "true"
+Push-Location "$root\frontend"
 npm ci --no-audit --no-fund 2>&1 | Out-Null
-Copy-Item desktop.html index.html -Force
 npm run build 2>&1
 if ($LASTEXITCODE -ne 0) { throw "Frontend build failed" }
-git checkout index.html 2>$null
 Pop-Location
 
 # ---- Step 2: Copy to Wails ----
 Write-Host "[2/4] Copying frontend assets..." -ForegroundColor Cyan
 $distDir = "$root\cmd\haven\frontend\dist"
 Remove-Item -Recurse -Force $distDir -ErrorAction SilentlyContinue
-Copy-Item -Recurse "$root\..\crypto-charting-ui\dist\*" $distDir
+Copy-Item -Recurse "$root\frontend\dist\*" $distDir
 
 # ---- Step 3: Go Build ----
 Write-Host "[3/4] Building Go binary..." -ForegroundColor Cyan

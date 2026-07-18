@@ -1,3 +1,5 @@
+// Package assistant proxies AI chat requests to DeepSeek with rate limiting,
+// subscription-gated access, and context window management.
 package assistant
 
 import (
@@ -9,9 +11,16 @@ import (
 	"log/slog"
 	"net/http"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/ruscopeland/haven-cloud/internal/auth"
+)
+
+const (
+	defaultModel       = "deepseek-chat"
+	maxContextMessages = 10     // keep last 10 messages for context
+	maxResponseBytes   = 1 << 18 // 256KB cap on responses
 )
 
 // Service proxies chat requests to DeepSeek.
@@ -20,12 +29,23 @@ type Service struct {
 	logger     *slog.Logger
 	httpClient *http.Client
 	verifier   *auth.ClerkVerifier
+
+	mu       sync.Mutex
+	counters map[string]*rateWindow // userID → sliding window
+}
+
+type rateWindow struct {
+	timestamps []time.Time
+	limit      int
+	window     time.Duration
 }
 
 // ChatRequest is the incoming request from the desktop app.
 type ChatRequest struct {
-	Messages []ChatMessage `json:"messages"`
-	Model    string        `json:"model,omitempty"`
+	Messages       []ChatMessage `json:"messages"`
+	Model          string        `json:"model,omitempty"`
+	LLMLimit       int           `json:"llm_limit,omitempty"`        // from entitlement
+	LLMWindowSec   int           `json:"llm_window_sec,omitempty"`   // from entitlement
 }
 
 // ChatMessage is a single message in the conversation.
@@ -37,23 +57,19 @@ type ChatMessage struct {
 // NewService creates an assistant proxy service.
 func NewService(apiKey string, logger *slog.Logger) *Service {
 	return &Service{
-		apiKey: apiKey,
-		logger: logger,
-		httpClient: &http.Client{
-			Timeout: 120 * time.Second,
-		},
+		apiKey:   apiKey,
+		logger:   logger,
+		counters: make(map[string]*rateWindow),
+		httpClient: &http.Client{Timeout: 120 * time.Second},
 	}
 }
 
 // SetVerifier sets the Clerk verifier for auth checks.
-func (s *Service) SetVerifier(v *auth.ClerkVerifier) {
-	s.verifier = v
-}
+func (s *Service) SetVerifier(v *auth.ClerkVerifier) { s.verifier = v }
 
 // HandleChat is the POST /v1/assistant/chat handler.
-// It verifies the user's subscription, then proxies to DeepSeek with streaming.
 func (s *Service) HandleChat(w http.ResponseWriter, r *http.Request) {
-	// Verify subscription
+	// Verify auth
 	if s.verifier != nil {
 		_, err := s.verifier.VerifyTokenFromRequest(r)
 		if err != nil {
@@ -62,7 +78,6 @@ func (s *Service) HandleChat(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	// Parse request
 	var chatReq ChatRequest
 	if err := json.NewDecoder(io.LimitReader(r.Body, 1<<20)).Decode(&chatReq); err != nil {
 		writeError(w, http.StatusBadRequest, "Invalid request body")
@@ -74,31 +89,46 @@ func (s *Service) HandleChat(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Rate limit check
+	limit := chatReq.LLMLimit
+	if limit <= 0 {
+		limit = 5
+	}
+	windowSec := chatReq.LLMWindowSec
+	if windowSec <= 0 {
+		windowSec = 900 // 15 minutes
+	}
+
+	userID := r.Header.Get("X-User-ID")
+	if userID == "" {
+		userID = "anon"
+	}
+
+	if !s.checkRate(userID, limit, time.Duration(windowSec)*time.Second) {
+		s.logger.Warn("rate limit hit", "user_id", userID, "limit", limit)
+		writeError(w, http.StatusTooManyRequests,
+			fmt.Sprintf("Rate limit reached: %d messages per %d seconds. Try again shortly.", limit, windowSec))
+		return
+	}
+
 	model := chatReq.Model
 	if model == "" {
-		model = "deepseek-chat"
+		model = defaultModel
 	}
 
-	// Build DeepSeek request
+	// Trim context window to keep token usage under control.
+	// Always keep the system message if present; keep the last N user/assistant messages.
+	messages := s.trimContext(chatReq.Messages)
+
 	dsReq := map[string]interface{}{
-		"model":    model,
-		"messages": chatReq.Messages,
-		"stream":   false,
+		"model":       model,
+		"messages":    messages,
+		"stream":      false,
+		"max_tokens":  1024,
 	}
 
-	body, err := json.Marshal(dsReq)
-	if err != nil {
-		s.logger.Error("marshal deepseek request", "error", err)
-		writeError(w, http.StatusInternalServerError, "Internal error")
-		return
-	}
-
-	dsHTTPReq, err := http.NewRequest("POST", "https://api.deepseek.com/v1/chat/completions", bytes.NewReader(body))
-	if err != nil {
-		s.logger.Error("create deepseek request", "error", err)
-		writeError(w, http.StatusInternalServerError, "Internal error")
-		return
-	}
+	body, _ := json.Marshal(dsReq)
+	dsHTTPReq, _ := http.NewRequest("POST", "https://api.deepseek.com/v1/chat/completions", bytes.NewReader(body))
 	dsHTTPReq.Header.Set("Authorization", "Bearer "+s.apiKey)
 	dsHTTPReq.Header.Set("Content-Type", "application/json")
 
@@ -110,23 +140,83 @@ func (s *Service) HandleChat(w http.ResponseWriter, r *http.Request) {
 	}
 	defer resp.Body.Close()
 
-	// Check for streaming response
 	contentType := resp.Header.Get("Content-Type")
 	if strings.Contains(contentType, "text/event-stream") {
 		s.handleStreaming(w, resp)
 		return
 	}
 
-	// Non-streaming — pass through
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(resp.StatusCode)
-	io.Copy(w, io.LimitReader(resp.Body, 1<<20))
+	io.Copy(w, io.LimitReader(resp.Body, maxResponseBytes))
 
 	s.logger.Info("assistant chat completed",
 		"model", model,
-		"messages", len(chatReq.Messages),
+		"messages_sent", len(messages),
+		"original_messages", len(chatReq.Messages),
 		"status", resp.StatusCode,
 	)
+}
+
+// trimContext keeps the system message (if present) and the last N messages
+// to control token usage. A typical message is ~200-500 tokens, so 10 messages
+// keeps the context window around 2-5K tokens — enough for ongoing context
+// without ballooning costs.
+func (s *Service) trimContext(messages []ChatMessage) []ChatMessage {
+	if len(messages) <= maxContextMessages {
+		return messages
+	}
+	var system []ChatMessage
+	var rest []ChatMessage
+	for _, m := range messages {
+		if m.Role == "system" {
+			system = append(system, m)
+		} else {
+			rest = append(rest, m)
+		}
+	}
+	if len(rest) <= maxContextMessages {
+		return messages
+	}
+	// Keep last N conversation messages
+	keep := rest[len(rest)-maxContextMessages:]
+	result := append(system, keep...)
+	s.logger.Info("context trimmed",
+		"original", len(messages),
+		"kept", len(result),
+	)
+	return result
+}
+
+// checkRate implements a sliding-window rate limiter.
+func (s *Service) checkRate(userID string, limit int, window time.Duration) bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	rw, ok := s.counters[userID]
+	if !ok {
+		rw = &rateWindow{limit: limit, window: window}
+		s.counters[userID] = rw
+	}
+
+	now := time.Now()
+	cutoff := now.Add(-window)
+
+	// Prune old entries
+	valid := rw.timestamps[:0]
+	for _, t := range rw.timestamps {
+		if t.After(cutoff) {
+			valid = append(valid, t)
+		}
+	}
+	rw.timestamps = valid
+
+	if len(rw.timestamps) >= limit {
+		return false
+	}
+
+	rw.timestamps = append(rw.timestamps, now)
+	return true
 }
 
 func (s *Service) handleStreaming(w http.ResponseWriter, resp *http.Response) {
@@ -136,17 +226,13 @@ func (s *Service) handleStreaming(w http.ResponseWriter, resp *http.Response) {
 
 	flusher, ok := w.(http.Flusher)
 	if !ok {
-		s.logger.Error("streaming not supported")
 		return
 	}
 
 	scanner := bufio.NewScanner(resp.Body)
 	scanner.Buffer(make([]byte, 0, 4096), 1<<20)
 	for scanner.Scan() {
-		line := scanner.Text()
-		if _, err := fmt.Fprintf(w, "%s\n", line); err != nil {
-			return
-		}
+		fmt.Fprintf(w, "%s\n", scanner.Text())
 		flusher.Flush()
 	}
 }

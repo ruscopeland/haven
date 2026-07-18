@@ -1,3 +1,4 @@
+// Package subscription handles paid-plan verification against Clerk and Stripe.
 package subscription
 
 import (
@@ -18,32 +19,36 @@ type Tier struct {
 	Name     string `json:"name"`
 	ClerkSlug string `json:"clerk_slug"`
 	Features struct {
-		MaxStrategies     int  `json:"max_strategies"`
-		MaxFinders        int  `json:"max_finders"`
-		MaxBots           int  `json:"max_bots"`
-		UniverseTokens    int  `json:"universe_tokens"`
-		LiveTrading       bool `json:"live_trading"`
-		FinderEnabled     bool `json:"finder_enabled"`
-		EngineAccess      bool `json:"engine_access"`
-		DataRefreshSec    int  `json:"data_refresh_sec"`
+		MaxStrategies         int  `json:"max_strategies"`
+		MaxFinders            int  `json:"max_finders"`
+		MaxBots               int  `json:"max_bots"`
+		UniverseTokens        int  `json:"universe_tokens"`
+		LiveTrading           bool `json:"live_trading"`
+		FinderEnabled         bool `json:"finder_enabled"`
+		EngineAccess          bool `json:"engine_access"`
+		DataRefreshSec        int  `json:"data_refresh_sec"`
+		LLMMessagesPerWindow  int  `json:"llm_messages_per_window"`
+		LLMWindowMinutes      int  `json:"llm_window_minutes"`
 	} `json:"features"`
 }
 
 // Entitlement is the response sent to the desktop app.
 type Entitlement struct {
-	AppAccess       bool   `json:"app_access"`
-	Tier            string `json:"tier"`
-	TrialEnd        string `json:"trial_end,omitempty"`
-	MaxStrategies   int    `json:"max_strategies"`
-	MaxFinders      int    `json:"max_finders"`
-	MaxBots         int    `json:"max_bots"`
-	UniverseTokens  int    `json:"universe_tokens"`
-	LiveTrading     bool   `json:"live_trading"`
-	FinderEnabled   bool   `json:"finder_enabled"`
-	EngineAccess    bool   `json:"engine_access"`
-	DataRefreshSec  int    `json:"data_refresh_sec"`
-	SubscriptionEnd string `json:"subscription_end,omitempty"`
-	BuildWarning    string `json:"build_warning,omitempty"`
+	AppAccess            bool   `json:"app_access"`
+	Tier                 string `json:"tier"`
+	TrialEnd             string `json:"trial_end,omitempty"`
+	MaxStrategies        int    `json:"max_strategies"`
+	MaxFinders           int    `json:"max_finders"`
+	MaxBots              int    `json:"max_bots"`
+	UniverseTokens       int    `json:"universe_tokens"`
+	LiveTrading          bool   `json:"live_trading"`
+	FinderEnabled        bool   `json:"finder_enabled"`
+	EngineAccess         bool   `json:"engine_access"`
+	DataRefreshSec       int    `json:"data_refresh_sec"`
+	LLMMessagesPerWindow int    `json:"llm_messages_per_window"`
+	LLMWindowMinutes     int    `json:"llm_window_minutes"`
+	SubscriptionEnd      string `json:"subscription_end,omitempty"`
+	BuildWarning         string `json:"build_warning,omitempty"`
 }
 
 // Service handles subscription verification against Clerk.
@@ -52,7 +57,7 @@ type Service struct {
 	clerkKey        string
 	logger          *slog.Logger
 	tiers           map[string]Tier
-	cache           sync.Map // userID → cachedEntitlement
+	cache           sync.Map
 	cacheTTL        time.Duration
 	latestBuildHash string
 }
@@ -64,7 +69,7 @@ type cachedEntitlement struct {
 
 // NewService creates a subscription verification service.
 func NewService(verifier *auth.ClerkVerifier, clerkKey string, logger *slog.Logger, latestBuildHash string) *Service {
-	svc := &Service{
+	return &Service{
 		verifier:        verifier,
 		clerkKey:        clerkKey,
 		logger:          logger,
@@ -72,80 +77,49 @@ func NewService(verifier *auth.ClerkVerifier, clerkKey string, logger *slog.Logg
 		cacheTTL:        5 * time.Minute,
 		latestBuildHash: latestBuildHash,
 	}
-	return svc
 }
 
 func defaultTiers() map[string]Tier {
+	s := Tier{}.Features
+	s.MaxStrategies = 5
+	s.MaxFinders = 2
+	s.MaxBots = 1
+	s.UniverseTokens = 200
+	s.LiveTrading = true
+	s.FinderEnabled = false
+	s.EngineAccess = true
+	s.DataRefreshSec = 30
+	s.LLMMessagesPerWindow = 5
+	s.LLMWindowMinutes = 15
+
+	p := Tier{}.Features
+	p.MaxStrategies = 20
+	p.MaxFinders = 10
+	p.MaxBots = 5
+	p.UniverseTokens = 500
+	p.LiveTrading = true
+	p.FinderEnabled = true
+	p.EngineAccess = true
+	p.DataRefreshSec = 10
+	p.LLMMessagesPerWindow = 15
+	p.LLMWindowMinutes = 15
+
+	a := Tier{}.Features
+	a.MaxStrategies = 100
+	a.MaxFinders = 50
+	a.MaxBots = 20
+	a.UniverseTokens = 1000
+	a.LiveTrading = true
+	a.FinderEnabled = true
+	a.EngineAccess = true
+	a.DataRefreshSec = 5
+	a.LLMMessagesPerWindow = 50
+	a.LLMWindowMinutes = 15
+
 	return map[string]Tier{
-		"starter": {
-			Name:      "Starter",
-			ClerkSlug: "starter",
-			Features: struct {
-				MaxStrategies     int  `json:"max_strategies"`
-				MaxFinders        int  `json:"max_finders"`
-				MaxBots           int  `json:"max_bots"`
-				UniverseTokens    int  `json:"universe_tokens"`
-				LiveTrading       bool `json:"live_trading"`
-				FinderEnabled     bool `json:"finder_enabled"`
-				EngineAccess      bool `json:"engine_access"`
-				DataRefreshSec    int  `json:"data_refresh_sec"`
-			}{
-				MaxStrategies:  5,
-				MaxFinders:     2,
-				MaxBots:        1,
-				UniverseTokens: 20,
-				LiveTrading:    false,
-				FinderEnabled:  false,
-				EngineAccess:   true,
-				DataRefreshSec: 30,
-			},
-		},
-		"pro": {
-			Name:      "Pro",
-			ClerkSlug: "pro",
-			Features: struct {
-				MaxStrategies     int  `json:"max_strategies"`
-				MaxFinders        int  `json:"max_finders"`
-				MaxBots           int  `json:"max_bots"`
-				UniverseTokens    int  `json:"universe_tokens"`
-				LiveTrading       bool `json:"live_trading"`
-				FinderEnabled     bool `json:"finder_enabled"`
-				EngineAccess      bool `json:"engine_access"`
-				DataRefreshSec    int  `json:"data_refresh_sec"`
-			}{
-				MaxStrategies:  20,
-				MaxFinders:     10,
-				MaxBots:        5,
-				UniverseTokens: 100,
-				LiveTrading:    true,
-				FinderEnabled:  true,
-				EngineAccess:   true,
-				DataRefreshSec: 10,
-			},
-		},
-		"advanced": {
-			Name:      "Advanced",
-			ClerkSlug: "advanced",
-			Features: struct {
-				MaxStrategies     int  `json:"max_strategies"`
-				MaxFinders        int  `json:"max_finders"`
-				MaxBots           int  `json:"max_bots"`
-				UniverseTokens    int  `json:"universe_tokens"`
-				LiveTrading       bool `json:"live_trading"`
-				FinderEnabled     bool `json:"finder_enabled"`
-				EngineAccess      bool `json:"engine_access"`
-				DataRefreshSec    int  `json:"data_refresh_sec"`
-			}{
-				MaxStrategies:  100,
-				MaxFinders:     50,
-				MaxBots:        20,
-				UniverseTokens: 500,
-				LiveTrading:    true,
-				FinderEnabled:  true,
-				EngineAccess:   true,
-				DataRefreshSec: 5,
-			},
-		},
+		"starter":  {Name: "Starter", ClerkSlug: "starter", Features: s},
+		"pro":      {Name: "Pro", ClerkSlug: "pro", Features: p},
+		"advanced": {Name: "Advanced", ClerkSlug: "advanced", Features: a},
 	}
 }
 
@@ -157,16 +131,13 @@ func (s *Service) HandleVerify(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Parse optional build_hash from request body
 	var req struct {
 		BuildHash string `json:"build_hash"`
 	}
-	// Best-effort body parse — build_hash is optional
 	if body, readErr := io.ReadAll(io.LimitReader(r.Body, 4096)); readErr == nil {
 		json.Unmarshal(body, &req)
 	}
 
-	// Check cache (cache depends only on user ID, not build_hash)
 	if cached, ok := s.cache.Load(user.ID); ok {
 		c := cached.(cachedEntitlement)
 		if time.Now().Before(c.expiresAt) {
@@ -182,73 +153,58 @@ func (s *Service) HandleVerify(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Check build hash integrity
-	if s.latestBuildHash != "" && req.BuildHash != "" {
-		if req.BuildHash != s.latestBuildHash {
-			s.logger.Warn("build hash mismatch",
-				"user_id", user.ID,
-				"received", req.BuildHash,
-				"expected", s.latestBuildHash,
-			)
-			entitlement.BuildWarning = "This version of Haven could not be verified. " +
-				"Only download Haven from haven.trading. " +
-				"Unverified software can steal your wallet keys."
-		}
+	if s.latestBuildHash != "" && req.BuildHash != "" && req.BuildHash != s.latestBuildHash {
+		s.logger.Warn("build hash mismatch", "user_id", user.ID, "received", req.BuildHash, "expected", s.latestBuildHash)
+		entitlement.BuildWarning = "This version of Haven could not be verified. Only download Haven from haven.trading. Unverified software can steal your wallet keys."
 	}
 
-	// Cache the result
-	s.cache.Store(user.ID, cachedEntitlement{
-		entitlement: *entitlement,
-		expiresAt:   time.Now().Add(s.cacheTTL),
-	})
-
+	s.cache.Store(user.ID, cachedEntitlement{entitlement: *entitlement, expiresAt: time.Now().Add(s.cacheTTL)})
 	s.writeJSON(w, http.StatusOK, entitlement)
 }
 
 func (s *Service) resolveEntitlement(userID string) (*Entitlement, error) {
-	// Fetch user's organization memberships from Clerk to determine plan
 	planSlug, subscriptionEnd, trialEnd, err := s.fetchClerkSubscription(userID)
 	if err != nil {
 		s.logger.Warn("clerk subscription fetch failed, falling back to trial", "user_id", userID, "error", err)
-		// Default to a minimal entitlement — the app will verify on next poll
 		return &Entitlement{
-			AppAccess:       true,
-			Tier:            "trial",
-			MaxStrategies:   3,
-			MaxFinders:      1,
-			MaxBots:         1,
-			UniverseTokens:  10,
-			LiveTrading:     false,
-			FinderEnabled:   false,
-			EngineAccess:    true,
-			DataRefreshSec:  60,
+			AppAccess:            true,
+			Tier:                 "trial",
+			MaxStrategies:        3,
+			MaxFinders:           1,
+			MaxBots:              1,
+			UniverseTokens:       100,
+			LiveTrading:          true,
+			FinderEnabled:        false,
+			EngineAccess:         true,
+			DataRefreshSec:       60,
+			LLMMessagesPerWindow: 3,
+			LLMWindowMinutes:     15,
 		}, nil
 	}
 
-	tier, ok := s.tiers[planSlug]
+	t, ok := s.tiers[planSlug]
 	if !ok {
-		// Unknown plan — no access
-		s.logger.Warn("unknown plan slug", "user_id", userID, "slug", planSlug)
 		return &Entitlement{AppAccess: false}, nil
 	}
 
 	return &Entitlement{
-		AppAccess:       true,
-		Tier:            tier.Name,
-		TrialEnd:        trialEnd,
-		MaxStrategies:   tier.Features.MaxStrategies,
-		MaxFinders:      tier.Features.MaxFinders,
-		MaxBots:         tier.Features.MaxBots,
-		UniverseTokens:  tier.Features.UniverseTokens,
-		LiveTrading:     tier.Features.LiveTrading,
-		FinderEnabled:   tier.Features.FinderEnabled,
-		EngineAccess:    tier.Features.EngineAccess,
-		DataRefreshSec:  tier.Features.DataRefreshSec,
-		SubscriptionEnd: subscriptionEnd,
+		AppAccess:            true,
+		Tier:                 t.Name,
+		TrialEnd:             trialEnd,
+		MaxStrategies:        t.Features.MaxStrategies,
+		MaxFinders:           t.Features.MaxFinders,
+		MaxBots:              t.Features.MaxBots,
+		UniverseTokens:       t.Features.UniverseTokens,
+		LiveTrading:          t.Features.LiveTrading,
+		FinderEnabled:        t.Features.FinderEnabled,
+		EngineAccess:         t.Features.EngineAccess,
+		DataRefreshSec:       t.Features.DataRefreshSec,
+		LLMMessagesPerWindow: t.Features.LLMMessagesPerWindow,
+		LLMWindowMinutes:     t.Features.LLMWindowMinutes,
+		SubscriptionEnd:      subscriptionEnd,
 	}, nil
 }
 
-// fetchClerkSubscription queries Clerk for the user's subscription/plan status.
 func (s *Service) fetchClerkSubscription(userID string) (planSlug, subscriptionEnd, trialEnd string, err error) {
 	req, err := http.NewRequest("GET",
 		fmt.Sprintf("https://api.clerk.com/v1/users/%s/organization_memberships", userID), nil)
@@ -272,7 +228,7 @@ func (s *Service) fetchClerkSubscription(userID string) (planSlug, subscriptionE
 	var result struct {
 		Data []struct {
 			Organization struct {
-				Slug         string `json:"slug"`
+				Slug           string `json:"slug"`
 				PublicMetadata struct {
 					Plan string `json:"plan,omitempty"`
 				} `json:"public_metadata"`
@@ -283,14 +239,11 @@ func (s *Service) fetchClerkSubscription(userID string) (planSlug, subscriptionE
 		return "", "", "", fmt.Errorf("decode memberships: %w", err)
 	}
 
-	// Find first organization with a recognized plan slug
 	for _, m := range result.Data {
 		slug := m.Organization.Slug
 		if _, ok := s.tiers[slug]; ok {
-			// Also check for subscription end in public metadata
 			return slug, "", "", nil
 		}
-		// Check public_metadata for plan override
 		if plan := m.Organization.PublicMetadata.Plan; plan != "" {
 			if _, ok := s.tiers[plan]; ok {
 				return plan, "", "", nil
@@ -298,15 +251,13 @@ func (s *Service) fetchClerkSubscription(userID string) (planSlug, subscriptionE
 		}
 	}
 
-	// No paid plan — check for trial
 	trialEnd, err = s.fetchTrialEnd(userID)
 	if err != nil {
 		return "", "", "", fmt.Errorf("no paid plan and trial check failed: %w", err)
 	}
 	if trialEnd != "" {
-		return "starter", "", trialEnd, nil // Trial gets starter features
+		return "starter", "", trialEnd, nil
 	}
-
 	return "", "", "", fmt.Errorf("no active subscription or trial")
 }
 
@@ -347,8 +298,5 @@ func (s *Service) writeJSON(w http.ResponseWriter, status int, v interface{}) {
 }
 
 func (s *Service) writeError(w http.ResponseWriter, status int, code, message string) {
-	s.writeJSON(w, status, map[string]string{
-		"error":   code,
-		"message": message,
-	})
+	s.writeJSON(w, status, map[string]string{"error": code, "message": message})
 }
