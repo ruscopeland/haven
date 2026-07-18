@@ -127,7 +127,8 @@ function Dashboard() {
               <div style={{ marginTop:6 }}><span style={{ color:'var(--primary)' }}>2.</span> Copy and paste this command, then press Enter:</div>
               <code style={{ display:'block', background:'rgba(0,0,0,0.4)', padding:'6px 10px', borderRadius:6, fontSize:11, marginTop:4, wordBreak:'break-all', color:'#c9d1d9' }}>{LINUX_CMD}</code>
               <div style={{ marginTop:8, fontSize:11, color:'var(--text-muted)' }}>
-                To launch from anywhere: <code style={{ background:'rgba(0,0,0,0.3)', padding:'1px 5px', borderRadius:3 }}>sudo mv haven-desktop-v1.2.0-linux /usr/local/bin/haven && haven</code>
+                After running the app once, install it system-wide so you can launch it from any terminal by just typing <code style={{ background:'rgba(0,0,0,0.3)', padding:'1px 5px', borderRadius:3 }}>haven</code>:<br/>
+                <code style={{ display:'block', background:'rgba(0,0,0,0.4)', padding:'4px 8px', borderRadius:4, fontSize:11, marginTop:4, color:'#c9d1d9' }}>sudo mv haven-desktop-v1.2.0-linux /usr/local/bin/haven</code>
               </div>
             </div>
           </div>
