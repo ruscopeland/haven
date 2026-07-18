@@ -61,7 +61,7 @@ export default function DashboardView({
     return () => { alive = false; clearInterval(a); clearInterval(b); clearInterval(c); clearInterval(d); };
   }, []);
 
-  const prices = overview?.token_prices || {};
+  const prices = { ...(overview?.token_prices || {}), ...(wallet.tokenPrices || {}) };
   const pnlBySymbol = useMemo(() => computePnl(filledTrades), [filledTrades]);
   const lastTradeBySymbol = useMemo(() => {
     const map = {};

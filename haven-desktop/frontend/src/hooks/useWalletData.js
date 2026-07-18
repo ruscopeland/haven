@@ -31,6 +31,13 @@ const TOKEN_LIST_SOURCES = [
   { url: 'https://raw.githubusercontent.com/traderjoe-xyz/joe-tokenlists/main/mc.tokenlist.json', chain: 'avalanche' },
 ];
 
+// CoinGecko chain IDs for the simple/token_price endpoint (free, no API key).
+const COINGECKO_CHAIN = {
+  ethereum: 'ethereum', bsc: 'binance-smart-chain', base: 'base',
+  arbitrum: 'arbitrum-one', polygon: 'polygon-pos',
+  optimism: 'optimistic-ethereum', avalanche: 'avalanche',
+};
+
 export function getSavedAddress() {
   // Multi-tenant rule: never default every account to a shared wallet.
   // Only this browser's localStorage address applies for signed-in users.
@@ -182,11 +189,53 @@ async function fetchTokenLists() {
   return allTokens;
 }
 
+// Fetch USD prices from CoinGecko for tokens that don't already have pricing.
+// Batches by chain, respects free-tier rate limit.
+async function fetchTokenPrices(heldTokens, existingPrices) {
+  const out = { ...existingPrices };
+  // Group tokens by chain that need pricing
+  const needed = {};
+  for (const t of heldTokens) {
+    if (out[t.symbol] != null) continue; // already priced
+    const cg = COINGECKO_CHAIN[t.chain];
+    if (!cg) continue;
+    if (!needed[cg]) needed[cg] = [];
+    needed[cg].push(t.contract);
+  }
+
+  for (const [cgChain, addrs] of Object.entries(needed)) {
+    if (!addrs.length) continue;
+    // CoinGecko caps at ~100 addresses per call
+    const chunks = [];
+    for (let i = 0; i < addrs.length; i += 100) chunks.push(addrs.slice(i, i + 100));
+
+    for (const chunk of chunks) {
+      try {
+        const url = `https://api.coingecko.com/api/v3/simple/token_price/${cgChain}?contract_addresses=${chunk.join(',')}&vs_currencies=usd`;
+        const r = await fetch(url);
+        if (!r.ok) continue;
+        const data = await r.json();
+        for (const [addr, prices] of Object.entries(data)) {
+          if (prices?.usd) {
+            // Find the symbol from heldTokens
+            const t = heldTokens.find(h => h.contract?.toLowerCase() === addr.toLowerCase());
+            if (t) out[t.symbol] = prices.usd;
+          }
+        }
+        // Respect free-tier rate limit (~10-30 calls/min)
+        await new Promise(r => setTimeout(r, 1500));
+      } catch { /* skip */ }
+    }
+  }
+  return out;
+}
+
 export default function useWalletData() {
   const [address, setAddressState] = useState(getSavedAddress);
   const [bnb, setBnb] = useState(null);
   const [bnbPrice, setBnbPrice] = useState(null);
   const [tokens, setTokens] = useState([]);
+  const [tokenPrices, setTokenPrices] = useState({});
   const [natives, setNatives] = useState({});
   const [error, setError] = useState(null);
   const [loading, setLoading] = useState(false);
@@ -217,7 +266,7 @@ export default function useWalletData() {
     const trimmed = (a || '').trim();
     localStorage.setItem(ADDR_KEY, trimmed);
     setAddressState(trimmed);
-    setBnb(null); setTokens([]); setNatives({});
+    setBnb(null); setTokens([]); setNatives({}); setTokenPrices({});
   }, []);
 
   useEffect(() => {
@@ -350,6 +399,13 @@ export default function useWalletData() {
         console.log(`wallet: scan complete — ${allHeld.length} tokens held`);
         setTokens(allHeld);
         setError(null);
+
+        // Fetch USD prices from CoinGecko for tokens without pricing (runs in background)
+        if (allHeld.length > 0) {
+          fetchTokenPrices(allHeld, tokenPrices).then(prices => {
+            setTokenPrices(prices);
+          }).catch(() => {});
+        }
       } catch (e) {
         if (alive) setError(String(e.message || e));
       }
@@ -365,7 +421,7 @@ export default function useWalletData() {
     address, setAddress,
     bnb, bnbPrice,
     natives,
-    tokens,
+    tokens, tokenPrices,
     error, loading,
   };
 }
