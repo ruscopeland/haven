@@ -2,14 +2,12 @@ name: Deploy landing page
 
 on:
   push:
-    branches: [desktop-rewrite]
+    branches: [desktop-rewrite, main]
     paths:
-      - 'crypto-charting-ui/src/landing.jsx'
-      - 'crypto-charting-ui/landing.html'
-      - 'crypto-charting-ui/src/components/HavenLogo.jsx'
-      - 'crypto-charting-ui/src/legal/content.js'
-      - 'crypto-charting-ui/src/index.css'
-      - 'crypto-charting-ui/src/haven-saas.css'
+      - 'landing/src/**'
+      - 'landing/index.html'
+      - 'landing/vite.config.js'
+      - 'landing/package.json'
       - '.github/workflows/deploy-landing.yml'
   workflow_dispatch:
 
@@ -23,34 +21,21 @@ jobs:
         with:
           node-version: '22'
           cache: 'npm'
-          cache-dependency-path: crypto-charting-ui/package-lock.json
+          cache-dependency-path: landing/package-lock.json
 
       - name: Install dependencies
-        working-directory: crypto-charting-ui
+        working-directory: landing
         run: npm ci
 
-      - name: Build landing page
-        working-directory: crypto-charting-ui
+      - name: Build
+        working-directory: landing
         env:
           VITE_BUILD_ID: ${{ github.sha }}
-          VITE_CLERK_PUBLISHABLE_KEY: ''
-          VITE_API_URL: ''
-        run: |
-          # Swap landing.html as the root entry point for this deploy
-          cp landing.html landing.html.bak
-          cp index.html index.html.bak
-          cp landing.html index.html
-          # Replace public assets with landing-specific CSP
-          cp -f public-landing/_headers public/_headers
-          cp -f public-landing/_redirects public/_redirects
-          npm run build
-          # Restore originals
-          mv index.html.bak index.html
-          mv landing.html.bak landing.html
+        run: npm run build
 
       - name: Deploy to Cloudflare Pages
         uses: cloudflare/wrangler-action@v3
         with:
-          apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          apiToken: [redacted] secrets.CLOUDFLARE_API_TOKEN }}
           accountId: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
-          command: pages deploy crypto-charting-ui/dist --project-name haven --commit-dirty
+          command: pages deploy landing/dist --project-name haven --commit-dirty

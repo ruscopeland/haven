@@ -1,0 +1,25 @@
+{
+  "task_id": "20260718-050947-pasted-text-2-52-lines-begin-pasted-text-2-52-lines-buil",
+  "goal": "[Pasted text #2 · 52 lines]\n\n--- Begin [Pasted text #2 · 52 lines] ---\n# Build with AI\r\n\r\nOKX Onchain OS Trade give agents and developers a complete swap execution layer, from getting the best multi-chain quote to a transaction, without stitching together separate routing, signing, and RPC integrations. Whether you are building an automated trading agent or embedding swap execution into a product, the Skill and MCP Server handle the entire lifecycle with production-grade patterns already built in.\r\n\r\n## Why Onchain OS Trade for AI\r\n\r\n- **Broadest on-chain liquidity coverage.** The OKX DEX aggregator routes across 500+ DEXs on 20+ chains such as Solana, Ethereum, Base, BNB Chain, Arbitrum, Sui, TON, and more. At quote time, it splits orders across multiple pools and routes to minimize price impact and maximize the amount received, not just find the cheapest single route.\r\n- **Full execution stack in one tool.** Onchain OS Trade AI tools cover every step from quote → swap → sign with multi-chain support. An Agent can execute a complete multi-step swap from a single high-level instruction, including Approve transactions where needed, chain-specific signing flows for EVM and Solana, and confirmation handling.\r\n- **Agent-optimized interface Skill and MCP Server.** OKX Web3 Trade provides two integration paths depending on how your Agent is deployed. The Skill teaches your Agent how to call the OKX DEX API through structured instructions and code generation. The MCP Server exposes the same capabilities as directly callable tools via the Model Context Protocol.\r\n\r\n## Quickstart\r\n\r\n### Skills\r\n\r\nBy adding the Skill files to the Agent’s skill directory, the Agent will automatically load the intent router, chain-specific execution playbooks, signing modes, and error-handling logic.\r\n\r\n```shell\r\nnpx skills add okx/onchainos-skills\r\n```\r\n\r\nFor more details, please refer to the [GitHub repository](https://github.com/okx/onchainos-skills).\r\n\r\n### MCP server\r\n\r\nFor Claude Desktop, Cursor, and other MCP-compatible clients, add the following configuration:\r\n\r\n#### for General Claude code\r\n\r\n```shell\r\nclaude mcp add onchainos-mcp https://web3.okx.com/api/v1/onchainos-mcp -t http -H\"OK-ACCESS-KEY: d573a84c-8e79-4a35-b0c6-427e9ad2478d\"\r\n```\r\n\r\n#### For Claude Desktop Installation\r\n\r\n1. Go to the `Settings` page and locate the `Connector` menu.  \r\n2. Scroll to the bottom, find `Add custom connector`, and enter the URL:  https://web3.okx.com/api/v1/onchainos-mcp  \r\n\r\nYou can also try a local installation. For detailed instructions, please consult your Claude client.\r\n\r\n#### for Claude code MCP settings\r\n\r\n```shell\r\nclaude mcp add-json onchainos-mcp '{\r\n\"type\": \"http\",\r\n\"url\": \"https://web3.okx.com/api/v1/onchainos-mcp\",\r\n\"headers\": {\r\n\"OK-ACCESS-KEY\": \"d573a84c-8e79-4a35-b0c6-427e9ad2478d\"\r\n}\r\n}'\r\n```\r\n\r\nOne MCP server covers both Trade and Market capabilities. Restart your client after updating the config.\n--- End [Pasted text #2 · 52 lines] ---",
+  "scope": null,
+  "non_goals": null,
+  "allowed_operations": {
+    "write": true,
+    "network": false,
+    "publish": false
+  },
+  "success_criteria": [
+    {
+      "id": "objective_evidence",
+      "description": "The goal outcome is supported by direct evidence, such as inspected code, reproduced behavior, source material, or concrete findings.",
+      "required": true,
+      "evidence_ids": null
+    },
+    {
+      "id": "verification",
+      "description": "The result has relevant verification evidence, such as tests, commands, benchmarks, manual checks, or a documented reason why verification is not applicable.",
+      "required": true,
+      "evidence_ids": null
+    }
+  ]
+}
