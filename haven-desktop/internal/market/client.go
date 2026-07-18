@@ -141,9 +141,6 @@ func (c *Client) FetchTokens(ctx context.Context) ([]TokenInfo, error) {
 	var tokens []TokenInfo
 	for _, row := range raw {
 		chainID, _ := row["chainId"].(string)
-		if chainID != "56" {
-			continue
-		}
 		addr, _ := row["contractAddress"].(string)
 		if addr == "" || len(addr) < 10 {
 			continue

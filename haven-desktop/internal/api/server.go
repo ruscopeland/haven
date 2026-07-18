@@ -19,8 +19,10 @@ import (
 	"strings"
 	"time"
 
+	"github.com/ethereum/go-ethereum/crypto"
 	"github.com/google/uuid"
 
+	"github.com/ruscopeland/haven-desktop/internal/credentials"
 	"github.com/ruscopeland/haven-desktop/internal/db"
 )
 
@@ -33,6 +35,7 @@ type Server struct {
 	buildHash     string
 	buildWarning  string
 	cloudURL      string
+	okxDex        *okxDexClient
 }
 
 // MarketProvider is the interface for market data operations.
@@ -46,6 +49,7 @@ type TokenEntry struct {
 	AlphaID         string  `json:"alpha_id"`
 	Symbol          string  `json:"symbol"`
 	Name            string  `json:"name"`
+	ChainID         string  `json:"chain_id"`
 	ContractAddress string  `json:"contract_address"`
 	Price           float64 `json:"price"`
 	PriceChange24h  float64 `json:"price_change_24h"`
@@ -53,7 +57,7 @@ type TokenEntry struct {
 }
 
 // NewServer creates a new API server with the given store.
-func NewServer(store *db.Store, logger *slog.Logger, market MarketProvider, buildHash string) *Server {
+func NewServer(store *db.Store, logger *slog.Logger, market MarketProvider, buildHash string, okxAPIKey, okxSecretKey, okxPassphrase string) *Server {
 	cloudURL := os.Getenv("HAVEN_CLOUD_URL")
 	if cloudURL == "" {
 		cloudURL = "https://api.haven.trading"
@@ -65,6 +69,9 @@ func NewServer(store *db.Store, logger *slog.Logger, market MarketProvider, buil
 		marketService: market,
 		buildHash:     buildHash,
 		cloudURL:      cloudURL,
+	}
+	if okxAPIKey != "" && okxSecretKey != "" {
+		s.okxDex = newOKXDexClient(okxAPIKey, okxSecretKey, okxPassphrase)
 	}
 	s.registerRoutes()
 	return s
@@ -105,6 +112,12 @@ func (s *Server) registerRoutes() {
 	// Settings
 	s.mux.HandleFunc("GET /settings/{key}", s.handleGetSetting)
 	s.mux.HandleFunc("PUT /settings/{key}", s.handleSetSetting)
+
+	// Wallet
+	s.mux.HandleFunc("POST /wallet/setup", s.handleWalletSetup)
+	s.mux.HandleFunc("GET /wallet/status", s.handleWalletStatus)
+	s.mux.HandleFunc("DELETE /wallet", s.handleWalletForget)
+	s.mux.HandleFunc("POST /wallet/prices", s.handleWalletPrices)
 
 	// Subscription
 	s.mux.HandleFunc("GET /subscription/status", s.handleSubscriptionStatus)
@@ -388,6 +401,106 @@ func (s *Server) handleSetSetting(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]string{"status": "saved"})
 }
 
+// --- Wallet ---
+
+func (s *Server) handleWalletSetup(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		PrivateKey string `json:"private_key"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid JSON")
+		return
+	}
+	key := strings.TrimSpace(req.PrivateKey)
+	if key == "" {
+		writeError(w, http.StatusBadRequest, "private_key is required")
+		return
+	}
+	// Strip 0x or 0X prefix (case-insensitive)
+	key = strings.TrimPrefix(key, "0x")
+	key = strings.TrimPrefix(key, "0X")
+	pk, err := crypto.HexToECDSA(key)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, "invalid private key")
+		return
+	}
+	address := crypto.PubkeyToAddress(pk.PublicKey).Hex()
+	if err := credentials.Store(credentials.WalletKey, key); err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to store key: "+err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]string{
+		"status":  "saved",
+		"address": address,
+	})
+}
+
+func (s *Server) handleWalletStatus(w http.ResponseWriter, r *http.Request) {
+	key, err := credentials.Retrieve(credentials.WalletKey)
+	if err != nil || key == "" {
+		writeJSON(w, http.StatusOK, map[string]interface{}{
+			"configured": false,
+		})
+		return
+	}
+	pk, err := crypto.HexToECDSA(strings.TrimPrefix(key, "0x"))
+	if err != nil {
+		writeJSON(w, http.StatusOK, map[string]interface{}{
+			"configured": false,
+		})
+		return
+	}
+	address := crypto.PubkeyToAddress(pk.PublicKey).Hex()
+	writeJSON(w, http.StatusOK, map[string]interface{}{
+		"configured": true,
+		"address":    address,
+	})
+}
+
+func (s *Server) handleWalletForget(w http.ResponseWriter, r *http.Request) {
+	if err := credentials.Delete(credentials.WalletKey); err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to remove key: "+err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]string{"status": "removed"})
+}
+
+func (s *Server) handleWalletPrices(w http.ResponseWriter, r *http.Request) {
+	if s.okxDex == nil {
+		writeJSON(w, http.StatusOK, map[string]float64{})
+		return
+	}
+	var req struct {
+		Tokens []struct {
+			Chain    string `json:"chain"`
+			Contract string `json:"contract"`
+			Symbol   string `json:"symbol"`
+		} `json:"tokens"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid JSON")
+		return
+	}
+
+	prices := make(map[string]float64)
+	for _, t := range req.Tokens {
+		chainID := numericChain[t.Chain]
+		if chainID == "" {
+			continue
+		}
+		usdcAddr := usdcAddrs[chainID]
+		if usdcAddr == "" || strings.EqualFold(t.Contract, usdcAddr) {
+			continue
+		}
+		price, err := s.okxDex.quote(r.Context(), chainID, t.Contract, usdcAddr)
+		if err != nil {
+			continue
+		}
+		prices[t.Symbol] = price
+	}
+	writeJSON(w, http.StatusOK, prices)
+}
+
 // --- Subscription ---
 
 func (s *Server) handleSubscriptionStatus(w http.ResponseWriter, r *http.Request) {
@@ -605,7 +718,7 @@ func (s *Server) handleListTokens(w http.ResponseWriter, r *http.Request) {
 			Name:            t.Name,
 			DisplaySymbol:   t.Symbol,
 			ContractAddress: t.ContractAddress,
-			ChainID:         "bsc",
+			ChainID:         chainName(t.ChainID),
 			AlphaID:         t.AlphaID,
 			Status:          "active",
 			Price:           t.Price,
@@ -642,7 +755,7 @@ func (s *Server) handleGetToken(w http.ResponseWriter, r *http.Request) {
 				"name":             t.Name,
 				"display_symbol":   t.Symbol,
 				"contract_address": t.ContractAddress,
-				"chain_id":         "bsc",
+				"chain_id":         chainName(t.ChainID),
 				"alpha_id":         t.AlphaID,
 				"status":           "active",
 				"decimals":         18,
@@ -673,8 +786,8 @@ func (s *Server) handleTokenSearch(w http.ResponseWriter, r *http.Request) {
 				"name":             t.Name,
 				"display":          t.Symbol,
 				"contract_address": t.ContractAddress,
-				"chain":            "bsc",
-				"chain_id":         "56",
+				"chain":            chainName(t.ChainID),
+				"chain_id":         t.ChainID,
 				"alpha_id":         t.AlphaID,
 				"in_db":            true,
 				"price":            t.Price,
@@ -710,7 +823,7 @@ func (s *Server) handleTokenEnsure(w http.ResponseWriter, r *http.Request) {
 			if req.AlphaID != "" && strings.EqualFold(t.AlphaID, req.AlphaID) {
 				writeJSON(w, http.StatusOK, map[string]interface{}{
 					"symbol": t.Symbol, "name": t.Name, "display": t.Symbol,
-					"chain": "bsc", "contract_address": t.ContractAddress,
+					"chain": chainName(t.ChainID), "contract_address": t.ContractAddress,
 					"status": "active",
 				})
 				return
@@ -780,7 +893,7 @@ func (s *Server) handlePublicTickerUniverse(w http.ResponseWriter, r *http.Reque
 			"last_price":       t.Price,
 			"price_change_24h": t.PriceChange24h,
 			"volume_24h":       t.Volume24h,
-			"chain":            "bsc",
+			"chain":            chainName(t.ChainID),
 			"contract_address": t.ContractAddress,
 			"default_checked":  i < 10,
 		}
@@ -808,7 +921,7 @@ func (s *Server) handlePublicTicker(w http.ResponseWriter, r *http.Request) {
 					"last_price":       t.Price,
 					"price_change_24h": t.PriceChange24h,
 					"volume_24h":       t.Volume24h,
-					"chain":            "bsc",
+					"chain":            chainName(t.ChainID),
 					"contract_address": t.ContractAddress,
 				})
 				break
@@ -893,15 +1006,37 @@ func (s *Server) handleGetSignals(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) handleGetChains(w http.ResponseWriter, r *http.Request) {
 	chains := []map[string]interface{}{
-		{
-			"id":       "bsc",
-			"chain_id": "56",
-			"name":     "BNB Smart Chain",
-			"native_symbol": "BNB",
-			"rpc_url":  "https://bsc-dataseed.binance.org",
-		},
+		{"id": "bsc",       "chain_id": "56",    "name": "BNB Smart Chain", "native_symbol": "BNB",  "rpc_url": "https://bsc-dataseed.binance.org"},
+		{"id": "ethereum",  "chain_id": "1",     "name": "Ethereum",        "native_symbol": "ETH",  "rpc_url": "https://eth.llamarpc.com"},
+		{"id": "base",      "chain_id": "8453",  "name": "Base",            "native_symbol": "ETH",  "rpc_url": "https://mainnet.base.org"},
+		{"id": "arbitrum",  "chain_id": "42161", "name": "Arbitrum One",    "native_symbol": "ETH",  "rpc_url": "https://arb1.arbitrum.io/rpc"},
+		{"id": "polygon",   "chain_id": "137",   "name": "Polygon PoS",     "native_symbol": "POL",  "rpc_url": "https://polygon-rpc.com"},
+		{"id": "optimism",  "chain_id": "10",    "name": "Optimism",        "native_symbol": "ETH",  "rpc_url": "https://mainnet.optimism.io"},
+		{"id": "avalanche", "chain_id": "43114", "name": "Avalanche C-Chain","native_symbol": "AVAX", "rpc_url": "https://api.avax.network/ext/bc/C/rpc"},
 	}
 	writeJSON(w, http.StatusOK, chains)
+}
+
+// chainName maps Binance Alpha numeric chain IDs to the names the frontend uses.
+func chainName(numericID string) string {
+	switch numericID {
+	case "1":
+		return "ethereum"
+	case "10":
+		return "optimism"
+	case "56":
+		return "bsc"
+	case "137":
+		return "polygon"
+	case "8453":
+		return "base"
+	case "42161":
+		return "arbitrum"
+	case "43114":
+		return "avalanche"
+	default:
+		return "bsc"
+	}
 }
 
 // handleGetKlines returns candles in the array-of-arrays format that
@@ -1075,7 +1210,7 @@ func (s *Server) handleGetUniverse(w http.ResponseWriter, r *http.Request) {
 		td := tokenData{
 			Symbol:         tok.Symbol,
 			Name:           tok.Name,
-			Chain:          "bsc",
+			Chain:          chainName(tok.ChainID),
 			Volume24h:      tok.Volume24h,
 			PriceChange24h: tok.PriceChange24h,
 			O:              make([]*float64, totalBars),

@@ -3,6 +3,9 @@
 package credentials
 
 import (
+	"errors"
+	"fmt"
+
 	"github.com/danieljoos/wincred"
 )
 
@@ -16,7 +19,10 @@ func store(key, value string) error {
 func retrieve(key string) (string, error) {
 	cred, err := wincred.GetGenericCredential(serviceName + "/" + key)
 	if err != nil {
-		return "", nil
+		if errors.Is(err, wincred.ErrElementNotFound) {
+			return "", nil // not found is expected, not an error
+		}
+		return "", fmt.Errorf("credential retrieve %q: %w", key, err)
 	}
 	return string(cred.CredentialBlob), nil
 }
@@ -24,7 +30,10 @@ func retrieve(key string) (string, error) {
 func deleteKey(key string) error {
 	cred, err := wincred.GetGenericCredential(serviceName + "/" + key)
 	if err != nil {
-		return nil
+		if errors.Is(err, wincred.ErrElementNotFound) {
+			return nil // already gone
+		}
+		return fmt.Errorf("credential delete %q: %w", key, err)
 	}
 	return cred.Delete()
 }

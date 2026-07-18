@@ -11,6 +11,15 @@
     </style>
   </head>
   <body>
+    <script>
+      // Catch ALL errors and display them — unhandled rejects too
+      var el=document.getElementById('root');
+      function showErr(msg,stack){
+        if(el)el.innerHTML='<div style="padding:40px;color:#f85149;font-family:monospace;font-size:14px"><h2 style="color:#f0f6fc;margin-bottom:16px">Error</h2><p>'+msg+'</p>'+(stack?'<pre style="color:#8b949e;font-size:11px;margin-top:8px;white-space:pre-wrap">'+stack+'</pre>':'')+'</div>';
+      }
+      window.onerror=function(m,s,l,c,e){showErr(String(m)+(s?' — '+s+':'+l:''),e&&e.stack)};
+      window.addEventListener('unhandledrejection',function(e){showErr(String(e.reason),e.reason&&e.reason.stack)});
+    </script>
     <div id="root"></div>
     <script type="module" src="/src/main.jsx"></script>
   </body>

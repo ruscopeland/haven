@@ -110,11 +110,11 @@ func NewChain(rpcURL string, chainID int64, privateKeyHex string, okxAPIKey, okx
 	}
 
 	key := strings.TrimSpace(privateKeyHex)
-	if !strings.HasPrefix(key, "0x") && len(key) == 64 {
-		key = "0x" + key
-	}
+	// Strip 0x or 0X prefix (case-insensitive)
+	key = strings.TrimPrefix(key, "0x")
+	key = strings.TrimPrefix(key, "0X")
 
-	privateKey, err := crypto.HexToECDSA(strings.TrimPrefix(key, "0x"))
+	privateKey, err := crypto.HexToECDSA(key)
 	if err != nil {
 		return nil, fmt.Errorf("invalid private key: %w", err)
 	}

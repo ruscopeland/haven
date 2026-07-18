@@ -5,6 +5,7 @@ package main
 import (
 	"context"
 	"embed"
+	"io/fs"
 	"log"
 	"log/slog"
 	"net/http"
@@ -25,7 +26,17 @@ import (
 var BuildHash = "dev"
 
 //go:embed all:frontend/dist
-var assets embed.FS
+var embeddedAssets embed.FS
+
+func init() {
+	var err error
+	assets, err = fs.Sub(embeddedAssets, "frontend/dist")
+	if err != nil {
+		panic("frontend/dist not found in embedded files: " + err.Error())
+	}
+}
+
+var assets fs.FS
 
 func main() {
 	logger := slog.New(slog.NewTextHandler(os.Stdout, &slog.HandlerOptions{Level: slog.LevelInfo}))
@@ -46,7 +57,10 @@ func main() {
 	go marketSvc.Start(context.Background(), 60)
 
 	// Start local API server on a goroutine
-	apiSrv := api.NewServer(store, logger, marketSvc, BuildHash)
+	okxAPIKey := os.Getenv("OKX_API_KEY")
+	okxSecretKey := os.Getenv("OKX_SECRET_KEY")
+	okxPassphrase := os.Getenv("OKX_API_PASSPHRASE")
+	apiSrv := api.NewServer(store, logger, marketSvc, BuildHash, okxAPIKey, okxSecretKey, okxPassphrase)
 	go func() {
 		port := os.Getenv("HAVEN_PORT")
 		if port == "" {
