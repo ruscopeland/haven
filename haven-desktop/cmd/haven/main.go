@@ -57,7 +57,10 @@ func main() {
 	go marketSvc.Start(context.Background(), 60)
 
 	// Start local API server on a goroutine
-	apiSrv := api.NewServer(store, logger, marketSvc, BuildHash)
+	okxAPIKey := os.Getenv("OKX_API_KEY")
+	okxSecretKey := os.Getenv("OKX_SECRET_KEY")
+	okxPassphrase := os.Getenv("OKX_API_PASSPHRASE")
+	apiSrv := api.NewServer(store, logger, marketSvc, BuildHash, okxAPIKey, okxSecretKey, okxPassphrase)
 	go func() {
 		port := os.Getenv("HAVEN_PORT")
 		if port == "" {

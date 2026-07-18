@@ -35,6 +35,7 @@ type Server struct {
 	buildHash     string
 	buildWarning  string
 	cloudURL      string
+	okxDex        *okxDexClient
 }
 
 // MarketProvider is the interface for market data operations.
@@ -56,7 +57,7 @@ type TokenEntry struct {
 }
 
 // NewServer creates a new API server with the given store.
-func NewServer(store *db.Store, logger *slog.Logger, market MarketProvider, buildHash string) *Server {
+func NewServer(store *db.Store, logger *slog.Logger, market MarketProvider, buildHash string, okxAPIKey, okxSecretKey, okxPassphrase string) *Server {
 	cloudURL := os.Getenv("HAVEN_CLOUD_URL")
 	if cloudURL == "" {
 		cloudURL = "https://api.haven.trading"
@@ -68,6 +69,9 @@ func NewServer(store *db.Store, logger *slog.Logger, market MarketProvider, buil
 		marketService: market,
 		buildHash:     buildHash,
 		cloudURL:      cloudURL,
+	}
+	if okxAPIKey != "" && okxSecretKey != "" {
+		s.okxDex = newOKXDexClient(okxAPIKey, okxSecretKey, okxPassphrase)
 	}
 	s.registerRoutes()
 	return s
@@ -113,6 +117,7 @@ func (s *Server) registerRoutes() {
 	s.mux.HandleFunc("POST /wallet/setup", s.handleWalletSetup)
 	s.mux.HandleFunc("GET /wallet/status", s.handleWalletStatus)
 	s.mux.HandleFunc("DELETE /wallet", s.handleWalletForget)
+	s.mux.HandleFunc("POST /wallet/prices", s.handleWalletPrices)
 
 	// Subscription
 	s.mux.HandleFunc("GET /subscription/status", s.handleSubscriptionStatus)
@@ -458,6 +463,42 @@ func (s *Server) handleWalletForget(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]string{"status": "removed"})
+}
+
+func (s *Server) handleWalletPrices(w http.ResponseWriter, r *http.Request) {
+	if s.okxDex == nil {
+		writeJSON(w, http.StatusOK, map[string]float64{})
+		return
+	}
+	var req struct {
+		Tokens []struct {
+			Chain    string `json:"chain"`
+			Contract string `json:"contract"`
+			Symbol   string `json:"symbol"`
+		} `json:"tokens"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid JSON")
+		return
+	}
+
+	prices := make(map[string]float64)
+	for _, t := range req.Tokens {
+		chainID := numericChain[t.Chain]
+		if chainID == "" {
+			continue
+		}
+		usdcAddr := usdcAddrs[chainID]
+		if usdcAddr == "" || strings.EqualFold(t.Contract, usdcAddr) {
+			continue
+		}
+		price, err := s.okxDex.quote(r.Context(), chainID, t.Contract, usdcAddr)
+		if err != nil {
+			continue
+		}
+		prices[t.Symbol] = price
+	}
+	writeJSON(w, http.StatusOK, prices)
 }
 
 // --- Subscription ---
