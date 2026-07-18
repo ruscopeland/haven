@@ -5,14 +5,14 @@ package trading
 
 import (
 	"context"
-	"crypto/sha256"
-	"encoding/hex"
 	"fmt"
 	"log/slog"
 	"math"
+	"math/big"
 	"sync"
 	"time"
 
+	"github.com/ethereum/go-ethereum/common"
 	"github.com/google/uuid"
 
 	"github.com/ruscopeland/haven-desktop/internal/db"
@@ -282,12 +282,13 @@ func (e *Engine) claimMarker(marker Marker) bool {
 }
 
 func (e *Engine) claimInDB(markerID, claimID string) error {
-	// Use a setting-backed approach since we don't have a dedicated markers table updater yet.
-	// In production, this would be an UPDATE with WHERE state='active'.
-	currentHash := sha256.Sum256([]byte(markerID + ":claimed:" + claimID))
-	_ = hex.EncodeToString(currentHash[:])
-	// For now, just log — the marker state management is simple enough in SQLite
-	// with single-connection serialization that we can rely on it.
+	ok, err := e.store.ClaimMarker(markerID, claimID)
+	if err != nil {
+		return err
+	}
+	if !ok {
+		return fmt.Errorf("marker %s already claimed", markerID)
+	}
 	return nil
 }
 
@@ -321,10 +322,14 @@ func (e *Engine) executeTrade(ctx context.Context, marker Marker, price float64,
 	// Execute
 	qty := usd / price
 	feeUsd := usd * 0.001 // 0.1% fee estimate
+	side := "buy"
+	if marker.Direction == "below" {
+		side = "sell"
+	}
 	trade := db.TradeRecord{
 		StrategyID: marker.StrategyID,
 		Symbol:     marker.Symbol,
-		Side:       "buy", // markers are directional; simplified for now
+		Side:       side,
 		Qty:        math.Round(qty*1e8) / 1e8,
 		Price:      price,
 		Usd:        usd,
@@ -333,28 +338,90 @@ func (e *Engine) executeTrade(ctx context.Context, marker Marker, price float64,
 		Mode:       string(e.mode),
 	}
 
-	// In live mode, send actual swap via OpenOcean + go-ethereum.
+	// In live mode, send actual swap via OKX DEX.
 	// In dry mode, record a simulated trade.
 	if e.mode == ModeLive && e.chain != nil {
-		ctx, cancel := context.WithTimeout(context.Background(), 120*time.Second)
-		defer cancel()
-		_ = ctx
+		// Resolve token contract address from symbol
+		tokenAddrStr, _, found := e.store.TokenBySymbol(marker.Symbol)
+		if !found {
+			e.logger.Error("cannot resolve token address", "symbol", marker.Symbol)
+			e.recordFailure(marker.ID)
+			return
+		}
+		tokenAddr := common.HexToAddress(tokenAddrStr)
 
-		e.logger.Info("executing live swap",
+		// Determine direction: markers always trigger buys in this iteration
+		fromAddr := ZeroAddr
+		toAddr := tokenAddr
+		if marker.Direction == "below" {
+			// Sell: swap token for native
+			fromAddr = tokenAddr
+			toAddr = ZeroAddr
+		}
+
+		// Get decimals for the from-token
+		decimals := uint8(18)
+		if fromAddr != ZeroAddr {
+			if d, err := e.chain.GetDecimals(fromAddr); err == nil {
+				decimals = d
+			}
+		}
+
+		// Calculate amount in token base units
+		amount := big.NewInt(int64(usd * 1e18 / price)) // approximate
+		if price <= 0 {
+			e.logger.Error("invalid price for swap", "symbol", marker.Symbol)
+			e.recordFailure(marker.ID)
+			return
+		}
+
+		// Get swap quote and execute
+		swapCtx, swapCancel := context.WithTimeout(context.Background(), 60*time.Second)
+		defer swapCancel()
+
+		q, err := e.chain.GetSwapQuote(swapCtx, fromAddr, toAddr, amount, decimals, 0, 0)
+		if err != nil {
+			e.logger.Error("swap quote failed", "symbol", marker.Symbol, "error", err)
+			e.recordFailure(marker.ID)
+			return
+		}
+
+		e.logger.Info("swap quote received",
 			"symbol", marker.Symbol,
-			"usd", fmt.Sprintf("%.2f", usd),
-			"qty", fmt.Sprintf("%.4f", qty),
+			"router", q.RouterPath,
+			"price_impact", q.PriceImpact+"%",
 		)
 
-		// TODO: resolve token contract address from symbol → alphaId lookup
-		// For now, log the intent — actual swap needs token address resolution
-		// and the wallet to be configured with BNB for gas.
-		txHash := "live-pending-" + uuid.New().String()
-		trade.TxHash = txHash
-		e.logger.Warn("live swap not fully wired — token address resolution needed",
+		// Execute the swap
+		tx, err := e.chain.SendSwap(swapCtx, q, 0, []common.Address{q.To})
+		if err != nil {
+			e.logger.Error("swap execution failed", "symbol", marker.Symbol, "error", err)
+			e.recordFailure(marker.ID)
+			return
+		}
+
+		trade.TxHash = tx.Hash().Hex()
+		e.logger.Info("swap broadcast",
 			"symbol", marker.Symbol,
-			"tx_hash", txHash,
+			"tx_hash", trade.TxHash,
+			"in_amount", q.InAmount.String(),
+			"out_amount", q.OutAmount.String(),
 		)
+
+		// Wait for receipt and parse fill
+		go func() {
+			receipt, err := e.chain.WaitForReceipt(context.Background(), tx)
+			if err != nil {
+				e.logger.Error("swap receipt wait failed", "tx_hash", trade.TxHash, "error", err)
+				return
+			}
+			fill := e.chain.ParseSwapFill(context.Background(), receipt, tokenAddr, decimals, marker.Direction != "below")
+			e.logger.Info("swap confirmed",
+				"tx_hash", trade.TxHash,
+				"token_amount", fmt.Sprintf("%.4f", fill.TokenAmount),
+				"native_amount", fmt.Sprintf("%.6f", fill.NativeAmount),
+			)
+		}()
 	} else {
 		trade.TxHash = "paper-" + uuid.New().String()
 	}
@@ -416,7 +483,21 @@ func (e *Engine) recordFailure(markerID string) {
 }
 
 func (e *Engine) loadActiveMarkers() ([]Marker, error) {
-	// In the full implementation, markers are stored in the markers table.
-	// For now, return an empty list — markers are created by the strategy runner.
-	return nil, nil
+	markers, err := e.store.ListActiveMarkers()
+	if err != nil {
+		return nil, err
+	}
+	result := make([]Marker, len(markers))
+	for i, m := range markers {
+		result[i] = Marker{
+			ID:             m.ID,
+			StrategyID:     m.StrategyID,
+			Symbol:         m.Symbol,
+			ConditionType:  m.ConditionType,
+			ConditionValue: m.ConditionValue,
+			Direction:      m.Direction,
+			State:          m.State,
+		}
+	}
+	return result, nil
 }

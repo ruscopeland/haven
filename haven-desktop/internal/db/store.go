@@ -477,3 +477,100 @@ func scanStrategyFromRows(rows *sql.Rows) (*Strategy, error) {
 	}
 	return &st, nil
 }
+
+// Marker represents an active trading marker (price/indicator cross trigger).
+type Marker struct {
+	ID             string  `json:"id"`
+	StrategyID     string  `json:"strategy_id"`
+	Symbol         string  `json:"symbol"`
+	ConditionType  string  `json:"condition_type"`
+	ConditionValue float64 `json:"condition_value"`
+	Direction      string  `json:"direction"`
+	State          string  `json:"state"`
+	ClaimedBy      string  `json:"claimed_by"`
+	ClaimedAt      int64   `json:"claimed_at"`
+	CreatedAt      string  `json:"created_at"`
+}
+
+// CreateMarker inserts a new active marker.
+func (s *Store) CreateMarker(m *Marker) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if m.CreatedAt == "" {
+		m.CreatedAt = time.Now().UTC().Format(time.RFC3339)
+	}
+	_, err := s.db.Exec(
+		"INSERT INTO markers (id, strategy_id, symbol, condition_type, condition_value, direction, state, created_at) VALUES (?, ?, ?, ?, ?, ?, 'active', ?)",
+		m.ID, m.StrategyID, m.Symbol, m.ConditionType, m.ConditionValue, m.Direction, m.CreatedAt,
+	)
+	return err
+}
+
+// ListActiveMarkers returns all markers with state='active'.
+func (s *Store) ListActiveMarkers() ([]Marker, error) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	rows, err := s.db.Query("SELECT id, strategy_id, symbol, condition_type, condition_value, direction, state, claimed_by, claimed_at, created_at FROM markers WHERE state='active' ORDER BY created_at")
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var markers []Marker
+	for rows.Next() {
+		var m Marker
+		if err := rows.Scan(&m.ID, &m.StrategyID, &m.Symbol, &m.ConditionType, &m.ConditionValue, &m.Direction, &m.State, &m.ClaimedBy, &m.ClaimedAt, &m.CreatedAt); err != nil {
+			return nil, err
+		}
+		markers = append(markers, m)
+	}
+	return markers, nil
+}
+
+// ClaimMarker atomically claims a marker (state='active' → state='claimed').
+// Returns true if the claim succeeded (we were first), false if already claimed.
+func (s *Store) ClaimMarker(markerID, claimID string) (bool, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	now := time.Now().UnixMilli()
+	result, err := s.db.Exec(
+		"UPDATE markers SET state='claimed', claimed_by=?, claimed_at=? WHERE id=? AND state='active'",
+		claimID, now, markerID,
+	)
+	if err != nil {
+		return false, err
+	}
+	n, _ := result.RowsAffected()
+	return n > 0, nil
+}
+
+// CompleteMarker marks a marker as done.
+func (s *Store) CompleteMarker(markerID string) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	_, err := s.db.Exec("UPDATE markers SET state='done' WHERE id=?", markerID)
+	return err
+}
+
+// TokenBySymbol looks up a token's contract address by its symbol.
+func (s *Store) TokenBySymbol(symbol string) (contractAddr string, alphaID string, found bool) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	row := s.db.QueryRow("SELECT contract_address, alpha_id FROM tokens WHERE LOWER(symbol)=LOWER(?) LIMIT 1", symbol)
+	var addr, aid string
+	if err := row.Scan(&addr, &aid); err == nil {
+		return addr, aid, true
+	}
+	return "", "", false
+}
+
+// TokenByID looks up a token by its alpha_id.
+func (s *Store) TokenByID(alphaID string) (symbol string, contractAddr string, found bool) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	row := s.db.QueryRow("SELECT symbol, contract_address FROM tokens WHERE alpha_id=? LIMIT 1", alphaID)
+	var sym, addr string
+	if err := row.Scan(&sym, &addr); err == nil {
+		return sym, addr, true
+	}
+	return "", "", false
+}
