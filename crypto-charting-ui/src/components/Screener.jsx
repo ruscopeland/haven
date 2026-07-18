@@ -246,7 +246,7 @@ export default function Screener({ onToggle, selectedTokens, signals = [], sortB
         {selectedTokens.length} selected · {filteredSignals.length} shown
         {q.length >= 2 ? ' · typeahead active' : ''}
       </div>
-      <div className="screener-list">
+      <div className="screener-list" key={sortBy}>
         {sortedSignals.length === 0 ? (
           <div style={{ padding: 20, textAlign: 'center', color: 'var(--text-muted)' }}>
             <div className="mkt-ticker-empty">Loading scanner…</div>
