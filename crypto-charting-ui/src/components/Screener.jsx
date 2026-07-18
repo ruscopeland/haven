@@ -246,7 +246,7 @@ export default function Screener({ onToggle, selectedTokens, signals = [], sortB
         {selectedTokens.length} selected · {filteredSignals.length} shown
         {q.length >= 2 ? ' · typeahead active' : ''}
       </div>
-      <div className="screener-list">
+      <div className="screener-list" key={sortBy}>
         {sortedSignals.length === 0 ? (
           <div style={{ padding: 20, textAlign: 'center', color: 'var(--text-muted)' }}>
             <div className="mkt-ticker-empty">Loading scanner…</div>
@@ -259,24 +259,9 @@ export default function Screener({ onToggle, selectedTokens, signals = [], sortB
             const chgUp = (chg || 0) >= 0;
             const label = sig.display_symbol || sig.name || sig.symbol.replace(/USDT$/, '');
 
-            let primary;
-            if (sortBy === 'market_cap') {
-              primary = <span style={{ color: '#fff' }}>{sig.market_cap > 0 ? formatMoney(sig.market_cap) : '—'}</span>;
-            } else if (sortBy === 'mcap_vol') {
-              primary = (
-                <span style={{ color: '#34d399', fontWeight: 'bold' }}>
-                  {sig.market_cap > 0 ? (Math.log10(sig.market_cap + 1) + Math.log10(sig.volume_24h + 1)).toFixed(1) : '0.0'}
-                </span>
-              );
-            } else if (sortBy === 'vol_24h') {
-              primary = <span style={{ color: '#fff' }}>{formatMoney(sig.volume_24h)}</span>;
-            } else {
-              primary = (
-                <span className={chgUp ? 'flow-positive' : 'flow-negative'}>
-                  {chgUp ? '+' : ''}{chg?.toFixed(2)}%
-                </span>
-              );
-            }
+            // Always show the same metrics regardless of sort mode.
+            // The sort dropdown only changes the row order — never the display.
+            const primary = <span style={{ color: '#fff' }}>{formatMoney(sig.volume_24h)}</span>;
 
             return (
               <div
@@ -298,21 +283,14 @@ export default function Screener({ onToggle, selectedTokens, signals = [], sortB
                         {formatScreenerPrice(sig.last_price)}
                       </span>
                     </div>
-                    {sortBy !== 'price_change_24h' && (
-                      <div style={{ fontSize: 11, color: chgUp ? '#34d399' : '#fb7185', fontVariantNumeric: 'tabular-nums' }}>
-                        {chg == null ? '—' : `${chgUp ? '+' : ''}${Number(chg).toFixed(2)}%`} 24h
-                      </div>
-                    )}
+                    <div style={{ fontSize: 11, color: chgUp ? '#34d399' : '#fb7185', fontVariantNumeric: 'tabular-nums' }}>
+                      {chg == null ? '—' : `${chgUp ? '+' : ''}${Number(chg).toFixed(2)}%`} 24h
+                    </div>
                   </div>
                 </div>
                 <div className="token-flow">
                   {primary}
-                  <span className="flow-label">
-                    {sortBy === 'market_cap' ? 'Market Cap'
-                      : sortBy === 'mcap_vol' ? 'Mkt+Vol'
-                      : sortBy === 'vol_24h' ? '24h Vol'
-                      : '24h Change'}
-                  </span>
+                  <span className="flow-label">24h Vol</span>
                 </div>
               </div>
             );

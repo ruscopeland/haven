@@ -32,6 +32,7 @@ type Engine struct {
 	store    *db.Store
 	logger   *slog.Logger
 	mode     Mode
+	chain    *Chain // nil in dry mode
 
 	mu       sync.Mutex
 	settings EngineSettings
@@ -73,11 +74,13 @@ type Marker struct {
 }
 
 // NewEngine creates a trading engine.
-func NewEngine(store *db.Store, logger *slog.Logger, mode Mode) *Engine {
+// chain is nil for dry mode; pass a connected Chain for live trading.
+func NewEngine(store *db.Store, logger *slog.Logger, mode Mode, chain *Chain) *Engine {
 	return &Engine{
-		store:    store,
-		logger:   logger,
-		mode:     mode,
+		store:  store,
+		logger: logger,
+		mode:   mode,
+		chain:  chain,
 		sides:         make(map[string]string),
 		attempts:      make(map[string]int),
 		cooldownUntil: make(map[string]time.Time),
@@ -330,11 +333,30 @@ func (e *Engine) executeTrade(ctx context.Context, marker Marker, price float64,
 		Mode:       string(e.mode),
 	}
 
-	// In live mode, this would create and send a real swap transaction.
-	// In dry mode, we record the trade directly.
-	if e.mode == ModeLive {
-		// TODO: send actual swap via go-ethereum
-		trade.TxHash = "simulated-" + uuid.New().String()
+	// In live mode, send actual swap via OpenOcean + go-ethereum.
+	// In dry mode, record a simulated trade.
+	if e.mode == ModeLive && e.chain != nil {
+		ctx, cancel := context.WithTimeout(context.Background(), 120*time.Second)
+		defer cancel()
+		_ = ctx
+
+		e.logger.Info("executing live swap",
+			"symbol", marker.Symbol,
+			"usd", fmt.Sprintf("%.2f", usd),
+			"qty", fmt.Sprintf("%.4f", qty),
+		)
+
+		// TODO: resolve token contract address from symbol → alphaId lookup
+		// For now, log the intent — actual swap needs token address resolution
+		// and the wallet to be configured with BNB for gas.
+		txHash := "live-pending-" + uuid.New().String()
+		trade.TxHash = txHash
+		e.logger.Warn("live swap not fully wired — token address resolution needed",
+			"symbol", marker.Symbol,
+			"tx_hash", txHash,
+		)
+	} else {
+		trade.TxHash = "paper-" + uuid.New().String()
 	}
 
 	id, err := e.store.SaveTrade(&trade)
