@@ -15,7 +15,7 @@ const splashCSS = `
   @keyframes haven-grow { 0%{transform:scale(0);opacity:0} 100%{transform:scale(1);opacity:1} }
 `;
 
-const DOWNLOAD_URL = 'https://github.com/ruscopeland/haven/releases/download/v1.2.0-desktop/haven-desktop.exe';
+const DOWNLOAD_URL = 'https://github.com/ruscopeland/haven/releases/download/v1.2.0-desktop/haven-desktop-v1.2.0.exe';
 
 // ── SVG logo reuse ────────────────────────────────────────────────────────
 
