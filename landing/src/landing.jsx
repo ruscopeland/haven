@@ -82,7 +82,7 @@ function Dashboard() {
       {/* NAV */}
       <div style={{ display:'flex', justifyContent:'space-between', alignItems:'center', padding:'8px 0', flexShrink:0 }}>
         <Logo size={24} />
-        <a href={DOWNLOAD_URL} style={{ background:'var(--primary-gradient)', color:'#fff', padding:'6px 14px', borderRadius:8, fontWeight:600, fontSize:13, textDecoration:'none' }}>Download</a>
+        <a href={DOWNLOAD_URL} style={{ background:'var(--primary-gradient)', color:'#fff', padding:'6px 14px', borderRadius:8, fontWeight:600, fontSize:13, textDecoration:'none' }}>Download for Windows</a>
       </div>
 
       {/* HERO */}
@@ -115,7 +115,9 @@ function Dashboard() {
               <b>1.</b> Download &nbsp; <b>2.</b> Explore with free data &nbsp; <b>3.</b> Trade when ready
             </p>
             <a href={DOWNLOAD_URL} className="btn-primary" style={{ textDecoration:'none', display:'inline-block', fontSize:14, padding:'8px 24px' }}>Download for Windows</a>
-            <p style={{ marginTop:8, fontSize:11, color:'var(--text-muted)' }}>macOS &amp; Linux also available</p>
+            <p style={{ marginTop:8, fontSize:11, color:'var(--text-muted)' }}>
+              macOS coming soon · <a href="https://github.com/ruscopeland/haven/releases/download/v1.2.0-desktop/haven-desktop-v1.2.0-linux" style={{ color:'var(--text-muted)', textDecoration:'underline' }}>Download for Linux</a>
+            </p>
           </div>
           <div style={{ ...card, textAlign:'center', fontSize:11, color:'var(--text-muted)', maxWidth:240 }}>
             <p style={{ margin:'0 0 4px', color:'var(--text-bright)', fontSize:12 }}>{'\u{1F6E1}'} Built to run locally</p>
