@@ -44,6 +44,8 @@ type rateWindow struct {
 type ChatRequest struct {
 	Messages       []ChatMessage `json:"messages"`
 	Model          string        `json:"model,omitempty"`
+	Mode           string        `json:"mode,omitempty"`
+	Code           string        `json:"code,omitempty"`
 	LLMLimit       int           `json:"llm_limit,omitempty"`        // from entitlement
 	LLMWindowSec   int           `json:"llm_window_sec,omitempty"`   // from entitlement
 }
@@ -57,15 +59,47 @@ type ChatMessage struct {
 // NewService creates an assistant proxy service.
 func NewService(apiKey string, logger *slog.Logger) *Service {
 	return &Service{
-		apiKey:   apiKey,
-		logger:   logger,
-		counters: make(map[string]*rateWindow),
+		apiKey:     apiKey,
+		logger:     logger,
+		counters:   make(map[string]*rateWindow),
 		httpClient: &http.Client{Timeout: 120 * time.Second},
 	}
 }
 
 // SetVerifier sets the Clerk verifier for auth checks.
 func (s *Service) SetVerifier(v *auth.ClerkVerifier) { s.verifier = v }
+
+func (s *Service) buildSystemPrompt(mode, code string) string {
+	var sb strings.Builder
+	sb.WriteString("You are an expert quantitative developer for the Haven crypto trading platform.\n")
+	sb.WriteString("You write sandboxed JavaScript trading strategies and token finders.\n")
+	sb.WriteString("You do not have access to the internet, you cannot run shell commands, and you cannot view external charts. You only write JavaScript code.\n")
+	sb.WriteString("Never output placeholder implementations. Never output fake API integrations. Never output code that doesn't actually work.\n\n")
+
+	if mode == "strategy" {
+		sb.WriteString("You are writing a 'Strategy' using the strategy-sdk.\n")
+		sb.WriteString("A strategy defines `onBar(bar, ctx)` which is called every tick.\n")
+		sb.WriteString("You can access indicators like `ctx.rsi()`, `ctx.sma()`, `ctx.bb()`, `ctx.vwap()`, `ctx.roc()`, `ctx.stddev()`.\n")
+		sb.WriteString("You can execute trades using `ctx.buy()` and `ctx.sell()`.\n")
+		sb.WriteString("Example structure:\n")
+		sb.WriteString("const strategy = { name: 'My Strat', params: { ... }, onBar(bar, ctx) { ... } };\n")
+	} else if mode == "finder" {
+		sb.WriteString("You are writing a 'Token Finder' using the strategy-sdk.\n")
+		sb.WriteString("A finder defines `filter(ctx)` which returns a boolean, and `score(ctx)` which returns a number to rank tokens.\n")
+		sb.WriteString("Finders rank tokens; they never execute trades.\n")
+		sb.WriteString("Example structure:\n")
+		sb.WriteString("const finder = { name: 'My Finder', params: { ... }, filter(ctx) { return true; }, score(ctx) { return 1; } };\n")
+	}
+
+	if code != "" {
+		sb.WriteString("\nHere is the user's current code:\n")
+		sb.WriteString("```javascript\n")
+		sb.WriteString(code)
+		sb.WriteString("\n```\n")
+	}
+
+	return sb.String()
+}
 
 // HandleChat is the POST /v1/assistant/chat handler.
 func (s *Service) HandleChat(w http.ResponseWriter, r *http.Request) {
@@ -115,6 +149,19 @@ func (s *Service) HandleChat(w http.ResponseWriter, r *http.Request) {
 	model := chatReq.Model
 	if model == "" {
 		model = defaultModel
+	}
+
+	// Inject System Prompt
+	hasSystem := false
+	for _, m := range chatReq.Messages {
+		if m.Role == "system" {
+			hasSystem = true
+			break
+		}
+	}
+	if !hasSystem {
+		sysPrompt := s.buildSystemPrompt(chatReq.Mode, chatReq.Code)
+		chatReq.Messages = append([]ChatMessage{{Role: "system", Content: sysPrompt}}, chatReq.Messages...)
 	}
 
 	// Trim context window to keep token usage under control.
