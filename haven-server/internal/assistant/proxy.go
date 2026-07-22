@@ -73,6 +73,7 @@ func (s *Service) HandleChat(w http.ResponseWriter, r *http.Request) {
 	if s.verifier != nil {
 		_, err := s.verifier.VerifyTokenFromRequest(r)
 		if err != nil {
+			s.logger.Error("Authentication failed", "err", err.Error())
 			writeError(w, http.StatusUnauthorized, "Authentication failed")
 			return
 		}
