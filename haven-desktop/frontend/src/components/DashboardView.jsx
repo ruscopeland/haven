@@ -4,7 +4,6 @@ import ActivityTables from './ActivityTables';
 import WalletPanel from './WalletPanel';
 import PortfolioSummary from './PortfolioSummary';
 import AssetAllocation from './AssetAllocation';
-import FirstRunChecklist from './FirstRunChecklist';
 import AttentionStrip from './AttentionStrip';
 import { computePnl } from '../utils/pnl';
 import '../dashboard.css';
@@ -74,11 +73,6 @@ export default function DashboardView({
   return (
     <div className="dash-root">
       <AttentionStrip wallet={wallet} strategies={strats} />
-      <FirstRunChecklist
-        wallet={wallet}
-        onGoSettings={onGoSettings}
-        onGoStrategies={onGoStrategies}
-      />
       <div className="dash-grid">
         <div className="dash-col">
           <PortfolioSummary

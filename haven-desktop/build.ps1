@@ -1,1 +1,0 @@
-cd frontend; npm run build; Remove-Item -Recurse -Force ..\cmd\haven\frontend; New-Item -ItemType Directory -Force ..\cmd\haven\frontend; Copy-Item -Recurse -Force dist ..\cmd\haven\frontend\; cd ..; go clean -cache; go build -o haven.exe ./cmd/haven; go build -o bin/haven-desktop.exe ./cmd/haven

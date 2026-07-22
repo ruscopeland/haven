@@ -75,8 +75,16 @@ function App() {
   const [gridMode, setGridMode] = useState(null); // null = auto, or 1/2/4/6
   const [legalDoc, setLegalDoc] = useState(null); // terms | privacy | risk | null (docs is a main view)
   const [ownerAccess, setOwnerAccess] = useState(false);
+  const [hasPromptedWallet, setHasPromptedWallet] = useState(false);
 
   const wallet = useWalletData();
+
+  useEffect(() => {
+    if (!wallet.loading && !wallet.address && !hasPromptedWallet) {
+      setHasPromptedWallet(true);
+      setView('wallet');
+    }
+  }, [wallet.loading, wallet.address, hasPromptedWallet]);
 
   const [presets, setPresets] = useState(() => {
     const saved = localStorage.getItem('chartPresets');
@@ -269,6 +277,22 @@ function App() {
       <div className="app-ticker-bar">
         <MarketTicker />
       </div>
+
+      {(!wallet.loading && !wallet.address && view !== 'wallet') && (
+        <div style={{
+          background: 'rgba(239, 68, 68, 0.1)', borderBottom: '1px solid rgba(239, 68, 68, 0.2)',
+          color: '#fca5a5', padding: '10px', textAlign: 'center', fontSize: '13px',
+          display: 'flex', justifyContent: 'center', alignItems: 'center', gap: '10px'
+        }}>
+          <span>⚠️ A wallet is required to live trade.</span>
+          <button 
+            onClick={() => navigate('wallet')}
+            style={{ background: '#ef4444', color: '#fff', border: 'none', padding: '4px 12px', borderRadius: '4px', cursor: 'pointer', fontSize: '12px', fontWeight: 'bold' }}
+          >
+            Configure Wallet
+          </button>
+        </div>
+      )}
 
       {/* Nav tabs span full width so opening Charts never shifts them. */}
       <div className="preset-toolbar" style={{

@@ -10,6 +10,7 @@ import BacktestResults from './BacktestResults';
 import SlotTimeline from './SlotTimeline';
 import GuidePanel from './GuidePanel';
 import AssistantPanel from './AssistantPanel';
+import TokenCombobox, { prettySymbol } from './TokenCombobox';
 import '../strategies.css';
 
 const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:8000';
@@ -19,14 +20,6 @@ const INTERVAL_SEC = { '1m': 60, '5m': 300, '15m': 900, '30m': 1800, '1h': 3600,
 // is available at these intervals from the server-side Binance Alpha candle cache.
 const PORTFOLIO_INTERVALS = ['5m', '15m', '30m', '1h'];
 const DRAFT_KEY = 'strategyDraft';
-
-// Human-readable ticker: prefer the Binance Alpha display name ("BSB (Block
-// Street)"), else strip Haven's internal Binance Alpha-id/chain suffix.
-const prettySymbol = (sym, name) => {
-  if (!sym) return '';
-  if (name && name !== sym) return name;
-  return sym.replace(/_\d+_bsc$/, '');
-};
 
 const newDraftFromTemplate = (tpl, symbol) => ({
   id: null,
@@ -557,13 +550,13 @@ export default function StrategyWorkbench({ signals = [], initialSelectId = null
               <option value="">Fixed symbol</option>
               {finders.map(f => <option key={f.id} value={f.id}>🔍 {f.name}</option>)}
             </select>
-            {!isPortfolio && (
-              <select className="wb-select" value={draft.symbol} onChange={(e) => patchDraft({ symbol: e.target.value })}>
-                {symbolOptions.map(([sym, name]) => (
-                  <option key={sym} value={sym}>{prettySymbol(sym, name)}</option>
-                ))}
-              </select>
-            )}
+              {!isPortfolio && (
+                <TokenCombobox
+                  options={symbolOptions}
+                  value={draft.symbol}
+                  onChange={(sym) => patchDraft({ symbol: sym })}
+                />
+              )}
             <select className="wb-select wb-interval" value={draft.interval} onChange={(e) => patchDraft({ interval: e.target.value })}>
               {(isPortfolio ? PORTFOLIO_INTERVALS : INTERVALS).map(iv => <option key={iv} value={iv}>{iv}</option>)}
             </select>
