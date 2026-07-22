@@ -26,9 +26,15 @@ func main() {
 		clerkPublishable = os.Getenv("CLERK_FRONTEND_API")
 	}
 	verifier := auth.NewClerkVerifier(clerkSecret, clerkPublishable, logger)
-	releaseDir := requireEnv("RELEASE_DIR")
+	releaseDir := envOrDefault("RELEASE_DIR", "/app/releases")
 	port := envOrDefault("PORT", "8080")
-	deepseekKey := requireEnv("DEEPSEEK_API_KEY")
+	deepseekKey := os.Getenv("DEEPSEEK_API_KEY")
+	if deepseekKey == "" {
+		deepseekKey = os.Getenv("deepseek_v4_flash_key")
+	}
+	if deepseekKey == "" {
+		logger.Error("deepseek API key missing")
+	}
 
 	// Optional configuration
 	releasePublicKey := os.Getenv("RELEASE_PUBLIC_KEY")
