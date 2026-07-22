@@ -158,6 +158,10 @@ func dataDirectory() string {
 	if dir := os.Getenv("HAVEN_DATA_DIR"); dir != "" {
 		return dir
 	}
+	configDir, err := os.UserConfigDir()
+	if err == nil {
+		return filepath.Join(configDir, "haven")
+	}
 	home, err := os.UserHomeDir()
 	if err != nil {
 		log.Fatalf("cannot determine home directory: %v", err)

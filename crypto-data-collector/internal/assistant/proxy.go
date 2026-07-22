@@ -81,14 +81,18 @@ func (s *Service) buildSystemPrompt(mode, code string) string {
 		sb.WriteString("A strategy defines `onBar(bar, ctx)` which is called every tick.\n")
 		sb.WriteString("You can access indicators like `ctx.rsi()`, `ctx.sma()`, `ctx.bb()`, `ctx.vwap()`, `ctx.roc()`, `ctx.stddev()`.\n")
 		sb.WriteString("You can execute trades using `ctx.buy()` and `ctx.sell()`.\n")
+		sb.WriteString("CRITICAL: `ctx` is ONLY available inside `onBar`. Do not reference `ctx` in the `params` object or at the top level of the script.\n")
+		sb.WriteString("The `params` object must contain static default values (numbers, strings, booleans).\n")
 		sb.WriteString("Example structure:\n")
-		sb.WriteString("const strategy = { name: 'My Strat', params: { ... }, onBar(bar, ctx) { ... } };\n")
+		sb.WriteString("const strategy = {\n  name: 'My Strat',\n  params: { rsiLen: 14, overbought: 70 },\n  onBar(bar, ctx) { \n    const rsi = ctx.rsi(ctx.params.rsiLen);\n    // logic here \n  }\n};\n")
 	} else if mode == "finder" {
 		sb.WriteString("You are writing a 'Token Finder' using the strategy-sdk.\n")
 		sb.WriteString("A finder defines `filter(ctx)` which returns a boolean, and `score(ctx)` which returns a number to rank tokens.\n")
 		sb.WriteString("Finders rank tokens; they never execute trades.\n")
+		sb.WriteString("CRITICAL: `ctx` is ONLY available inside `filter` and `score`. Do not reference `ctx` in the `params` object or at the top level of the script.\n")
+		sb.WriteString("The `params` object must contain static default values.\n")
 		sb.WriteString("Example structure:\n")
-		sb.WriteString("const finder = { name: 'My Finder', params: { ... }, filter(ctx) { return true; }, score(ctx) { return 1; } };\n")
+		sb.WriteString("const finder = {\n  name: 'My Finder',\n  params: { minVol: 50000 },\n  filter(ctx) { return ctx.token.volume24h >= ctx.params.minVol; },\n  score(ctx) { return 1; }\n};\n")
 	}
 
 	if code != "" {
