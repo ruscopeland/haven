@@ -75,6 +75,13 @@ export default function TokenCombobox({ options, value, onChange }) {
             placeholder="Search tokens..."
             value={search}
             onChange={(e) => setSearch(e.target.value)}
+            onKeyDown={(e) => {
+              if (e.key === 'Enter' && search.trim() !== '') {
+                onChange(search.trim().toUpperCase());
+                setIsOpen(false);
+                setSearch('');
+              }
+            }}
             autoFocus
           />
           <div className="token-combo-list">
@@ -101,7 +108,9 @@ export default function TokenCombobox({ options, value, onChange }) {
                 </div>
               ))}
               {filtered.favs.length === 0 && filtered.others.length === 0 && (
-                <div className="combo-empty">No results found</div>
+                <div className="combo-empty">
+                  {search ? `Press Enter to use "${search.toUpperCase()}"` : "No results found. Type a symbol."}
+                </div>
               )}
             </div>
           </div>
