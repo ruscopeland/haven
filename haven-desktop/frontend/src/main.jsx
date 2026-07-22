@@ -2,10 +2,13 @@
 import { StrictMode, useState, useEffect, useCallback } from 'react'
 import { createRoot } from 'react-dom/client'
 import { ClerkProvider, useAuth, SignIn, UserButton } from '@clerk/clerk-react'
+import { installAuthFetch } from './authFetch.js'
 import './index.css'
 import './haven-saas.css'
 import App from './App.jsx'
 import heroVideo from './assets/hero.mp4'
+
+installAuthFetch('http://localhost:8000')
 
 const PUBLISHABLE_KEY = 'pk_test_cHJlcGFyZWQtc2t5bGFyay0xMi5jbGVyay5hY2NvdW50cy5kZXYk'
 const hasRealKey = PUBLISHABLE_KEY && !PUBLISHABLE_KEY.includes('YOUR_CLERK_KEY')

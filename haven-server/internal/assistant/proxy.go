@@ -147,9 +147,35 @@ func (s *Service) HandleChat(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(resp.StatusCode)
-	io.Copy(w, io.LimitReader(resp.Body, maxResponseBytes))
+	bodyBytes, err := io.ReadAll(io.LimitReader(resp.Body, maxResponseBytes))
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "Failed to read AI response")
+		return
+	}
+
+	var dsResp struct {
+		Choices []struct {
+			Message struct {
+				Content string `json:"content"`
+			} `json:"message"`
+		} `json:"choices"`
+	}
+
+	if err := json.Unmarshal(bodyBytes, &dsResp); err != nil {
+		// Just proxy the raw text if we can't parse it as json
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(resp.StatusCode)
+		w.Write(bodyBytes)
+	} else {
+		var reply string
+		if len(dsResp.Choices) > 0 {
+			reply = dsResp.Choices[0].Message.Content
+		}
+
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(resp.StatusCode)
+		json.NewEncoder(w).Encode(map[string]string{"reply": reply})
+	}
 
 	s.logger.Info("assistant chat completed",
 		"model", model,
