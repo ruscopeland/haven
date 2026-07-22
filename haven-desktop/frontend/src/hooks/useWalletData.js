@@ -15,9 +15,27 @@ import {
 const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:8000';
 const ADDR_KEY = 'alpha_wallet_address';
 const EXTRA_CONTRACTS_KEY = 'havenWalletExtraContracts'; // JSON: { bsc: ['0x…'], … }
-const TOKENLIST_CACHE_KEY = 'havenTokenListCache';       // { [url]: { ts, tokens } }
 const TOKENLIST_CACHE_TTL = 24 * 60 * 60 * 1000;        // 24 hours
 const SCAN_CHAINS = ['bsc', 'ethereum', 'base', 'arbitrum', 'polygon', 'optimism', 'avalanche'];
+
+async function loadBackendCache(key) {
+  try {
+    const r = await fetch(`${API_URL}/settings/${key}`);
+    if (!r.ok) return null;
+    const j = await r.json();
+    return j.value ? JSON.parse(j.value) : null;
+  } catch { return null; }
+}
+
+async function saveBackendCache(key, obj) {
+  try {
+    await fetch(`${API_URL}/settings/${key}`, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ value: JSON.stringify(obj) })
+    });
+  } catch {}
+}
 
 const NATIVE_PRICE_SYMBOL = { bsc: 'BNB', ethereum: 'ETH', base: 'ETH', arbitrum: 'ETH', polygon: 'POL', optimism: 'ETH', avalanche: 'AVAX' };
 
@@ -120,25 +138,28 @@ async function fetchTradeContracts() {
   }
 }
 
-// Fetches official token lists per chain (Uniswap, PancakeSwap, etc.).
-// These cover thousands of established tokens the Binance Alpha catalogue misses.
-// Results are cached in localStorage for 24 hours.
+let inMemoryTokenCache = null;
+let inMemoryTokenCacheTs = 0;
+
 async function fetchTokenLists() {
-  // Check cache
-  let cache = {};
-  try {
-    const raw = localStorage.getItem(TOKENLIST_CACHE_KEY);
-    if (raw) cache = JSON.parse(raw);
-  } catch { /* corrupt — refetch */ }
+  const now = Date.now();
+  
+  // 1. Fast path: check in-memory cache (survives 45s polling interval without hitting disk)
+  if (inMemoryTokenCache && (now - inMemoryTokenCacheTs) < TOKENLIST_CACHE_TTL) {
+    return inMemoryTokenCache;
+  }
+
+  // 2. Fallback: check SQLite database cache via local API
+  let diskCache = await loadBackendCache('haven_token_cache') || {};
 
   const allTokens = [];
-  const now = Date.now();
+  const updatedCache = { ...diskCache };
+  let cacheModified = false;
 
   await Promise.all(TOKEN_LIST_SOURCES.map(async ({ url, chain }) => {
-    // Use cache if fresh
-    const entry = cache[url];
+    const entry = diskCache[url];
     if (entry && entry.ts && (now - entry.ts) < TOKENLIST_CACHE_TTL && Array.isArray(entry.tokens)) {
-      console.log(`wallet: token list cache hit for ${chain} — ${entry.tokens.length} tokens`);
+      console.log(`wallet: token list disk cache hit for ${chain}`);
       allTokens.push(...entry.tokens);
       return;
     }
@@ -146,10 +167,17 @@ async function fetchTokenLists() {
     try {
       console.log(`wallet: fetching token list for ${chain} from ${url}`);
       const r = await fetch(url);
-      if (!r.ok) { console.warn(`wallet: token list ${chain} HTTP ${r.status}`); return; }
+      if (!r.ok) {
+        console.warn(`wallet: token list ${chain} HTTP ${r.status}`);
+        if (entry && Array.isArray(entry.tokens)) allTokens.push(...entry.tokens);
+        return;
+      }
       const data = await r.json();
       const list = data?.tokens;
-      if (!Array.isArray(list)) return;
+      if (!Array.isArray(list)) {
+        if (entry && Array.isArray(entry.tokens)) allTokens.push(...entry.tokens);
+        return;
+      }
 
       const tokens = [];
       for (const t of list) {
@@ -164,9 +192,9 @@ async function fetchTokenLists() {
         });
       }
 
-      // Cache the result
-      cache[url] = { ts: now, tokens };
+      updatedCache[url] = { ts: now, tokens };
       allTokens.push(...tokens);
+      cacheModified = true;
       console.log(`wallet: token list ${chain} — ${tokens.length} tokens parsed`);
     } catch (e) {
       console.warn(`wallet: token list ${chain} fetch failed:`, e.message);
@@ -176,31 +204,34 @@ async function fetchTokenLists() {
     }
   }));
 
-  // Persist cache
-  try { localStorage.setItem(TOKENLIST_CACHE_KEY, JSON.stringify(cache)); } catch { /* quota exceeded */ }
+  if (cacheModified) {
+    saveBackendCache('haven_token_cache', updatedCache);
+  }
 
+  // Save to memory cache so subsequent 45s polls are instant and network-free
+  inMemoryTokenCache = allTokens;
+  inMemoryTokenCacheTs = now;
   return allTokens;
 }
 
-// Fetch USD prices from OKX DEX aggregator via the backend.
-// Sends held token addresses and receives USD prices keyed by symbol.
+// Fetch USD prices for held tokens via Binance Alpha market data.
 async function fetchTokenPrices(heldTokens, existingPrices) {
   const out = { ...existingPrices };
   const needed = heldTokens.filter(t => out[t.symbol] == null);
   if (!needed.length) return out;
 
   try {
-    const r = await fetch(`${API_URL}/wallet/prices`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        tokens: needed.map(t => ({ chain: t.chain, contract: t.contract, symbol: t.symbol })),
-      }),
-    });
-    if (!r.ok) return out;
-    const prices = await r.json();
-    Object.assign(out, prices);
-  } catch { /* backend may not have OKX keys configured */ }
+    const r = await fetch(`${API_URL}/market/prices`);
+    if (r.ok) {
+      const j = await r.json();
+      const marketPrices = j.prices || {};
+      for (const t of needed) {
+        const mp = marketPrices[t.symbol];
+        if (mp?.price > 0) out[t.symbol] = Number(mp.price);
+      }
+    }
+  } catch { /* keep whatever prices we have */ }
+
   return out;
 }
 
@@ -219,20 +250,35 @@ export default function useWalletData() {
   // On first mount, if localStorage has no address, try to recover it from
   // the backend credential store (survives localStorage clear / WebView2 reset).
   useEffect(() => {
-    if (getSavedAddress()) return; // already have an address
     let alive = true;
-    (async () => {
-      try {
-        const r = await fetch(`${API_URL}/wallet/status`);
-        if (!r.ok) return;
-        const d = await r.json();
-        if (d.configured && d.address && alive) {
-          localStorage.setItem(ADDR_KEY, d.address);
-          setAddressState(d.address);
-        }
-      } catch { /* backend not ready yet — will retry next poll */ }
-      if (alive) setRecovering(false);
-    })();
+
+    // Fast boot: instantly load previous wallet state from SQLite cache
+    loadBackendCache('haven_wallet_state').then(cached => {
+      if (alive && cached && cached.tokens) {
+        setTokens(prev => prev.length ? prev : cached.tokens);
+        setNatives(prev => Object.keys(prev).length ? prev : (cached.natives || {}));
+        setBnb(prev => prev !== null ? prev : (cached.bnb ?? null));
+        setBnbPrice(prev => prev !== null ? prev : (cached.bnbPrice ?? null));
+      }
+    });
+
+    if (!getSavedAddress()) {
+      (async () => {
+        try {
+          const r = await fetch(`${API_URL}/wallet/status`);
+          if (!r.ok) return;
+          const d = await r.json();
+          if (d.configured && d.address && alive) {
+            localStorage.setItem(ADDR_KEY, d.address);
+            setAddressState(d.address);
+          }
+        } catch { /* backend not ready yet — will retry next poll */ }
+        if (alive) setRecovering(false);
+      })();
+    } else {
+      setRecovering(false);
+    }
+    
     return () => { alive = false; };
   }, []);
 
@@ -326,6 +372,7 @@ export default function useWalletData() {
 
         // 3) Multicall balances per chain
         const allHeld = [];
+        const failedChains = new Set();
         await Promise.all(SCAN_CHAINS.map(async (chain) => {
           try {
             const list = [...(byChain[chain]?.values() || [])];
@@ -366,20 +413,35 @@ export default function useWalletData() {
             }
           } catch (e) {
             console.warn(`wallet scan ${chain}:`, e);
+            failedChains.add(chain);
           }
         }));
 
         if (!alive) return;
-        console.log(`wallet: scan complete — ${allHeld.length} tokens held`);
-        setTokens(allHeld);
-        setError(null);
+        
+        setTokens(prev => {
+          const prevFailed = prev.filter(t => failedChains.has(t.chain));
+          const merged = [...allHeld, ...prevFailed];
+          
+          console.log(`wallet: scan complete - ${merged.length} tokens held`);
+          
+          if (merged.length > 0) {
+            fetchTokenPrices(merged, tokenPrices).then(prices => {
+              if (alive) setTokenPrices(prices);
+            }).catch(() => {});
+          }
 
-        // Fetch USD prices from CoinGecko for tokens without pricing (runs in background)
-        if (allHeld.length > 0) {
-          fetchTokenPrices(allHeld, tokenPrices).then(prices => {
-            setTokenPrices(prices);
-          }).catch(() => {});
-        }
+          saveBackendCache('haven_wallet_state', {
+            tokens: merged,
+            natives: nextNatives,
+            bnb: nextNatives.bsc?.qty,
+            bnbPrice: nextNatives.bsc?.priceUsd
+          });
+          
+          return merged;
+        });
+        
+        setError(null);
       } catch (e) {
         if (alive) setError(String(e.message || e));
       }

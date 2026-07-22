@@ -12,7 +12,7 @@ const RECENT_TRADE_MS = 14 * 24 * 60 * 60 * 1000; // "a couple of weeks"
 // small leftover dust is common — hide it UNLESS the token was traded
 // recently, since the user is still actively watching that one.
 export default function WalletPanel({ wallet, prices, tokenMap, signals, pnlBySymbol, lastTradeBySymbol, onSelectToken, onGoWallet }) {
-  const { address, setAddress, tokens, error } = wallet;
+  const { address, setAddress, tokens, natives, error, loading } = wallet;
   const [editing, setEditing] = useState(false);
   const [draft, setDraft] = useState(address);
 
@@ -75,75 +75,85 @@ export default function WalletPanel({ wallet, prices, tokenMap, signals, pnlBySy
             <div style={{ textAlign: 'right' }}>P/L</div>
           </div>
 
-          {/* Native coins — gas + quote currency for each chain */}
-          {Object.entries(wallet.natives || {}).map(([chain, n]) => {
-            if (!n || n.qty == null) return null;
-            const usd = n.usd ?? (n.qty * (n.priceUsd ?? 0));
-            return (
-              <div key={chain} className="holding-row">
-                <div className="holding-info">
-                  <div className="token-icon-placeholder" style={{ background: `linear-gradient(135deg, ${tokenColor(null, true)} 0%, #1e1e2d 100%)` }}>{n.symbol}</div>
-                  <div style={{ minWidth: 0 }}>
-                    <div className="h-symbol">{n.symbol}</div>
-                    <div className="h-name">{n.name || `${chain} native coin`}</div>
+          {loading ? (
+            <div className="dash-muted" style={{ fontSize: 12, padding: '10px 0' }}>
+              Scanning chains for balances…
+            </div>
+          ) : (
+            <>
+              {/* Native coins — only show chains with positive balance */}
+              {Object.entries(natives || {}).map(([chain, n]) => {
+                if (!n || !n.qty || n.qty <= 0) return null;
+                if (n.priceUsd == null) return null;
+                const usd = n.usd ?? (n.qty * (n.priceUsd ?? 0));
+                if (usd < DUST_USD) return null;
+                return (
+                  <div key={chain} className="holding-row">
+                    <div className="holding-info">
+                      <div className="token-icon-placeholder" style={{ background: `linear-gradient(135deg, ${tokenColor(null, true)} 0%, #1e1e2d 100%)` }}>{n.symbol}</div>
+                      <div style={{ minWidth: 0 }}>
+                        <div className="h-symbol">{n.symbol}</div>
+                        <div className="h-name">{n.name || `${chain} native coin`}</div>
+                      </div>
+                    </div>
+                    <div className="h-num">{n.priceUsd != null ? `$${fmtPrice(n.priceUsd)}` : '…'}</div>
+                    <div className="h-sub">—</div>
+                    <div>
+                      <div className="h-num">{fmtQty(n.qty)}</div>
+                      <div className="h-sub">{n.priceUsd != null ? fmtUsd(usd) : '…'}</div>
+                    </div>
+                    <div className="h-sub" style={{ textAlign: 'right' }}>—</div>
+                  </div>
+                );
+              })}
+
+              {rows.map(t => (
+                <div key={t.symbol} className="holding-row clickable" title={`Open ${t.name || t.symbol} page`}
+                  onClick={() => onSelectToken?.({ symbol: t.symbol, name: t.name || t.symbol })}>
+                  <div className="holding-info">
+                    <div className="token-icon-placeholder" style={{ background: `linear-gradient(135deg, ${t.color} 0%, #1e1e2d 100%)` }}>
+                      {(t.name || t.symbol).replace(/[^A-Za-z0-9]/g, '').substring(0, 3).toUpperCase()}
+                    </div>
+                    <div style={{ minWidth: 0 }}>
+                      <div className="h-symbol">{t.name || t.symbol}</div>
+                      <div className="h-name">{t.symbol}</div>
+                    </div>
+                  </div>
+                  <div className="h-num">{t.price ? `$${fmtPrice(t.price)}` : '—'}</div>
+                  <div>
+                    {typeof t.chg === 'number' ? (
+                      <span className={`badge ${t.chg >= 0 ? 'badge-gain' : 'badge-loss'}`} style={{ fontSize: 11 }}>
+                        {t.chg >= 0 ? '+' : ''}{t.chg.toFixed(2)}%
+                      </span>
+                    ) : <span className="h-sub">—</span>}
+                  </div>
+                  <div>
+                    <div className="h-num">{fmtQty(t.qty)}</div>
+                    <div className="h-sub">{fmtUsd(t.usd)}</div>
+                  </div>
+                  <div style={{ textAlign: 'right' }}>
+                    {t.pnl != null ? (
+                      <span className={t.pnl >= 0 ? 'dash-green' : 'dash-red'} style={{ fontWeight: 600, fontSize: 13 }}>
+                        {t.pnl >= 0 ? '+' : ''}{fmtUsd(t.pnl)}
+                      </span>
+                    ) : <span className="h-sub">—</span>}
                   </div>
                 </div>
-                <div className="h-num">{n.priceUsd != null ? `$${fmtPrice(n.priceUsd)}` : '…'}</div>
-                <div className="h-sub">—</div>
-                <div>
-                  <div className="h-num">{fmtQty(n.qty)}</div>
-                  <div className="h-sub">{n.priceUsd != null ? fmtUsd(usd) : '…'}</div>
-                </div>
-                <div className="h-sub" style={{ textAlign: 'right' }}>—</div>
-              </div>
-            );
-          })}
+              ))}
 
-          {rows.map(t => (
-            <div key={t.symbol} className="holding-row clickable" title={`Open ${t.name || t.symbol} page`}
-              onClick={() => onSelectToken?.({ symbol: t.symbol, name: t.name || t.symbol })}>
-              <div className="holding-info">
-                <div className="token-icon-placeholder" style={{ background: `linear-gradient(135deg, ${t.color} 0%, #1e1e2d 100%)` }}>
-                  {(t.name || t.symbol).replace(/[^A-Za-z0-9]/g, '').substring(0, 3).toUpperCase()}
+              {rows.length === 0 && hiddenCount === 0 && (
+                <div className="dash-muted" style={{ fontSize: 12, padding: '10px 0' }}>
+                  No token holdings found for this wallet yet.
                 </div>
-                <div style={{ minWidth: 0 }}>
-                  <div className="h-symbol">{t.name || t.symbol}</div>
-                  <div className="h-name">{t.symbol}</div>
+              )}
+
+              {hiddenCount > 0 && (
+                <div className="dash-muted" style={{ fontSize: 11, padding: '6px 0 0 4px' }}>
+                  {hiddenCount} holding{hiddenCount > 1 ? 's' : ''} under $1 hidden (no trade in the last 2 weeks) —
+                  still counted in Portfolio Net Worth above.
                 </div>
-              </div>
-              <div className="h-num">{t.price ? `$${fmtPrice(t.price)}` : '—'}</div>
-              <div>
-                {typeof t.chg === 'number' ? (
-                  <span className={`badge ${t.chg >= 0 ? 'badge-gain' : 'badge-loss'}`} style={{ fontSize: 11 }}>
-                    {t.chg >= 0 ? '+' : ''}{t.chg.toFixed(2)}%
-                  </span>
-                ) : <span className="h-sub">—</span>}
-              </div>
-              <div>
-                <div className="h-num">{fmtQty(t.qty)}</div>
-                <div className="h-sub">{fmtUsd(t.usd)}</div>
-              </div>
-              <div style={{ textAlign: 'right' }}>
-                {t.pnl != null ? (
-                  <span className={t.pnl >= 0 ? 'dash-green' : 'dash-red'} style={{ fontWeight: 600, fontSize: 13 }}>
-                    {t.pnl >= 0 ? '+' : ''}{fmtUsd(t.pnl)}
-                  </span>
-                ) : <span className="h-sub">—</span>}
-              </div>
-            </div>
-          ))}
-
-          {rows.length === 0 && hiddenCount === 0 && (
-            <div className="dash-muted" style={{ fontSize: 12, padding: '10px 0' }}>
-              No token holdings found for this wallet yet.
-            </div>
-          )}
-
-          {hiddenCount > 0 && (
-            <div className="dash-muted" style={{ fontSize: 11, padding: '6px 0 0 4px' }}>
-              {hiddenCount} holding{hiddenCount > 1 ? 's' : ''} under $1 hidden (no trade in the last 2 weeks) —
-              still counted in Portfolio Net Worth above.
-            </div>
+              )}
+            </>
           )}
         </div>
       )}

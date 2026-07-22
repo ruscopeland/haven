@@ -400,15 +400,19 @@ export default function StrategyDetailView({ strategyId, onBack, onEdit }) {
                   </tr>
                 </thead>
                 <tbody>
-                  {calc.rows.slice().reverse().map(t => (
+                  {calc.rows.slice().reverse().map(t => {
+                  const timeMs = t.time || t.block_time;
+                  const sideStr = (t.side || t.direction || '').toUpperCase();
+                  const execPx = t.price || t.execution_price || t.expected_price;
+                  return (
                     <tr key={t.id}
                       className={`sd-trade-row ${t.id === selectedTradeId ? 'selected' : ''}`}
                       onClick={() => selectTrade(t)}
                       title="Show this trade on the chart">
-                      <td>{fmtTime(t.block_time)}</td>
+                      <td>{fmtTime(timeMs)}</td>
                       {isPortfolio && <td>{tokenLabel(t.symbol, tokenMap)}</td>}
-                      <td><span className={`side-pill ${t.direction === 'BUY' ? 'buy' : 'sell'}`}>{t.direction}</span></td>
-                      <td>{fmtPrice(t.price)}</td>
+                      <td><span className={`side-pill ${sideStr === 'BUY' ? 'buy' : 'sell'}`}>{sideStr}</span></td>
+                      <td>{fmtPrice(execPx)}</td>
                       <td>{fmtQty(t.qty)}</td>
                       <td>{fmtUsd(t.usd)}</td>
                       <td className={pnlClass(t.pnl)}>{t.pnl == null ? '' : fmtUsd(t.pnl)}</td>
@@ -418,13 +422,14 @@ export default function StrategyDetailView({ strategyId, onBack, onEdit }) {
                       {kind === 'live' && (
                         <td onClick={e => e.stopPropagation()}>
                           {t.tx_hash && !t.tx_hash.startsWith('paper-') && (
-                            <a href={`https://bscscan.com/tx/${t.tx_hash}`} target="_blank"
+                            <a href={t.tx_hash.length > 66 ? `https://explorer.cow.fi/bsc/orders/${t.tx_hash}` : `https://bscscan.com/tx/${t.tx_hash}`} target="_blank"
                               rel="noopener noreferrer" className="sd-tx-link">↗</a>
                           )}
                         </td>
                       )}
                     </tr>
-                  ))}
+                  );
+                })}
                   {calc.rows.length === 0 && (
                     <tr><td colSpan={isPortfolio ? 9 : 8} className="dash-muted sd-empty-cell">
                       {kind === 'paper'

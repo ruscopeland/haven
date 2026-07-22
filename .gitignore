@@ -4,14 +4,6 @@
 .env.*
 !.env.example
 !.env.*.example
-docs/LOCAL_RELEASE_ACCESS.md
-
-# ── Live database + backups + logs ───────────────────────────
-crypto-data-collector/crypto_data.db
-crypto-data-collector/crypto_data.db-shm
-crypto-data-collector/crypto_data.db-wal
-backups/
-*.log
 
 # ── Dependencies / build output ───────────────────────────────
 node_modules/
@@ -24,10 +16,9 @@ venv/
 # ── Desktop app build artifacts ───────────────────────────────
 haven-desktop/bin/
 haven-desktop/cmd/haven/frontend/dist/
-haven-cloud/server.exe
-haven-desktop/haven.exe
-
-# ── Signed engine releases are intentionally versioned with their public manifest ──
+haven-desktop/haven-desktop.exe
+haven-desktop/haven-desktop.exe~
+*.log
 
 # ── Editor / OS noise ─────────────────────────────────────────
 .DS_Store
@@ -35,12 +26,8 @@ Thumbs.db
 .claude/settings.local.json
 .claude/.verify_touched
 
-# ── Removed legacy code ───────────────────────────────────────
-_deprecated/
-
 # ── Local test and analysis output ────────────────────────────
 .pytest_cache/
 .coverage
 coverage.xml
 htmlcov/
-

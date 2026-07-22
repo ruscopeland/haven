@@ -1,7 +1,6 @@
 // Full portfolio / wallet audit page — key-free balances + engine trade PnL.
 // Manual swaps reuse ManualTradePanel (same engine path as token page).
 import { useEffect, useMemo, useState } from 'react';
-import useWalletData from '../hooks/useWalletData';
 import usePortfolioStats from '../hooks/usePortfolioStats';
 import { computePnl, unrealizedFor } from '../utils/pnl';
 import { fmtUsd, fmtQty, fmtPrice, fmtTime, tokenColor, tokenLabel, tradeUsd } from '../utils/format';
@@ -22,13 +21,13 @@ function downloadCsv(filename, rows) {
 }
 
 export default function PortfolioView({
+  wallet,
   signals = [],
   focusSymbol = null,
   onOpenToken,
   onOpenChart,
 }) {
-  const wallet = useWalletData();
-  const { address, setAddress, bnb, bnbPrice, tokens, error } = wallet;
+  const { address, setAddress, bnb, bnbPrice, tokens, error, loading } = wallet;
   const [editing, setEditing] = useState(false);
   const [draft, setDraft] = useState(address);
   const [prices, setPrices] = useState({});
@@ -74,29 +73,36 @@ export default function PortfolioView({
   }, []);
 
   const pnlBySymbol = useMemo(() => computePnl(filledTrades), [filledTrades]);
-  const stats = usePortfolioStats({ wallet, prices, tokenMap, pnlBySymbol });
+
+  // MUST be above stats — allPrices used by stats
+  const allPrices = useMemo(
+    () => ({ ...prices, ...(wallet.tokenPrices || {}) }),
+    [prices, wallet.tokenPrices],
+  );
+
+  const stats = usePortfolioStats({ wallet, prices: allPrices, tokenMap, pnlBySymbol });
   const change24h = useMemo(
     () => Object.fromEntries((signals || []).map(s => [s.symbol, s.price_change_24h])),
     [signals],
   );
 
   const audit = useMemo(() => {
-    const filled = filledTrades.filter(t => t.status === 'FILLED');
+    const filled = filledTrades.filter(t => (t.mode === 'live' || t.status === 'FILLED'));
     let gasBnb = 0;
     let wins = 0, losses = 0, flat = 0;
     // Approximate per-sell outcome using sequential avg-cost walk already in computePnl
     // For win rate: count sell fills with positive contribution vs sells
-    const sells = filled.filter(t => t.direction === 'SELL');
+    const sells = filled.filter(t => (t.side || t.direction || '').toUpperCase() === 'SELL');
     // Rebuild walk for win/loss on each sell
-    const sorted = [...filled].sort((a, b) => (a.block_time || 0) - (b.block_time || 0));
+    const sorted = [...filled].sort((a, b) => (a.time || a.block_time || 0) - (b.time || b.block_time || 0));
     const state = {};
     for (const t of sorted) {
       const s = state[t.symbol] || (state[t.symbol] = { qty: 0, basis: 0 });
-      const qty = t.direction === 'BUY'
-        ? (t.amount_out || 0)
-        : (t.amount_in || 0);
-      const usd = tradeUsd(t);
-      if (t.direction === 'BUY') {
+      const qty = (t.side || t.direction || '').toUpperCase() === 'BUY'
+        ? (t.qty || t.amount_out || 0)
+        : (t.qty || t.amount_in || 0);
+      const usd = tradeUsd(t) || t.usd || 0;
+      if ((t.side || t.direction || '').toUpperCase() === 'BUY') {
         s.qty += qty; s.basis += usd;
       } else if (qty > 0) {
         const sold = Math.min(qty, s.qty);
@@ -115,16 +121,14 @@ export default function PortfolioView({
     const dayAgo = Date.now() - 86_400_000;
     const weekAgo = Date.now() - 7 * 86_400_000;
     const realized24h = (() => {
-      // Approximate: recompute realized only using trades in window is hard;
-      // show trade volume 24h instead + total realized from stats.
       return filled.filter(t => (t.block_time || 0) >= dayAgo).length;
     })();
     const vol24h = filled
-      .filter(t => (t.block_time || 0) >= dayAgo)
-      .reduce((s, t) => s + tradeUsd(t), 0);
+      .filter(t => (t.time || t.block_time || 0) >= dayAgo)
+      .reduce((s, t) => s + (tradeUsd(t) || t.usd || 0), 0);
     const vol7d = filled
-      .filter(t => (t.block_time || 0) >= weekAgo)
-      .reduce((s, t) => s + tradeUsd(t), 0);
+      .filter(t => (t.time || t.block_time || 0) >= weekAgo)
+      .reduce((s, t) => s + (tradeUsd(t) || t.usd || 0), 0);
     return {
       fills: filled.length,
       sells: sells.length,
@@ -142,14 +146,16 @@ export default function PortfolioView({
     const nat = wallet.natives || {};
     if (Object.keys(nat).length) {
       for (const [chain, n] of Object.entries(nat)) {
-        if (n?.qty == null) continue;
+        if (n?.qty == null || n.qty <= 0) continue;
+        if (n.priceUsd == null) continue;
+        const usd = n.usd || (n.qty * n.priceUsd);
         rows.push({
           key: `native:${chain}`,
           symbol: n.symbol || chain.toUpperCase(),
           name: n.name || n.symbol,
           qty: n.qty,
           price: n.priceUsd,
-          usd: n.usd || ((n.qty || 0) * (n.priceUsd || 0)),
+          usd,
           chg: null,
           pnl: null,
           isBnb: true,
@@ -176,7 +182,7 @@ export default function PortfolioView({
       });
     }
     for (const t of tokens) {
-      const price = prices?.[t.symbol] || 0;
+      const price = allPrices?.[t.symbol] || 0;
       const usd = t.qty * price;
       const pnlRow = pnlBySymbol[t.symbol];
       const u = unrealizedFor(pnlRow, price);
@@ -198,7 +204,7 @@ export default function PortfolioView({
         meta: tokenMap[t.symbol],
       });
     }
-    const visible = rows.filter(r => (r.usd || 0) >= dustUsd || r.isBnb);
+    const visible = rows.filter(r => (r.usd || 0) >= dustUsd);
     const hidden = rows.length - visible.length;
     const sorted = [...visible].sort((a, b) => {
       if (sortKey === 'name') return (a.name || '').localeCompare(b.name || '');
@@ -207,7 +213,7 @@ export default function PortfolioView({
       return (b.usd || 0) - (a.usd || 0);
     });
     return { rows: sorted, hidden, total: rows.length };
-  }, [bnb, bnbPrice, tokens, prices, pnlBySymbol, change24h, dustUsd, sortKey, tokenMap, wallet.natives]);
+  }, [bnb, bnbPrice, tokens, allPrices, pnlBySymbol, change24h, dustUsd, sortKey, tokenMap, wallet.natives]);
 
   // Focus token meta for trade panel
   const focus = useMemo(() => {
@@ -219,7 +225,7 @@ export default function PortfolioView({
       symbol: sym,
       name: row?.name || meta?.name || sym,
       contract: meta?.contract_address || row?.contract,
-      price: prices[sym] ?? row?.price ?? null,
+      price: allPrices[sym] ?? row?.price ?? null,
       heldQty: row?.qty ?? heldQtyFocus,
     };
   }, [selected, holdings.rows, tokenMap, prices, heldQtyFocus]);
@@ -258,10 +264,14 @@ export default function PortfolioView({
   const exportTrades = () => {
     const lines = ['time,symbol,side,status,usd,exec_price,gas_bnb,tx'];
     for (const t of allTrades) {
+      const timeMs = t.time || t.block_time;
+      const sideStr = (t.side || t.direction || '').toUpperCase();
+      const execPx = t.price || t.execution_price || t.expected_price;
+      const statusStr = t.mode === 'live' ? 'FILLED' : (t.mode === 'paper' ? 'PAPER' : (t.status || 'FILLED'));
       lines.push([
-        t.block_time ? new Date(t.block_time).toISOString() : '',
-        t.symbol, t.direction, t.status,
-        tradeUsd(t), t.execution_price ?? '',
+        timeMs ? new Date(timeMs).toISOString() : '',
+        t.symbol, sideStr, statusStr,
+        tradeUsd(t) || t.usd || 0, execPx ?? '',
         t.gas_cost_native ?? '', t.tx_hash ?? '',
       ].join(','));
     }
@@ -378,6 +388,8 @@ export default function PortfolioView({
             )}
             {!address ? (
               <div className="dash-muted">Set a wallet address to load on-chain balances.</div>
+            ) : loading ? (
+              <div className="dash-muted">Scanning chains for balances…</div>
             ) : holdings.rows.length === 0 ? (
               <div className="dash-muted">No balances above dust threshold.</div>
             ) : (
@@ -472,19 +484,23 @@ export default function PortfolioView({
                 </thead>
                 <tbody>
                   {allTrades.slice(0, 200).map(t => {
+                    const timeMs = t.time || t.block_time;
+                    const sideStr = (t.side || t.direction || '').toUpperCase();
+                    const execPx = t.price || t.execution_price || t.expected_price;
+                    const statusStr = t.mode === 'live' ? 'FILLED' : (t.mode === 'paper' ? 'PAPER' : (t.status || 'FILLED'));
                     const realTx = t.tx_hash && !String(t.tx_hash).startsWith('paper');
                     return (
                       <tr key={t.id}>
-                        <td className="dash-muted">{fmtTime(t.block_time)}</td>
+                        <td className="dash-muted">{fmtTime(timeMs)}</td>
                         <td>{tokenLabel(t.symbol, tokenMap)}</td>
-                        <td><span className={`side-pill ${t.direction === 'BUY' ? 'buy' : 'sell'}`}>{t.direction}</span></td>
-                        <td className="num">{fmtUsd(tradeUsd(t))}</td>
-                        <td className="num">{fmtPrice(t.execution_price || t.expected_price)}</td>
-                        <td><span className={`status-pill ${t.status === 'FILLED' ? 'FILLED' : t.status === 'PAPER' ? 'PAPER' : 'other'}`}>{t.status}</span></td>
+                        <td><span className={`side-pill ${sideStr === 'BUY' ? 'buy' : 'sell'}`}>{sideStr}</span></td>
+                        <td className="num">{fmtUsd(tradeUsd(t) || t.usd || 0)}</td>
+                        <td className="num">{fmtPrice(execPx)}</td>
+                        <td><span className={`status-pill ${['FILLED', 'PAPER'].includes(statusStr) ? statusStr : 'other'}`}>{statusStr}</span></td>
                         <td className="dash-muted">{t.gas_cost_native ? `${Number(t.gas_cost_native).toFixed(5)}` : '—'}</td>
                         <td>
                           {realTx ? (
-                            <a href={`https://bscscan.com/tx/${t.tx_hash}`} target="_blank" rel="noreferrer">tx ↗</a>
+                            <a href={t.tx_hash.length > 66 ? `https://explorer.cow.fi/bsc/orders/${t.tx_hash}` : `https://bscscan.com/tx/${t.tx_hash}`} target="_blank" rel="noreferrer">{t.tx_hash.length > 66 ? 'cow ↗' : 'tx ↗'}</a>
                           ) : (t.tx_hash ? 'paper' : '—')}
                         </td>
                       </tr>
@@ -500,7 +516,7 @@ export default function PortfolioView({
         </div>
 
         <div className="portfolio-side">
-          <AssetAllocation wallet={wallet} prices={prices} tokenMap={tokenMap} pnlBySymbol={pnlBySymbol} />
+          <AssetAllocation wallet={wallet} prices={allPrices} tokenMap={tokenMap} pnlBySymbol={pnlBySymbol} />
           <div className="dash-panel" style={{ marginTop: 16 }}>
             {focus ? (
               <>

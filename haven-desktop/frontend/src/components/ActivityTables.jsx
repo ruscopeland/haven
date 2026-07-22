@@ -60,16 +60,19 @@ export default function ActivityTables({ overview, tokenMap, bnbPrice, onOpenMar
               </thead>
               <tbody>
                 {trades.map(t => {
-                  const execPx = t.execution_price || 0;
-                  const expPx = t.expected_price || 0;
-                  const showExpected = expPx > 0 && Math.abs(expPx - execPx) > execPx * 1e-6;
+                  const execPx = t.price || t.execution_price;
+                  const expPx = t.price || t.expected_price;
+                  const showExpected = expPx && execPx && expPx !== execPx && Math.abs((execPx - expPx) / expPx) > 0.005;
                   const gasBnb = t.gas_cost_native || 0;
                   const realTx = t.tx_hash && !t.tx_hash.startsWith('paper');
+                  const timeMs = t.time || t.block_time;
+                  const sideStr = (t.side || t.direction || '').toUpperCase();
+                  const statusStr = t.mode === 'live' ? 'FILLED' : (t.mode === 'paper' ? 'PAPER' : (t.status || 'FILLED'));
                   return (
                     <tr key={t.id}>
-                      <td className="dash-muted">{fmtTime(t.block_time)}</td>
+                      <td className="dash-muted">{fmtTime(timeMs)}</td>
                       <td>{tokenLabel(t.symbol, tokenMap)}</td>
-                      <td><span className={`side-pill ${t.direction === 'BUY' ? 'buy' : 'sell'}`}>{t.direction}</span></td>
+                      <td><span className={`side-pill ${sideStr === 'BUY' ? 'buy' : 'sell'}`}>{sideStr}</span></td>
                       <td>{fmtUsd(tradeUsd(t))}</td>
                       <td>
                         <div>{fmtPrice(execPx || expPx)}</div>
@@ -81,10 +84,10 @@ export default function ActivityTables({ overview, tokenMap, bnbPrice, onOpenMar
                         {gasBnb > 0 ? `${fmtQty(gasBnb)} BNB${bnbPrice ? ` (~${fmtUsd(gasBnb * bnbPrice)})` : ''}` : '—'}
                       </td>
                       <td className="dash-muted">{t.reason_label || t.reason || '—'}</td>
-                      <td><span className={`status-pill ${['FILLED', 'PAPER'].includes(t.status) ? t.status : 'other'}`}>{t.status}</span></td>
+                      <td><span className={`status-pill ${['FILLED', 'PAPER'].includes(statusStr) ? statusStr : 'other'}`}>{statusStr}</span></td>
                       <td>
                         {realTx ? (
-                          <a href={`https://bscscan.com/tx/${t.tx_hash}`} target="_blank" rel="noopener noreferrer"
+                          <a href={t.tx_hash.length > 66 ? `https://explorer.cow.fi/bsc/orders/${t.tx_hash}` : `https://bscscan.com/tx/${t.tx_hash}`} target="_blank" rel="noopener noreferrer"
                             style={{ color: 'var(--primary)', textDecoration: 'none', fontSize: 11 }}>
                             {t.tx_hash.substring(0, 8)}… ↗
                           </a>

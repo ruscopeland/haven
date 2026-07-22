@@ -5,6 +5,7 @@ package main
 import (
 	"context"
 	"embed"
+	"io"
 	"io/fs"
 	"log"
 	"log/slog"
@@ -12,13 +13,16 @@ import (
 	"os"
 	"os/signal"
 	"path/filepath"
+	"strings"
 	"syscall"
 
 	"github.com/wailsapp/wails/v3/pkg/application"
 
 	"github.com/ruscopeland/haven-desktop/internal/api"
+	"github.com/ruscopeland/haven-desktop/internal/credentials"
 	"github.com/ruscopeland/haven-desktop/internal/db"
 	"github.com/ruscopeland/haven-desktop/internal/market"
+	"github.com/ruscopeland/haven-desktop/internal/trading"
 )
 
 // BuildHash is set at build time via -ldflags "-X main.BuildHash=$(git rev-parse HEAD)".
@@ -38,12 +42,40 @@ func init() {
 
 var assets fs.FS
 
-func main() {
-	logger := slog.New(slog.NewTextHandler(os.Stdout, &slog.HandlerOptions{Level: slog.LevelInfo}))
+type engineManager struct {
+	engine *trading.Engine
+}
 
+func (em *engineManager) UpdateChainLive(rpcURL string, chainID int64, privateKeyHex string) error {
+	chain, err := trading.NewChain(rpcURL, chainID, privateKeyHex)
+	if err != nil {
+		return err
+	}
+	em.engine.UpdateChain(trading.ModeLive, chain)
+	return nil
+}
+
+func (em *engineManager) UpdateChainDry() {
+	em.engine.UpdateChain(trading.ModeDry, nil)
+}
+
+func main() {
 	// Determine data directory
 	dataDir := dataDirectory()
 	dbPath := filepath.Join(dataDir, "haven.db")
+
+	// Set up logging
+	logDir := filepath.Join(dataDir, "logs")
+	os.MkdirAll(logDir, 0755)
+	logFile, err := os.OpenFile(filepath.Join(logDir, "haven.log"), os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0666)
+	if err != nil {
+		log.Fatalf("failed to open log file: %v", err)
+	}
+	defer logFile.Close()
+
+	multiWriter := io.MultiWriter(os.Stdout, logFile)
+	logger := slog.New(slog.NewTextHandler(multiWriter, &slog.HandlerOptions{Level: slog.LevelInfo}))
+
 	logger.Info("opening database", "path", dbPath)
 
 	store, err := db.Open(dbPath)
@@ -52,15 +84,29 @@ func main() {
 	}
 	defer store.Close()
 
+	// Initialize Engine
+	var engine *trading.Engine
+	key, err := credentials.Retrieve(credentials.WalletKey)
+	if err == nil && key != "" {
+		chain, err := trading.NewChain("https://bsc-dataseed.binance.org/", 56, strings.TrimPrefix(strings.TrimPrefix(strings.TrimSpace(key), "0x"), "0X"))
+		if err == nil {
+			engine = trading.NewEngine(store, logger, trading.ModeLive, chain)
+		} else {
+			logger.Error("failed to init live chain, defaulting to dry mode", "error", err)
+			engine = trading.NewEngine(store, logger, trading.ModeDry, nil)
+		}
+	} else {
+		engine = trading.NewEngine(store, logger, trading.ModeDry, nil)
+	}
+	go engine.Start(context.Background(), 10) // 10 second polling
+
 	// Start market data service (non-blocking — fetches in background)
 	marketSvc := market.NewService(store, logger)
 	go marketSvc.Start(context.Background(), 60)
 
 	// Start local API server on a goroutine
-	okxAPIKey := os.Getenv("OKX_API_KEY")
-	okxSecretKey := os.Getenv("OKX_SECRET_KEY")
-	okxPassphrase := os.Getenv("OKX_API_PASSPHRASE")
-	apiSrv := api.NewServer(store, logger, marketSvc, BuildHash, okxAPIKey, okxSecretKey, okxPassphrase)
+	em := &engineManager{engine: engine}
+	apiSrv := api.NewServer(store, logger, marketSvc, em, BuildHash)
 	go func() {
 		port := os.Getenv("HAVEN_PORT")
 		if port == "" {

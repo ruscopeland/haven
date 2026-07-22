@@ -112,7 +112,8 @@ func (s *Store) migrate() error {
 		state TEXT NOT NULL DEFAULT 'active',
 		claimed_by TEXT NOT NULL DEFAULT '',
 		claimed_at INTEGER NOT NULL DEFAULT 0,
-		created_at TEXT NOT NULL
+		created_at TEXT NOT NULL,
+		metadata_json TEXT DEFAULT '{}'
 	);
 
 	CREATE TABLE IF NOT EXISTS engine_keys (
@@ -149,7 +150,15 @@ func (s *Store) migrate() error {
 	`
 
 	_, err := s.db.Exec(schema)
-	return err
+	if err != nil {
+		return err
+	}
+
+	// Migrations
+	_, _ = s.db.Exec(`ALTER TABLE engine_settings ADD COLUMN switch_margin_pct REAL DEFAULT 1.0;`)
+	_, _ = s.db.Exec(`ALTER TABLE markers ADD COLUMN metadata_json TEXT DEFAULT '{}';`)
+
+	return nil
 }
 
 // --- Strategy CRUD ---
@@ -490,18 +499,17 @@ type Marker struct {
 	ClaimedBy      string  `json:"claimed_by"`
 	ClaimedAt      int64   `json:"claimed_at"`
 	CreatedAt      string  `json:"created_at"`
+	MetadataJson   string  `json:"metadata_json"`
 }
 
 // CreateMarker inserts a new active marker.
 func (s *Store) CreateMarker(m *Marker) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	if m.CreatedAt == "" {
-		m.CreatedAt = time.Now().UTC().Format(time.RFC3339)
-	}
 	_, err := s.db.Exec(
-		"INSERT INTO markers (id, strategy_id, symbol, condition_type, condition_value, direction, state, created_at) VALUES (?, ?, ?, ?, ?, ?, 'active', ?)",
-		m.ID, m.StrategyID, m.Symbol, m.ConditionType, m.ConditionValue, m.Direction, m.CreatedAt,
+		`INSERT INTO markers (id, strategy_id, symbol, condition_type, condition_value, direction, state, created_at, metadata_json)
+		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		m.ID, m.StrategyID, m.Symbol, m.ConditionType, m.ConditionValue, m.Direction, m.State, m.CreatedAt, m.MetadataJson,
 	)
 	return err
 }
@@ -510,7 +518,7 @@ func (s *Store) CreateMarker(m *Marker) error {
 func (s *Store) ListActiveMarkers() ([]Marker, error) {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
-	rows, err := s.db.Query("SELECT id, strategy_id, symbol, condition_type, condition_value, direction, state, claimed_by, claimed_at, created_at FROM markers WHERE state='active' ORDER BY created_at")
+	rows, err := s.db.Query("SELECT id, strategy_id, symbol, condition_type, condition_value, direction, state, claimed_by, claimed_at, created_at, metadata_json FROM markers WHERE state='active' ORDER BY created_at")
 	if err != nil {
 		return nil, err
 	}
@@ -518,7 +526,7 @@ func (s *Store) ListActiveMarkers() ([]Marker, error) {
 	var markers []Marker
 	for rows.Next() {
 		var m Marker
-		if err := rows.Scan(&m.ID, &m.StrategyID, &m.Symbol, &m.ConditionType, &m.ConditionValue, &m.Direction, &m.State, &m.ClaimedBy, &m.ClaimedAt, &m.CreatedAt); err != nil {
+		if err := rows.Scan(&m.ID, &m.StrategyID, &m.Symbol, &m.ConditionType, &m.ConditionValue, &m.Direction, &m.State, &m.ClaimedBy, &m.ClaimedAt, &m.CreatedAt, &m.MetadataJson); err != nil {
 			return nil, err
 		}
 		markers = append(markers, m)

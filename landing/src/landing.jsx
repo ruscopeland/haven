@@ -186,9 +186,9 @@ You can tell it to open trades from your token finder in rank order, or pick the
 Remember this is DeFi — where things can go sideways fast. The volatility here is not your top-20 market cap. Make sure you understand what you're getting into.`
   },
   {
-    icon: '🔄', title: 'OKX DEX Swaps',
-    short: 'Swap tokens through OKX DEX Router. We take nothing.',
-    detail: `Manual token swapping when you just want to swap. We use OKX DEX Router for all swaps. We don't make anything off swaps — period. All fees are determined and controlled by OKX.
+    icon: '🔄', title: 'CoW Protocol Swaps',
+    short: 'Swap tokens through CoW Protocol. We take nothing.',
+    detail: `Manual token swapping when you just want to swap. We use CoW Protocol for all swaps — intent-based batch auctions that find the best price across all DEXs. We don't make anything off swaps — period. All fees are determined and controlled by CoW Protocol.
 
 The software runs completely on your machine. Your keys, your swaps — everything stays local. The only thing we serve you is data, LLM interaction, and news articles.`
   },

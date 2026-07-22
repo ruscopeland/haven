@@ -85,17 +85,28 @@ export async function multicallBalanceOf(owner, contracts, chain = 'bsc') {
       target: addr, allowFailure: true,
       callData: erc20Iface.encodeFunctionData('balanceOf', [owner]),
     }));
-    try {
-      const results = await multicall.aggregate3(calls);
-      results.forEach((r, j) => {
-        if (!r.success || !r.returnData || r.returnData === '0x') return;
-        try {
-          const [bal] = erc20Iface.decodeFunctionResult('balanceOf', r.returnData);
-          out.set(slice[j].toLowerCase(), bal);
-        } catch { /* skip decode errors */ }
-      });
-    } catch (e) {
-      console.warn(`multicallBalanceOf ${chain} chunk ${i}:`, e.message);
+    
+    let success = false;
+    let lastErr = null;
+    for (let attempt = 0; attempt < 3; attempt++) {
+      try {
+        const results = await multicall.aggregate3(calls);
+        results.forEach((r, j) => {
+          if (!r.success || !r.returnData || r.returnData === '0x') return;
+          try {
+            const [bal] = erc20Iface.decodeFunctionResult('balanceOf', r.returnData);
+            out.set(slice[j].toLowerCase(), bal);
+          } catch { /* skip decode errors */ }
+        });
+        success = true;
+        break;
+      } catch (e) {
+        lastErr = e;
+        await new Promise(r => setTimeout(r, 1000 * (attempt + 1))); // backoff
+      }
+    }
+    if (!success) {
+      throw new Error(`multicallBalanceOf ${chain} chunk ${i} failed after 3 attempts: ${lastErr?.message}`);
     }
   }
   return out;

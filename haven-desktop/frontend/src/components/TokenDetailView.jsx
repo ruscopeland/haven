@@ -207,6 +207,7 @@ export default function TokenDetailView({
             contract={contract}
             price={price}
             heldQty={heldQty}
+            decimals={meta?.decimals}
             stacked
           />
         </div>
@@ -222,15 +223,19 @@ export default function TokenDetailView({
               </thead>
               <tbody>
                 {trades.slice(0, 50).map(t => {
+                  const timeMs = t.time || t.block_time;
+                  const sideStr = (t.side || t.direction || '').toUpperCase();
+                  const execPx = t.price || t.execution_price || t.expected_price;
+                  const statusStr = t.mode === 'live' ? 'FILLED' : (t.mode === 'paper' ? 'PAPER' : (t.status || 'FILLED'));
                   const realTx = t.tx_hash && !String(t.tx_hash).startsWith('paper');
                   return (
                     <tr key={t.id}>
-                      <td className="dash-muted">{fmtTime(t.block_time)}</td>
-                      <td><span className={`side-pill ${t.direction === 'BUY' ? 'buy' : 'sell'}`}>{t.direction}</span></td>
+                      <td className="dash-muted">{fmtTime(timeMs)}</td>
+                      <td><span className={`side-pill ${sideStr === 'BUY' ? 'buy' : 'sell'}`}>{sideStr}</span></td>
                       <td>{fmtUsd(tradeUsd(t))}</td>
-                      <td>{fmtPrice(t.execution_price || t.expected_price)}</td>
-                      <td><span className={`status-pill ${t.status === 'FILLED' ? 'FILLED' : t.status === 'PAPER' ? 'PAPER' : 'other'}`}>{t.status}</span></td>
-                      <td>{realTx ? <a href={`https://bscscan.com/tx/${t.tx_hash}`} target="_blank" rel="noreferrer">tx</a> : (t.tx_hash ? 'paper' : '—')}</td>
+                      <td>{fmtPrice(execPx)}</td>
+                      <td><span className={`status-pill ${['FILLED', 'PAPER'].includes(statusStr) ? statusStr : 'other'}`}>{statusStr}</span></td>
+                      <td>{realTx ? <a href={t.tx_hash.length > 66 ? `https://explorer.cow.fi/bsc/orders/${t.tx_hash}` : `https://bscscan.com/tx/${t.tx_hash}`} target="_blank" rel="noreferrer">{t.tx_hash.length > 66 ? 'cow \u2197' : 'tx \u2197'}</a> : (t.tx_hash ? 'paper' : '—')}</td>
                     </tr>
                   );
                 })}

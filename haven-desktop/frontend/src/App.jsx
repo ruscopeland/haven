@@ -15,6 +15,7 @@ import LegalFooter from './components/LegalFooter'
 import UpgradeBanner from './components/UpgradeBanner'
 import WalletSetup from './components/WalletSetup'
 import { RISK_SUMMARY_SHORT } from './legal/content.js'
+import useWalletData from './hooks/useWalletData'
 
 const StrategyWorkbench = lazy(() => import('./components/StrategyWorkbench.jsx'));
 const FinderWorkbench = lazy(() => import('./components/FinderWorkbench.jsx'));
@@ -74,6 +75,8 @@ function App() {
   const [gridMode, setGridMode] = useState(null); // null = auto, or 1/2/4/6
   const [legalDoc, setLegalDoc] = useState(null); // terms | privacy | risk | null (docs is a main view)
   const [ownerAccess, setOwnerAccess] = useState(false);
+
+  const wallet = useWalletData();
 
   const [presets, setPresets] = useState(() => {
     const saved = localStorage.getItem('chartPresets');
@@ -370,6 +373,7 @@ function App() {
         <Suspense fallback={<div className="charts-empty" aria-busy="true">Loading…</div>}>
         {view === 'dashboard' ? (
           <DashboardView
+            wallet={wallet}
             signals={signals}
             onOpenStrategy={openStrategyPage}
             onOpenStrategyEditor={openStrategyEditor}
@@ -381,6 +385,7 @@ function App() {
           />
         ) : view === 'portfolio' ? (
           <PortfolioView
+            wallet={wallet}
             signals={signals}
             focusSymbol={portfolioFocus}
             onOpenToken={openTokenPage}

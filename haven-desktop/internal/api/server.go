@@ -26,16 +26,22 @@ import (
 	"github.com/ruscopeland/haven-desktop/internal/db"
 )
 
+// EngineManager allows the API to hot-swap engine chains without an import cycle.
+type EngineManager interface {
+	UpdateChainLive(rpcURL string, chainID int64, privateKeyHex string) error
+	UpdateChainDry()
+}
+
 // Server is the local HTTP API server.
 type Server struct {
 	store         *db.Store
 	logger        *slog.Logger
 	mux           *http.ServeMux
 	marketService MarketProvider
+	engine        EngineManager
 	buildHash     string
 	buildWarning  string
 	cloudURL      string
-	okxDex        *okxDexClient
 }
 
 // MarketProvider is the interface for market data operations.
@@ -56,25 +62,63 @@ type TokenEntry struct {
 	Volume24h       float64 `json:"volume_24h"`
 }
 
-// NewServer creates a new API server with the given store.
-func NewServer(store *db.Store, logger *slog.Logger, market MarketProvider, buildHash string, okxAPIKey, okxSecretKey, okxPassphrase string) *Server {
-	cloudURL := os.Getenv("HAVEN_CLOUD_URL")
-	if cloudURL == "" {
-		cloudURL = "https://api.haven.trading"
-	}
+// NewServer creates a new local API server.
+func NewServer(store *db.Store, logger *slog.Logger, marketSvc MarketProvider, engine EngineManager, buildHash string) *Server {
+	cloudURL := getCloudURL()
 	s := &Server{
 		store:         store,
 		logger:        logger,
 		mux:           http.NewServeMux(),
-		marketService: market,
+		marketService: marketSvc,
+		engine:        engine,
 		buildHash:     buildHash,
 		cloudURL:      cloudURL,
 	}
-	if okxAPIKey != "" && okxSecretKey != "" {
-		s.okxDex = newOKXDexClient(okxAPIKey, okxSecretKey, okxPassphrase)
-	}
 	s.registerRoutes()
 	return s
+}
+
+// handleAssistantChat proxies LLM chat requests to the cloud backend
+func (s *Server) handleAssistantChat(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	// Read original body
+	bodyBytes, err := io.ReadAll(r.Body)
+	if err != nil {
+		s.logger.Error("read chat request body", "error", err)
+		http.Error(w, "Error reading request body", http.StatusBadRequest)
+		return
+	}
+
+	// Forward to cloud LLM service
+	cloudReq, err := http.NewRequest("POST", s.cloudURL+"/v1/assistant/chat", bytes.NewReader(bodyBytes))
+	if err != nil {
+		s.logger.Error("create cloud chat request", "error", err)
+		http.Error(w, "Internal server error", http.StatusInternalServerError)
+		return
+	}
+
+	// Forward the authorization header if present (for Clerk token)
+	if authHeader := r.Header.Get("Authorization"); authHeader != "" {
+		cloudReq.Header.Set("Authorization", authHeader)
+	}
+	cloudReq.Header.Set("Content-Type", "application/json")
+
+	client := &http.Client{Timeout: 60 * time.Second}
+	resp, err := client.Do(cloudReq)
+	if err != nil {
+		s.logger.Error("cloud chat unreachable", "error", err)
+		http.Error(w, "AI service unreachable", http.StatusBadGateway)
+		return
+	}
+	defer resp.Body.Close()
+
+	w.Header().Set("Content-Type", resp.Header.Get("Content-Type"))
+	w.WriteHeader(resp.StatusCode)
+	io.Copy(w, resp.Body)
 }
 
 // Handler returns the HTTP handler for use with http.Server or Wails.
@@ -113,15 +157,23 @@ func (s *Server) registerRoutes() {
 	s.mux.HandleFunc("GET /settings/{key}", s.handleGetSetting)
 	s.mux.HandleFunc("PUT /settings/{key}", s.handleSetSetting)
 
+	// Engine Settings
+	s.mux.HandleFunc("GET /engine/settings", s.handleGetEngineSettings)
+	s.mux.HandleFunc("PATCH /engine/settings", s.handleUpdateEngineSettings)
+
 	// Wallet
 	s.mux.HandleFunc("POST /wallet/setup", s.handleWalletSetup)
 	s.mux.HandleFunc("GET /wallet/status", s.handleWalletStatus)
 	s.mux.HandleFunc("DELETE /wallet", s.handleWalletForget)
-	s.mux.HandleFunc("POST /wallet/prices", s.handleWalletPrices)
 
 	// Subscription
 	s.mux.HandleFunc("GET /subscription/status", s.handleSubscriptionStatus)
+	s.mux.HandleFunc("GET /billing/status", s.handleSubscriptionStatus) // Alias for frontend
 	s.mux.HandleFunc("POST /subscription/verify", s.handleSubscriptionVerify)
+	s.mux.HandleFunc("POST /assistant/chat", s.handleAssistantChat)
+
+	// Owner dummy
+	s.mux.HandleFunc("GET /owner/overview", s.handleOwnerOverview)
 
 	// Market data
 	s.mux.HandleFunc("GET /candles", s.handleGetCandles)
@@ -136,6 +188,9 @@ func (s *Server) registerRoutes() {
 	s.mux.HandleFunc("GET /chains", s.handleGetChains)
 	s.mux.HandleFunc("GET /public/ticker-universe", s.handlePublicTickerUniverse)
 	s.mux.HandleFunc("GET /public/ticker", s.handlePublicTicker)
+
+	// Markers
+	s.mux.HandleFunc("POST /markers", s.handleCreateMarker)
 }
 
 // --- Health ---
@@ -391,10 +446,12 @@ func (s *Server) handleSetSetting(w http.ResponseWriter, r *http.Request) {
 		Value string `json:"value"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		writeError(w, http.StatusBadRequest, "invalid JSON")
+		s.logger.Error("failed to decode setting", "key", key, "error", err)
+		writeError(w, http.StatusBadRequest, "invalid json")
 		return
 	}
 	if err := s.store.SetSetting(key, req.Value); err != nil {
+		s.logger.Error("failed to save setting", "key", key, "error", err)
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
@@ -429,6 +486,10 @@ func (s *Server) handleWalletSetup(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, "failed to store key: "+err.Error())
 		return
 	}
+
+	// Hot-swap engine to live mode with the new credentials
+	s.engine.UpdateChainLive("https://bsc-dataseed.binance.org/", 56, key)
+
 	writeJSON(w, http.StatusOK, map[string]string{
 		"status":  "saved",
 		"address": address,
@@ -462,43 +523,8 @@ func (s *Server) handleWalletForget(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, "failed to remove key: "+err.Error())
 		return
 	}
+	s.engine.UpdateChainDry()
 	writeJSON(w, http.StatusOK, map[string]string{"status": "removed"})
-}
-
-func (s *Server) handleWalletPrices(w http.ResponseWriter, r *http.Request) {
-	if s.okxDex == nil {
-		writeJSON(w, http.StatusOK, map[string]float64{})
-		return
-	}
-	var req struct {
-		Tokens []struct {
-			Chain    string `json:"chain"`
-			Contract string `json:"contract"`
-			Symbol   string `json:"symbol"`
-		} `json:"tokens"`
-	}
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		writeError(w, http.StatusBadRequest, "invalid JSON")
-		return
-	}
-
-	prices := make(map[string]float64)
-	for _, t := range req.Tokens {
-		chainID := numericChain[t.Chain]
-		if chainID == "" {
-			continue
-		}
-		usdcAddr := usdcAddrs[chainID]
-		if usdcAddr == "" || strings.EqualFold(t.Contract, usdcAddr) {
-			continue
-		}
-		price, err := s.okxDex.quote(r.Context(), chainID, t.Contract, usdcAddr)
-		if err != nil {
-			continue
-		}
-		prices[t.Symbol] = price
-	}
-	writeJSON(w, http.StatusOK, prices)
 }
 
 // --- Subscription ---
@@ -1308,6 +1334,95 @@ func withCORS(next http.Handler) http.Handler {
 		}
 		next.ServeHTTP(w, r)
 	})
+}
+
+// --- Missing Endpoints ---
+
+func (s *Server) handleGetEngineSettings(w http.ResponseWriter, r *http.Request) {
+	val, _ := s.store.GetSetting("engine_settings")
+	if val == "" {
+		val = `{"paused": 0, "max_trades_per_day": 10, "max_trade_usd": 100, "max_price_impact_pct": 2.0, "max_retry_attempts": 3, "cooldown_minutes": 5}`
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(http.StatusOK)
+	w.Write([]byte(val))
+}
+
+func (s *Server) handleUpdateEngineSettings(w http.ResponseWriter, r *http.Request) {
+	var patch map[string]interface{}
+	if err := json.NewDecoder(r.Body).Decode(&patch); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid JSON")
+		return
+	}
+	val, _ := s.store.GetSetting("engine_settings")
+	var current map[string]interface{}
+	if val != "" {
+		json.Unmarshal([]byte(val), &current)
+	} else {
+		current = map[string]interface{}{
+			"paused":               0,
+			"max_trades_per_day":   10,
+			"max_trade_usd":        100,
+			"max_price_impact_pct": 2.0,
+			"max_retry_attempts":   3,
+			"cooldown_minutes":     5,
+		}
+	}
+	for k, v := range patch {
+		current[k] = v
+	}
+	data, _ := json.Marshal(current)
+	if err := s.store.SetSetting("engine_settings", string(data)); err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, current)
+}
+
+func (s *Server) handleOwnerOverview(w http.ResponseWriter, r *http.Request) {
+	writeJSON(w, http.StatusOK, map[string]interface{}{})
+}
+
+type CreateMarkerRequest struct {
+	Symbol       string  `json:"symbol"`
+	Price        float64 `json:"price"`
+	MarkerType   string  `json:"marker_type"`
+	Direction    string  `json:"direction"`
+	Label        string  `json:"label"`
+	TimestampMs  int64   `json:"timestamp_ms"`
+	MetadataJson string  `json:"metadata_json"`
+}
+
+func (s *Server) handleCreateMarker(w http.ResponseWriter, r *http.Request) {
+	var req CreateMarkerRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid json")
+		return
+	}
+
+	direction := "above" // Default to buy
+	if req.MarkerType == "STRAT_SELL" {
+		direction = "below"
+	}
+
+	marker := &db.Marker{
+		ID:             uuid.New().String(),
+		StrategyID:     req.Label,
+		Symbol:         req.Symbol,
+		ConditionType:  "manual",
+		ConditionValue: req.Price,
+		Direction:      direction,
+		State:          "active",
+		CreatedAt:      time.Now().UTC().Format(time.RFC3339),
+		MetadataJson:   req.MetadataJson,
+	}
+
+	if err := s.store.CreateMarker(marker); err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+
+	writeJSON(w, http.StatusOK, marker)
 }
 
 // Ensure uuid import is used

@@ -1,2 +1,2 @@
 [permissions]
-allow = ["mcp__filesystem__directory_tree"]
+allow = ["mcp__filesystem__directory_tree", "Edit"]

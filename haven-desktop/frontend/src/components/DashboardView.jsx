@@ -6,7 +6,6 @@ import PortfolioSummary from './PortfolioSummary';
 import AssetAllocation from './AssetAllocation';
 import FirstRunChecklist from './FirstRunChecklist';
 import AttentionStrip from './AttentionStrip';
-import useWalletData from '../hooks/useWalletData';
 import { computePnl } from '../utils/pnl';
 import '../dashboard.css';
 
@@ -16,6 +15,7 @@ const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:8000';
 // metadata 5min, filled trades 30s for PnL) so child panels don't
 // duplicate traffic. Wallet balances come from the key-free C2 hook.
 export default function DashboardView({
+  wallet,
   signals, onOpenStrategy, onOpenStrategyEditor, onOpenMarkerChart, onSelectToken,
   onGoSettings, onGoStrategies, onGoWallet,
 }) {
@@ -23,7 +23,6 @@ export default function DashboardView({
   const [tokenMap, setTokenMap] = useState({});
   const [filledTrades, setFilledTrades] = useState([]);
   const [strats, setStrats] = useState([]);
-  const wallet = useWalletData();
 
   useEffect(() => {
     let alive = true;

@@ -1,0 +1,1 @@
+$body = @{ symbol = "USDC"; price = 1.0; marker_type = "STRAT_BUY"; direction = "cross"; label = "Manual BUY $100"; metadata_json = "{`"usd`": 100}" } | ConvertTo-Json; Invoke-RestMethod -Uri http://localhost:8000/markers -Method Post -Body $body -ContentType "application/json"

@@ -1,24 +1,26 @@
-// Pre-trade quote preview for the token page — mirrors the marker engine's
-// execution path so what the user sees is what the engine will do:
-//   sizing   = marker-engine/pure.js sizeTrade  (buy: usd/bnbPrice BNB in;
-//              sell: usd/Binance Alpha market price tokens, capped at balance)
-//   quote    = OpenOcean v4 aggregator (the engine's router, chain.js)
-//   impact   = marker-engine/pure.js priceImpactPct (quoted out vs what the
-//              Binance Alpha market price predicts)
-// The engine re-quotes at execution; this preview is informational. Keep it
-// ON-DEMAND only (no polling) — OpenOcean allows ~1 req/1.6s per IP and the
-// engine quotes from this same machine when a trade fires.
+// Pre-trade quote preview — mirrors what the engine will execute.
+// Uses CoW Protocol for on-chain swap pricing via intent-based batch auctions.
+//   sizing   = USD intent → token amount using Binance Alpha market price
+//   quote    = CoW Protocol /api/v1/quote (POST)
+// Keep ON-DEMAND only (no polling).
 
-const OO_NATIVE = '0xEeeeeEeeeEeEeeEeEeEeeEEEeeeeEeeeeeeeEEeE';
+const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:8000';
 
-// Engine config (marker-engine/index.js defaults; no .env overrides are set).
+// CoW Protocol native token address
+const COW_NATIVE = '0xEeeeeEeeeEeEeeEeEeEeeEEEeeeeEeeeeeeeEEeE';
 export const ENGINE_SLIPPAGE_PCT = 0.5;
-export const ENGINE_GAS_GWEI = 1;
 
-// Same server-side Binance Alpha source used by the engine and charts.
+// CoW Protocol API base per chain
+const COW_BASE = {
+  bsc:       'https://api.cow.fi/bnb/api/v1',
+  ethereum:  'https://api.cow.fi/mainnet/api/v1',
+  base:      'https://api.cow.fi/base/api/v1',
+  arbitrum:  'https://api.cow.fi/arbitrum_one/api/v1',
+};
+
+// BNB price for gas estimation
 export async function fetchBnbPriceUsd() {
-  const api = import.meta.env.VITE_API_URL || 'http://localhost:8000';
-  const r = await fetch(`${api}/market/prices?symbols=BNB`);
+  const r = await fetch(`${API_URL}/market/prices?symbols=BNB`);
   if (!r.ok) throw new Error(`BNB price fetch failed (HTTP ${r.status})`);
   const j = await r.json();
   const price = Number(j.prices?.BNB?.price || 0);
@@ -26,78 +28,101 @@ export async function fetchBnbPriceUsd() {
   return price;
 }
 
-// The chosen route out of the quote payload: path.routes[].subRoutes[].dexes[].dex.
-// Defensive — returns [] if OpenOcean changes the shape.
-function extractRoute(data) {
-  try {
-    const names = [];
-    for (const route of data?.path?.routes || []) {
-      for (const sub of route?.subRoutes || []) {
-        for (const d of sub?.dexes || []) {
-          if (d?.dex) names.push(d.percentage != null ? `${d.dex} ${d.percentage}%` : String(d.dex));
-        }
-      }
-    }
-    return [...new Set(names)];
-  } catch {
-    return [];
-  }
-}
-
 // side: 'BUY' | 'SELL'. usd: user's USD intent. contract: token address.
-// marketPrice: the live Binance Alpha price the chart/engine use. heldQty: wallet
-// balance for sells (null = unknown, no cap applied).
-export async function fetchSwapPreview({ side, usd, contract, marketPrice, heldQty }) {
+// marketPrice: Binance Alpha market price. heldQty: wallet balance (null = unknown).
+// chain: chain id string ('bsc', 'ethereum', etc.)
+export async function fetchSwapPreview({ side, usd, contract, marketPrice, heldQty, chain, walletAddress }) {
   if (!(marketPrice > 0)) throw new Error('No live market price from Binance Alpha');
+
+  const cowURL = COW_BASE[chain || 'bsc'];
+  if (!cowURL) throw new Error(`CoW Protocol not available on chain: ${chain}`);
+
   const bnbPrice = await fetchBnbPriceUsd();
   const isBuy = side === 'BUY';
 
-  let amountIn, usdNotional, expectedOut, capped = false;
+  let sellToken, buyToken, sellAmountBeforeFee, expectedBuyAmount;
+  let usdNotional;
+
   if (isBuy) {
-    amountIn = usd / bnbPrice;                 // BNB in — engine sizing
+    // Buying token with native (BNB/ETH)
+    sellToken = COW_NATIVE;
+    buyToken = contract;
+    sellAmountBeforeFee = BigInt(Math.floor(usd / bnbPrice * 1e18)).toString(); // native in wei
     usdNotional = usd;
-    expectedOut = usd / marketPrice;        // tokens the market price predicts
   } else {
-    let amtToken = usd / marketPrice;       // tokens out of the wallet — engine sizing
-    if (heldQty != null && amtToken > heldQty) { amtToken = heldQty; capped = true; }
-    if (!(amtToken > 0)) throw new Error('Nothing to sell');
-    amountIn = amtToken;
-    usdNotional = amtToken * marketPrice;
-    expectedOut = usdNotional / bnbPrice;      // BNB the market price predicts
+    // Selling token for native
+    sellToken = contract;
+    buyToken = COW_NATIVE;
+    let tokenAmt = usd / marketPrice;
+    if (heldQty != null && tokenAmt > heldQty) tokenAmt = heldQty;
+    if (!(tokenAmt > 0)) throw new Error('Nothing to sell');
+    sellAmountBeforeFee = BigInt(Math.floor(tokenAmt * 1e18)).toString(); // 18 decimals default
+    usdNotional = tokenAmt * marketPrice;
   }
 
-  const inAddr = isBuy ? OO_NATIVE : contract;
-  const outAddr = isBuy ? contract : OO_NATIVE;
-  const amountStr = isBuy ? amountIn.toFixed(6) : amountIn.toFixed(8);
-  const url = `https://open-api.openocean.finance/v4/bsc/quote` +
-    `?inTokenAddress=${inAddr}&outTokenAddress=${outAddr}&amount=${amountStr}` +
-    `&gasPrice=${ENGINE_GAS_GWEI}&slippage=${ENGINE_SLIPPAGE_PCT}`;
-  const res = await fetch(url);
-  if (!res.ok) throw new Error(`OpenOcean HTTP ${res.status}`);
-  const body = await res.json();
-  const data = body?.data;
-  if (!data || !data.outAmount) throw new Error(`OpenOcean returned no quote (code ${body?.code})`);
+  // POST quote to CoW Protocol
+  const quoteBody = {
+    kind: isBuy ? 'buy' : 'sell',
+    sellToken,
+    buyToken,
+    sellAmountBeforeFee,
+    from: walletAddress || '0x0000000000000000000000000000000000000000',
+    receiver: walletAddress || '0x0000000000000000000000000000000000000000',
+    validFor: 1800,
+  };
 
-  const outDecimals = Number((isBuy ? data.outToken?.decimals : 18) ?? 18);
-  const quotedOut = Number(data.outAmount) / 10 ** outDecimals;
-  if (!(quotedOut > 0)) throw new Error('OpenOcean quoted zero output');
+  let res;
+  try {
+    res = await fetch(`${cowURL}/quote`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(quoteBody),
+    });
+  } catch {
+    throw new Error('CoW Protocol API unreachable');
+  }
 
-  // priceImpactPct from marker-engine/pure.js: positive = you get less than
-  // the market price predicts.
-  const impactPct = (1 - quotedOut / expectedOut) * 100;
-  const effPrice = isBuy ? usdNotional / quotedOut : (quotedOut * bnbPrice) / amountIn;
-  const minOut = quotedOut * (1 - ENGINE_SLIPPAGE_PCT / 100);
+  const text = await res.text();
+  let body;
+  try { body = JSON.parse(text); }
+  catch { throw new Error(`CoW Protocol returned non-JSON: ${text.slice(0, 200)}`); }
 
-  // Engine sends the tx with a +20% gas-limit buffer; actual cost is usually
-  // at or below the estimate.
-  const gasUnits = Number(data.estimatedGas || data.gasLimit || 0);
-  const gasBnb = gasUnits > 0 ? gasUnits * 1.2 * ENGINE_GAS_GWEI * 1e-9 : null;
-  const gasUsd = gasBnb != null ? gasBnb * bnbPrice : null;
+  if (!res.ok) {
+    throw new Error(body?.description || body?.errorType || `CoW Protocol HTTP ${res.status}`);
+  }
+
+  const q = body?.quote;
+  if (!q || !q.buyAmount) throw new Error('CoW Protocol returned no quote');
+
+  // CoW returns raw token amounts (sellAmount after fees, buyAmount after fees)
+  // For sell: sellAmount is what leaves your wallet, buyAmount is what you receive
+  // For buy: sellAmount is what you pay, buyAmount is what you receive
+  const quotedBuyRaw = BigInt(q.buyAmount);
+  const quotedOut = Number(quotedBuyRaw) / 1e18; // native has 18 decimals
+
+  // Fee in sell token
+  const feeAmount = q.feeAmount ? Number(BigInt(q.feeAmount)) / 1e18 : 0;
+
+  // Price impact: compare quoted vs expected
+  expectedBuyAmount = isBuy ? usd / marketPrice : usdNotional / bnbPrice;
+  const impactPct = expectedBuyAmount > 0 ? (1 - quotedOut / expectedBuyAmount) * 100 : 0;
+
+  const effPrice = isBuy ? usdNotional / quotedOut : (quotedOut * bnbPrice) / (usdNotional / marketPrice);
 
   return {
-    side, usdNotional, capped, bnbPrice, amountIn, expectedOut, quotedOut,
-    impactPct, effPrice, minOut, gasBnb, gasUsd,
-    route: extractRoute(data),
+    side,
+    usdNotional,
+    bnbPrice,
+    amountIn: isBuy ? usd / bnbPrice : usd / marketPrice,
+    expectedOut: expectedBuyAmount,
+    quotedOut,
+    impactPct,
+    effPrice,
+    feeAmount,
+    minOut: quotedOut * 0.995, // 0.5% slippage
+    gasBnb: null, // CoW Protocol is gasless for the user
+    gasUsd: null,
+    route: ['CoW Protocol'],
     fetchedAt: Date.now(),
   };
 }

@@ -5,6 +5,7 @@ package trading
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"log/slog"
 	"math"
@@ -71,6 +72,7 @@ type Marker struct {
 	ConditionValue float64 `json:"condition_value"`
 	Direction      string  `json:"direction"`       // "above", "below"
 	State          string  `json:"state"`           // "active", "claimed", "done"
+	MetadataJson   string  `json:"metadata_json"`
 }
 
 // NewEngine creates a trading engine.
@@ -113,6 +115,15 @@ func (e *Engine) UpdatePrices(prices map[string]float64) {
 	for sym, price := range prices {
 		e.prices[sym] = price
 	}
+}
+
+// UpdateChain safely updates the chain configuration and mode at runtime.
+func (e *Engine) UpdateChain(mode Mode, chain *Chain) {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	e.mode = mode
+	e.chain = chain
+	e.logger.Info("trading engine chain updated", "mode", mode, "has_chain", chain != nil)
 }
 
 // Start begins the trading loop.
@@ -189,7 +200,11 @@ func (e *Engine) tick(ctx context.Context) {
 
 		price, ok := e.prices[marker.Symbol]
 		if !ok || price <= 0 {
-			continue
+			if marker.ConditionType == "manual" && marker.ConditionValue > 0 {
+				price = marker.ConditionValue
+			} else {
+				continue
+			}
 		}
 
 		// Detect cross
@@ -232,6 +247,10 @@ func (e *Engine) tick(ctx context.Context) {
 }
 
 func (e *Engine) detectCross(marker Marker, price float64) bool {
+	if marker.ConditionType == "manual" {
+		return true
+	}
+
 	e.mu.Lock()
 	prevSide, had := e.sides[marker.ID]
 	e.mu.Unlock()
@@ -326,6 +345,162 @@ func (e *Engine) executeTrade(ctx context.Context, marker Marker, price float64,
 	if marker.Direction == "below" {
 		side = "sell"
 	}
+
+	txHash := "paper-" + uuid.New().String()
+
+	if e.mode == ModeLive && e.chain != nil {
+		var contractAddr string
+		decimals := 18
+
+		if marker.MetadataJson != "" && marker.MetadataJson != "{}" {
+			var meta struct {
+				Contract string `json:"contract_address"`
+				Decimals int    `json:"decimals"`
+			}
+			if err := json.Unmarshal([]byte(marker.MetadataJson), &meta); err == nil {
+				if meta.Contract != "" {
+					contractAddr = meta.Contract
+					if meta.Decimals > 0 {
+						decimals = meta.Decimals
+					}
+				}
+			}
+		}
+
+		if contractAddr == "" {
+			var found bool
+			contractAddr, _, found = e.store.TokenBySymbol(marker.Symbol)
+			if !found {
+				e.logger.Error("token not found for symbol", "symbol", marker.Symbol)
+				e.recordFailure(marker.ID)
+				return
+			}
+		}
+
+		isBuy := side == "buy"
+		var sellToken, buyToken string
+		var amtBeforeFee string
+
+		nativeAddr := "0xEeeeeEeeeEeEeeEeEeEeeEEEeeeeEeeeeeeeEEeE"
+
+		bnbPrice := 580.0
+		e.mu.Lock()
+		if p, ok := e.prices["BNB"]; ok && p > 0 {
+			bnbPrice = p
+		}
+		e.mu.Unlock()
+
+		if isBuy {
+			sellToken = nativeAddr
+			buyToken = contractAddr
+			amtBeforeFee = fmt.Sprintf("%.0f", (usd/bnbPrice)*1e18)
+		} else {
+			sellToken = contractAddr
+			buyToken = nativeAddr
+			decMultiplier := math.Pow10(decimals)
+			amtBeforeFee = fmt.Sprintf("%.0f", qty*decMultiplier)
+		}
+
+		cowClient := NewCowClient(e.chain.chainID.Int64())
+		quoteReq := CowQuoteRequest{
+			Kind:                side,
+			SellToken:           sellToken,
+			BuyToken:            buyToken,
+			SellAmountBeforeFee: amtBeforeFee,
+			From:                e.chain.WalletAddress().Hex(),
+			Receiver:            e.chain.WalletAddress().Hex(),
+			ValidFor:            1800,
+		}
+
+		reqJSON, _ := json.Marshal(quoteReq)
+		e.logger.Info("cow quote request", "payload", string(reqJSON))
+
+		quoteRes, err := cowClient.GetQuote(ctx, quoteReq)
+		if err != nil {
+			e.logger.Error("cow quote failed", "error", err)
+			e.recordFailure(marker.ID)
+			return
+		}
+
+		resJSON, _ := json.Marshal(quoteRes)
+		e.logger.Info("cow quote response", "payload", string(resJSON))
+
+		sellAmt, _ := new(big.Int).SetString(quoteRes.Quote.SellAmount, 10)
+		feeAmt, _ := new(big.Int).SetString(quoteRes.Quote.FeeAmount, 10)
+		buyAmt, _ := new(big.Int).SetString(quoteRes.Quote.BuyAmount, 10)
+
+		var signSellAmt, signBuyAmt string
+		if isBuy {
+			maxSlippage := settings.MaxPriceImpactPct / 100.0
+			slipFloat := new(big.Float).SetInt(sellAmt)
+			slipFloat.Mul(slipFloat, big.NewFloat(1.0+maxSlippage))
+			signSellAmtInt, _ := slipFloat.Int(nil)
+
+			signSellAmt = signSellAmtInt.String()
+			signBuyAmt = quoteRes.Quote.BuyAmount
+		} else {
+			totalSell := new(big.Int).Add(sellAmt, feeAmt)
+			signSellAmt = totalSell.String()
+
+			maxSlippage := settings.MaxPriceImpactPct / 100.0
+			slipFloat := new(big.Float).SetInt(buyAmt)
+			slipFloat.Mul(slipFloat, big.NewFloat(1.0-maxSlippage))
+			signBuyAmtInt, _ := slipFloat.Int(nil)
+			signBuyAmt = signBuyAmtInt.String()
+		}
+
+		orderReq := CowOrderRequest{
+			SellToken:         sellToken,
+			BuyToken:          buyToken,
+			Receiver:          e.chain.WalletAddress().Hex(),
+			SellAmount:        signSellAmt,
+			BuyAmount:         signBuyAmt,
+			ValidTo:           uint32(time.Now().Unix() + 1800),
+			AppData:           AppDataHash,
+			FeeAmount:         "0",
+			Kind:              side,
+			PartiallyFillable: false,
+			SellTokenBalance:  "erc20",
+			BuyTokenBalance:   "erc20",
+			SigningScheme:     "eip712",
+			From:              e.chain.WalletAddress().Hex(),
+		}
+
+		typedData := GenerateEIP712Data(e.chain.chainID.Int64(), orderReq)
+		sig, err := e.chain.SignEIP712Order(typedData)
+		if err != nil {
+			e.logger.Error("sign order failed", "error", err)
+			e.recordFailure(marker.ID)
+			return
+		}
+		orderReq.Signature = sig
+
+		if sellToken != nativeAddr {
+			sellAmtInt, _ := new(big.Int).SetString(orderReq.SellAmount, 10)
+			if sellAmtInt != nil {
+				e.logger.Info("checking allowance for cow protocol vault relayer")
+				err = e.chain.EnsureAllowance(ctx, common.HexToAddress(sellToken), common.HexToAddress(CowVaultRelayer), sellAmtInt)
+				if err != nil {
+					e.logger.Error("allowance check failed", "error", err)
+					e.recordFailure(marker.ID)
+					return
+				}
+			}
+		}
+
+		orderJSON, _ := json.Marshal(orderReq)
+		e.logger.Info("cow submit order request", "payload", string(orderJSON))
+
+		uid, err := cowClient.SubmitOrder(ctx, orderReq)
+		if err != nil {
+			e.logger.Error("submit order failed", "error", err)
+			e.recordFailure(marker.ID)
+			return
+		}
+		e.logger.Info("cow submit order success", "uid", uid)
+		txHash = uid
+	}
+
 	trade := db.TradeRecord{
 		StrategyID: marker.StrategyID,
 		Symbol:     marker.Symbol,
@@ -336,96 +511,8 @@ func (e *Engine) executeTrade(ctx context.Context, marker Marker, price float64,
 		FeeUsd:     feeUsd,
 		Time:       time.Now().UnixMilli(),
 		Mode:       string(e.mode),
+		TxHash:     txHash,
 	}
-
-	// In live mode, send actual swap via OKX DEX.
-	// In dry mode, record a simulated trade.
-	if e.mode == ModeLive && e.chain != nil {
-		// Resolve token contract address from symbol
-		tokenAddrStr, _, found := e.store.TokenBySymbol(marker.Symbol)
-		if !found {
-			e.logger.Error("cannot resolve token address", "symbol", marker.Symbol)
-			e.recordFailure(marker.ID)
-			return
-		}
-		tokenAddr := common.HexToAddress(tokenAddrStr)
-
-		// Determine direction: markers always trigger buys in this iteration
-		fromAddr := ZeroAddr
-		toAddr := tokenAddr
-		if marker.Direction == "below" {
-			// Sell: swap token for native
-			fromAddr = tokenAddr
-			toAddr = ZeroAddr
-		}
-
-		// Get decimals for the from-token
-		decimals := uint8(18)
-		if fromAddr != ZeroAddr {
-			if d, err := e.chain.GetDecimals(fromAddr); err == nil {
-				decimals = d
-			}
-		}
-
-		// Calculate amount in token base units
-		amount := big.NewInt(int64(usd * 1e18 / price)) // approximate
-		if price <= 0 {
-			e.logger.Error("invalid price for swap", "symbol", marker.Symbol)
-			e.recordFailure(marker.ID)
-			return
-		}
-
-		// Get swap quote and execute
-		swapCtx, swapCancel := context.WithTimeout(context.Background(), 60*time.Second)
-		defer swapCancel()
-
-		q, err := e.chain.GetSwapQuote(swapCtx, fromAddr, toAddr, amount, decimals, 0, 0)
-		if err != nil {
-			e.logger.Error("swap quote failed", "symbol", marker.Symbol, "error", err)
-			e.recordFailure(marker.ID)
-			return
-		}
-
-		e.logger.Info("swap quote received",
-			"symbol", marker.Symbol,
-			"router", q.RouterPath,
-			"price_impact", q.PriceImpact+"%",
-		)
-
-		// Execute the swap
-		tx, err := e.chain.SendSwap(swapCtx, q, 0, []common.Address{q.To})
-		if err != nil {
-			e.logger.Error("swap execution failed", "symbol", marker.Symbol, "error", err)
-			e.recordFailure(marker.ID)
-			return
-		}
-
-		trade.TxHash = tx.Hash().Hex()
-		e.logger.Info("swap broadcast",
-			"symbol", marker.Symbol,
-			"tx_hash", trade.TxHash,
-			"in_amount", q.InAmount.String(),
-			"out_amount", q.OutAmount.String(),
-		)
-
-		// Wait for receipt and parse fill
-		go func() {
-			receipt, err := e.chain.WaitForReceipt(context.Background(), tx)
-			if err != nil {
-				e.logger.Error("swap receipt wait failed", "tx_hash", trade.TxHash, "error", err)
-				return
-			}
-			fill := e.chain.ParseSwapFill(context.Background(), receipt, tokenAddr, decimals, marker.Direction != "below")
-			e.logger.Info("swap confirmed",
-				"tx_hash", trade.TxHash,
-				"token_amount", fmt.Sprintf("%.4f", fill.TokenAmount),
-				"native_amount", fmt.Sprintf("%.6f", fill.NativeAmount),
-			)
-		}()
-	} else {
-		trade.TxHash = "paper-" + uuid.New().String()
-	}
-
 	id, err := e.store.SaveTrade(&trade)
 	if err != nil {
 		e.logger.Error("failed to save trade", "error", err)
@@ -451,6 +538,16 @@ func (e *Engine) executeTrade(ctx context.Context, marker Marker, price float64,
 }
 
 func (e *Engine) sizeTrade(marker Marker, price float64, settings EngineSettings) float64 {
+	// If the marker has embedded metadata indicating manual trade size, use it
+	if marker.MetadataJson != "" && marker.MetadataJson != "{}" {
+		var meta struct {
+			Usd float64 `json:"usd"`
+		}
+		if err := json.Unmarshal([]byte(marker.MetadataJson), &meta); err == nil && meta.Usd > 0 {
+			return meta.Usd
+		}
+	}
+
 	if settings.MaxTradeUsd <= 0 {
 		return 0
 	}
@@ -497,6 +594,7 @@ func (e *Engine) loadActiveMarkers() ([]Marker, error) {
 			ConditionValue: m.ConditionValue,
 			Direction:      m.Direction,
 			State:          m.State,
+			MetadataJson:   m.MetadataJson,
 		}
 	}
 	return result, nil

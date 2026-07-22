@@ -1,0 +1,1 @@
+package main; import ("database/sql"; "fmt"; _ "modernc.org/sqlite"); func main() { db, _ := sql.Open("sqlite", "C:\\Users\\rusco\\.haven\\haven.db"); var v string; err := db.QueryRow("SELECT length(value) FROM settings WHERE key='haven_token_cache'").Scan(&v); if err != nil { fmt.Println("Cache not found:", err) } else { fmt.Println("Cache length:", v) } }

@@ -1,26 +1,8 @@
 {
-  "topic_20260716-082236_af3dbea58c0d0413": {
+  "topic_20260720-172029_be7f6278d9e90b6c": {
     "stage": 3,
     "userTurns": 3,
-    "basisHash": "fd28f8f6b2372992",
-    "updatedAt": 1784200493003
-  },
-  "topic_20260717-042651_17835ca24145433c": {
-    "stage": 3,
-    "userTurns": 3,
-    "basisHash": "3ddbf731e5fdca57",
-    "updatedAt": 1784324379934
-  },
-  "topic_20260718-081008_74f79739ad77b279": {
-    "stage": 3,
-    "userTurns": 3,
-    "basisHash": "0b6e779cb44096bf",
-    "updatedAt": 1784362793344
-  },
-  "topic_20260718-112157_0028ea2022f2d43a": {
-    "stage": 3,
-    "userTurns": 3,
-    "basisHash": "a62fb0009892b705",
-    "updatedAt": 1784379642974
+    "basisHash": "759ef651d9713cb6",
+    "updatedAt": 1784568394549
   }
 }
