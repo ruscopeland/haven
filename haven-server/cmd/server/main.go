@@ -21,16 +21,20 @@ func main() {
 
 	// Required configuration
 	clerkSecret := requireEnv("CLERK_SECRET_KEY")
-	clerkPublishable := requireEnv("CLERK_PUBLISHABLE_KEY")
-	deepseekKey := requireEnv("DEEPSEEK_API_KEY")
+	clerkPublishable := os.Getenv("CLERK_PUBLISHABLE_KEY")
+	if clerkPublishable == "" {
+		clerkPublishable = os.Getenv("CLERK_FRONTEND_API")
+	}
+	verifier := auth.NewClerkVerifier(clerkSecret, clerkPublishable, logger)
 	releaseDir := requireEnv("RELEASE_DIR")
 	port := envOrDefault("PORT", "8080")
+	deepseekKey := requireEnv("DEEPSEEK_API_KEY")
 
 	// Optional configuration
 	releasePublicKey := os.Getenv("RELEASE_PUBLIC_KEY")
 	latestBuildHash := os.Getenv("LATEST_BUILD_HASH")
 
-	verifier := auth.NewClerkVerifier(clerkSecret, clerkPublishable, logger)
+
 	subSvc := subscription.NewService(verifier, clerkSecret, logger, latestBuildHash)
 	assistantSvc := assistant.NewService(deepseekKey, logger)
 	assistantSvc.SetVerifier(verifier)
